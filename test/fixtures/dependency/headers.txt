@@ -1,0 +1,4 @@
+#!event:events\modern_events.txt
+#!localisation: localisation/modern_events_l_english.yml
+#!gfx:interface/event_pictures.gfx
+#!png:interface/ignored.png

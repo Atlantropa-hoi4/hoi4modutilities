@@ -4,6 +4,7 @@ import { localize } from "../../../util/i18n";
 import { BMP, parseBmp } from "../../../util/image/bmp/bmpparser";
 import { Point, ProgressReporter, ProvinceBmp, ProvinceEdgeGraph, ProvinceGraph, Region, WorldMapWarning, Zone } from "../definitions";
 import { FileLoader, LoadResult, LoadResultOD, mergeRegions, pointEqual } from "./common";
+import { toArrayBuffer } from "../../../util/common";
 
 export class ProvinceBmpLoader extends FileLoader<ProvinceBmp> {
     protected async loadFromFile(): Promise<LoadResultOD<ProvinceBmp>> {
@@ -32,7 +33,7 @@ async function loadProvincesBmp(provincesFile: string, progressReporter: Progres
     await progressReporter(localize('worldmap.progress.loadingprovincebmp', 'Loading province bmp...',));
 
     const [provinceMapImageBuffer] = await readFileFromModOrHOI4(provincesFile);
-    const provinceMapImage = parseBmp(provinceMapImageBuffer.buffer, provinceMapImageBuffer.byteOffset);
+    const provinceMapImage = parseBmp(toArrayBuffer(provinceMapImageBuffer), 0);
     
     await progressReporter(localize('worldmap.progress.calculatingregion', 'Calculating province region...'));
 

@@ -26,27 +26,24 @@ const dlcPathsCache = new PromiseCache({
 
 let dlcZipCache: PromiseCache<AdmZip> | null = null;
 
-if (!IS_WEB_EXT) {
-    // adm-zip requires fs, which doesn't work on web.
-    function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
-        const uri = vscode.Uri.parse(dlcZipPath);
-        if (uri.scheme === Hoi4FsSchema) {
-            dlcZipPath = path.join(getConfiguration().installPath, trimStart(uri.path, '/'));
-        } else {
-            ensureFileScheme(uri);
-            dlcZipPath = uri.fsPath;
-        }
-
-        const AdmZip = require('adm-zip');
-        return Promise.resolve(new AdmZip(dlcZipPath));
+function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
+    const uri = vscode.Uri.parse(dlcZipPath);
+    if (uri.scheme === Hoi4FsSchema) {
+        dlcZipPath = path.join(getConfiguration().installPath, trimStart(uri.path, '/'));
+    } else {
+        ensureFileScheme(uri);
+        dlcZipPath = uri.fsPath;
     }
 
-    dlcZipCache = new PromiseCache({
-        factory: getDlcZip,
-        expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(key)),
-        life: 15 * 1000,
-    });
+    const AdmZip = require('adm-zip');
+    return Promise.resolve(new AdmZip(dlcZipPath));
 }
+
+dlcZipCache = new PromiseCache({
+    factory: getDlcZip,
+    expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(key)),
+    life: 15 * 1000,
+});
 
 export async function clearDlcZipCache() {
     dlcPathsCache.clear();

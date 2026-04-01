@@ -16,6 +16,7 @@ import { chain } from 'lodash';
 import { sendEvent } from '../util/telemetry';
 import { guiPreviewDef } from './gui';
 import { mioPreviewDef } from './mio';
+import { getWebviewPanelOptions } from '../util/webview';
 
 export type PreviewProviderDef = PreviewProviderDefNormal | PreviewProviderDefAlternative;
 
@@ -172,9 +173,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             WebviewType.Preview,
             localize('preview.viewtitle', "HOI4: {0}", filename),
             vscode.ViewColumn.Beside,
-            {
-                enableScripts: true
-            }
+            getWebviewPanelOptions()
         );
 
         if (contextContainer.current) {

@@ -1,23 +1,38 @@
 {
-	"compilerOptions": {
-		"module": "es6",
-		"moduleResolution": "node",
-		"target": "es6",
-		"outDir": "out",
-		"lib": [
-			"es6",
-			"DOM"
-		],
-		"sourceMap": true,
-		"rootDir": ".",
-		"strict": true,
-		"noFallthroughCasesInSwitch": true,
-		"importHelpers": true
-	},
-	"exclude": [
-		"node_modules",
-		".vscode-test",
-		"out",
-		"scripts"
-	]
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "outDir": "out",
+    "rootDir": ".",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node",
+      "mocha",
+      "vscode"
+    ],
+    "sourceMap": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "noFallthroughCasesInSwitch": true,
+    "importHelpers": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "webviewsrc/**/*.ts",
+    "test/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "dist",
+    "out",
+    "static",
+    "scripts"
+  ]
 }

@@ -23,7 +23,6 @@ declare module '*.css' {
 
 declare const VERSION: string;
 declare const EXTENSION_ID: string;
-declare const IS_WEB_EXT: boolean;
 
 declare module 'tga' {
     class TGA {

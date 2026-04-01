@@ -78,25 +78,30 @@ export function slice<T>(array: T[] | undefined, start: number, end: number): T[
     }
 }
 
-export function debounceByInput<TI extends any[], TO>(func: (...input: TI) => TO, keySelector: (...input: TI) => string, wait?: number, debounceSettings?: DebounceSettings): (...input: TI) => TO {
-    const cachedMethods: Record<string, (input: TI) => TO> = {};
+export function debounceByInput<TI extends unknown[]>(func: (...input: TI) => unknown, keySelector: (...input: TI) => string, wait?: number, debounceSettings?: DebounceSettings): (...input: TI) => void {
+    const cachedMethods: Record<string, (input: TI) => void> = {};
     
-    function result(...input: TI): TO {
+    function result(...input: TI): void {
         const key = keySelector(...input);
         const method = cachedMethods[key];
         if (method) {
-            return method(input);
+            method(input);
+            return;
         }
 
         const newMethod = debounce((input2) => {
             delete cachedMethods[key];
-            return func(...input2);
+            void func(...input2);
         }, wait, debounceSettings);
         cachedMethods[key] = newMethod;
-        return newMethod(input);
+        newMethod(input);
     }
 
     return result;
+}
+
+export function toArrayBuffer(buffer: Uint8Array): ArrayBuffer {
+    return Uint8Array.from(buffer).buffer;
 }
 
 export function randomString(length: number, charset: string | undefined = undefined): string {

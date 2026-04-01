@@ -20,9 +20,9 @@ For feature details and user manual, please refer to [HOI4 Mod Utilities Wiki](h
 ## Steps to start
 
 1. Install and enable this extension in VSCode.
-2. Set Heart of Iron IV install path. You can:
-    * (Since v0.7.0, or on [vscode web](https://vscode.dev)) Open command palette using `Ctrl+Shift+P`. Use command `Select HOI4 install path` to browse the folder that installed Heart of Iron IV.
-    * Update setting `hoi4ModUtilities.installPath` (you can open settings page of VSCode using `Ctrl+,`) to the folder that installed Heart of Iron IV.
+2. Set the Hearts of Iron IV install path. You can:
+    * Open command palette using `Ctrl+Shift+P`. Use command `Select HOI4 install path` to browse the folder that installed Hearts of Iron IV.
+    * Update setting `hoi4ModUtilities.installPath` (you can open settings page of VSCode using `Ctrl+,`) to the folder that installed Hearts of Iron IV.
 3. Open your mod develop folder.
 4. (*Optional*) Open command palette using `Ctrl+Shift+P`. Use command `Select mod file` to set working mod descriptor (the `.mod` file).
 5. Use these entries:
@@ -70,6 +70,19 @@ For feature details and user manual, please refer to [HOI4 Mod Utilities Wiki](h
 * GUI of focus tree can't be configured like technology tree.
 * Edge lines on world map not alway fit edge of colors.
 * Event tree preview will duplicate events even they are same event if they are from different option.
+
+## Development
+
+This extension now targets desktop VS Code only.
+
+For local development, use Node.js 20 LTS and run:
+
+```bash
+npm ci
+npm run verify
+```
+
+`npm run verify` runs the local build, lint, unit tests, VS Code integration tests, and VSIX packaging flow from the repository root.
 
 ## Release Notes - [0.12.2]
 

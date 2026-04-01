@@ -7,7 +7,7 @@
     "hoi4modutilities.featureFlags.title": "Feature Flags",
     "hoi4modutilities.featureFlags.desc": "Feature flags are used to disable or enable features. Reloading is required after changing this. Please refer to Wiki on Github for details.",
     "hoi4modutilities.installPath.title": "Install Path",
-    "hoi4modutilities.installPath.desc": "Hearts of Iron IV install path. If you are on web, you should press Ctrl+Shift+P, and type \"Select HOI4 Install Path\" command instead of this setting.",
+    "hoi4modutilities.installPath.desc": "Hearts of Iron IV install path used by previews and dependency loading.",
     "hoi4modutilities.loadDlcContents.title": "Load DLC Contents",
     "hoi4modutilities.loadDlcContents.desc": "Whether to load DLC images when previewing files. Enabling this will use more memory.",
     "hoi4modutilities.modFile.title": "Working Mod File",

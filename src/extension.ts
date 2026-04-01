@@ -29,7 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(registerContextContainer(context));
     context.subscriptions.push(registerTelemetryReporter());
 
-    sendEvent('extension.activate', { locale, isWeb: IS_WEB_EXT.toString() });
+    sendEvent('extension.activate', { locale, runtime: 'desktop' });
 
     context.subscriptions.push(previewManager.register());
     context.subscriptions.push(registerModFile());

@@ -3,6 +3,7 @@ import { localize } from "../../../util/i18n";
 import { BMP, parseBmp } from "../../../util/image/bmp/bmpparser";
 import { ProgressReporter, River, RiverBmp, WorldMapWarning, Zone } from "../definitions";
 import { FileLoader, LoadResult, LoadResultOD, addPointToZone } from "./common";
+import { toArrayBuffer } from "../../../util/common";
 
 export class RiverLoader extends FileLoader<RiverBmp> {
     protected async loadFromFile(): Promise<LoadResultOD<RiverBmp>> {
@@ -29,7 +30,7 @@ async function loadRivers(file: string, progressReporter: ProgressReporter, warn
     progressReporter(localize('worldmap.progress.loadingrivers', 'Loading rivers...'));
     
     const [riversImageBuffer] = await readFileFromModOrHOI4(file);
-    const riversImage = parseBmp(riversImageBuffer.buffer, riversImageBuffer.byteOffset);
+    const riversImage = parseBmp(toArrayBuffer(riversImageBuffer), 0);
     const result: RiverBmp = {
         width: riversImage.width,
         height: riversImage.height,

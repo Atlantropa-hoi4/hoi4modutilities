@@ -12,6 +12,7 @@ import { error } from '../debug';
 import { DDS } from './dds';
 import { UserError } from '../common';
 import { getGfxContainerFile } from '../gfxindex';
+import { toArrayBuffer } from '../common';
 export { Sprite, Image };
 
 const imageCache = new PromiseCache({
@@ -114,7 +115,7 @@ async function getImage(relativePath: string): Promise<Image | undefined> {
 
         relativePath = relativePath.toLowerCase();
         if (relativePath.endsWith('.dds')) {
-            const dds = DDS.parse(buffer.buffer, buffer.byteOffset);
+            const dds = DDS.parse(toArrayBuffer(buffer), 0);
             png = ddsToPng(dds);
             pngBuffer = PNG.sync.write(png);
         

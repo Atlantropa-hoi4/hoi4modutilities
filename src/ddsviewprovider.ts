@@ -6,8 +6,9 @@ import { DDS } from './util/image/dds';
 import { html, htmlEscape } from './util/html';
 import { StyleTable } from './util/styletable';
 import { sendEvent } from './util/telemetry';
-import { forceError } from './util/common';
+import { forceError, toArrayBuffer } from './util/common';
 import { readFile } from './util/vsccommon';
+import { getStaticResourceRoots } from './util/webview';
 
 abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider {
     public async openCustomDocument(uri: vscode.Uri) {
@@ -18,6 +19,10 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
     public async resolveCustomEditor(document: vscode.CustomDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): Promise<void> {
         try {
             this.onOpen();
+            webviewPanel.webview.options = {
+                enableScripts: false,
+                localResourceRoots: getStaticResourceRoots(),
+            };
 
             const buffer = await Promise.race([
                 readFile(document.uri),
@@ -55,7 +60,7 @@ export class DDSViewProvider extends CommonViewProvider {
     }
 
     protected getPng(buffer: Buffer): PNG {
-        const dds = DDS.parse(buffer.buffer, buffer.byteOffset);
+        const dds = DDS.parse(toArrayBuffer(buffer), 0);
         return ddsToPng(dds);
     }
 }

@@ -80,8 +80,46 @@ export const positionSchema: SchemaDef<Position> = {
 };
 //#endregion
 
-export const variableRegex = /^(?:(?<prefix>\w+):)?(?<scope>(?:\w+\.)*)?(?<var>\w+)(?:@(?<target>(?:\w+\.)*\w+))?(?:\?(?<default>\d+))?$/;
-export const variableRegexForScope = /^(?:(?<prefix>\w+):)(?<scope>(?:\w+\.)*)?(?<var>\w+)(?:@(?<target>(?:\w+\.)*\w+))?$/;
+const scopedReferencePart = '(?:[A-Za-z_][\\w-]*|\\d+)(?:\\^(?:[A-Za-z_][\\w-]*|\\d+))?';
+const scopedReferencePattern = `${scopedReferencePart}(?:[.:]${scopedReferencePart})*`;
+const variableNamePattern = '[A-Za-z_][\\w-]*(?:\\^(?:[A-Za-z_][\\w-]*|\\d+))?';
+
+export interface VariableReference {
+    prefix?: string;
+    scope?: string;
+    var: string;
+    target?: string;
+    defaultValue?: number;
+}
+
+export const variableRegex = new RegExp(
+    `^(?:(?<prefix>\\w+):)?(?:(?<scope>${scopedReferencePattern})[.:])?(?<var>${variableNamePattern})(?:@(?<target>${scopedReferencePattern}))?(?:\\?(?<default>-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)))?$`);
+export const variableRegexForScope = new RegExp(
+    `^(?:(?<prefix>\\w+):)?(?:(?<scope>${scopedReferencePattern})[.:])?(?<var>${variableNamePattern})(?:@(?<target>${scopedReferencePattern}))?$`);
+
+export function parseVariableReference(
+    str: string,
+    options: { requireScopeHint?: boolean; allowDefault?: boolean } = {}
+): VariableReference | undefined {
+    const match = (options.allowDefault ?? true ? variableRegex : variableRegexForScope).exec(str);
+    if (!match?.groups?.var) {
+        return undefined;
+    }
+
+    const result: VariableReference = {
+        prefix: match.groups.prefix || undefined,
+        scope: match.groups.scope || undefined,
+        var: match.groups.var,
+        target: match.groups.target || undefined,
+        defaultValue: match.groups.default ? parseFloat(match.groups.default) : undefined,
+    };
+
+    if (options.requireScopeHint && !result.prefix && !result.scope && !result.target && !result.var.includes('^')) {
+        return undefined;
+    }
+
+    return result;
+}
 
 //#region Functions
 export function forEachNodeValue(node: Node, callback: (n: Node, index: number) => void): void {
@@ -266,18 +304,18 @@ function convertObject<T>(node: Node, schemaDef: SchemaDef<T>, constants: Record
 function tryParseVariable(str: string, isNumber: true): number | undefined;
 function tryParseVariable(str: string, isNumber: false): string | undefined;
 function tryParseVariable(str: string, isNumber: boolean): number | string | undefined {
-    const match = variableRegex.exec(str);
-    if (!match) {
+    const variable = parseVariableReference(str);
+    if (!variable) {
         return undefined;
     }
 
     if (isNumber) {
-        if (match.groups?.default) {
-            return parseFloat(match.groups.default);
+        if (variable.defaultValue !== undefined) {
+            return variable.defaultValue;
         }
         return 0;
     } else {
-        if (match.groups?.prefix) {
+        if (variable.prefix) {
             return str;
         }
         return undefined;

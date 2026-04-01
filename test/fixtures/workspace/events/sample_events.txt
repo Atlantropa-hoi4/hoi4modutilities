@@ -1,0 +1,22 @@
+add_namespace = sample
+
+country_event = {
+    id = sample.1
+    title = sample.1.t
+    immediate = {
+        news_event = sample.2
+    }
+    option = {
+        name = sample.1.a
+    }
+}
+
+news_event = {
+    id = sample.2
+    title = sample.2.t
+    is_triggered_only = yes
+    immediate = { }
+    option = {
+        name = sample.2.a
+    }
+}

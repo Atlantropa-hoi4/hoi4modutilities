@@ -1,25 +1,35 @@
 import { error } from "./debug";
-import { __table } from '../../i18n/en';
+import enTable, { __table } from '../../i18n/en';
+import koTable from '../../i18n/ko';
+import ruTable from '../../i18n/ru';
+import zhCnTable from '../../i18n/zh-cn';
+
+const localeTables: Record<string, Record<string, string>> = {
+    en: enTable,
+    ko: koTable,
+    ru: ruTable,
+    'zh-cn': zhCnTable,
+};
 
 let table: Record<string, string> = {};
 
 export function loadI18n(locale?: string) {
-    const config = JSON.parse(process.env.VSCODE_NLS_CONFIG || '{}') as { locale: string; };
+    const config = JSON.parse(process.env.VSCODE_NLS_CONFIG || '{}') as { locale?: string };
     locale = locale ?? config.locale ?? 'en';
     const splitLocale = locale.split('-');
 
     table = tryLoadTable(locale) ??
         (splitLocale.length > 1 ? tryLoadTable(splitLocale[0]) : undefined) ??
-        {};
+        localeTables.en;
 }
 
 function tryLoadTable(locale: string): Record<string, string> | undefined {
     try {
-        const requireContext = require.context('../../i18n', false, /\/(?!template)[\w-]*\.ts$/);
-        return requireContext('./' + locale + '.ts').default;
-    } catch(e) {
+        return localeTables[locale.toLowerCase()];
+    } catch (e) {
         error(e);
     }
+
     return undefined;
 }
 
@@ -29,7 +39,7 @@ export function localize(key: keyof typeof __table | 'TODO', message: string, ..
     }
 
     const regex = new RegExp('\\{(' + args.map((_, i) => i.toString()).join('|') + ')\\}', 'g');
-    return message.replace(regex, (_, group1) => args[parseInt(group1)]?.toString());
+    return message.replace(regex, (_, group1) => args[parseInt(group1, 10)]?.toString());
 }
 
 export function localizeText(text: string): string {

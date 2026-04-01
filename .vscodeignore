@@ -1,5 +1,6 @@
 .vscode/**
 .vscode-test/**
+.vscode-test.mjs
 out/**
 src/**
 .gitignore
@@ -20,6 +21,7 @@ resource/**
 prod/**
 test/**
 test-ui/**
+tasks/**
 static/test.js
 Plan.md
 .github/**

@@ -1,6 +1,6 @@
 import { arrayToMap } from "../util/common";
 import { Node } from "./hoiparser";
-import { variableRegexForScope } from "./schema";
+import { parseVariableReference } from "./schema";
 
 export type ScopeType = 'country' | 'state' | 'leader' | 'operative' | 'division' | 'character' | 'mio' | 'purchaseContract' | 'unknown';
 
@@ -18,6 +18,10 @@ export interface ScopeDef {
 }
 
 export const countryScope: Scope = { scopeName: '', scopeType: 'country' };
+
+function joinScope(base: string, segment: string): string {
+    return base ? `${base}.${segment}` : segment;
+}
 
 export function tryMoveScope(node: Node, scopeStack: Scope[], type: 'condition' | 'effect'): boolean {
     if (!node.name) {
@@ -97,23 +101,16 @@ export function tryMoveScope(node: Node, scopeStack: Scope[], type: 'condition' 
         return true;
     }
 
-    const variableMatch = variableRegexForScope.exec(node.name.trim());
+    const variableMatch = parseVariableReference(node.name.trim(), { requireScopeHint: true, allowDefault: false });
     if (variableMatch) {
-        let global = false;
-        const prefix = variableMatch.groups?.prefix.toLowerCase();
-        if (prefix === 'global_event_target' || prefix === 'event_target') {
-            global = true;
-        } else if (prefix === 'var') {
-            const scope = variableMatch.groups?.scope;
-            if (scope) {
-                const scopeLowerCase = scope.toLowerCase();
-                global = !!(scope.match(/^(?:[A-Z][A-Z0-9]{2}|\d+)(?:$|\.)/) ||
-                    scopeLowerCase.match(/^(?:global)(?:$|\.)/));
-            }
-        }
-        
+        const prefix = variableMatch.prefix?.toLowerCase();
+        const global = !!variableMatch.scope || !!variableMatch.target ||
+            prefix === 'global_event_target' ||
+            prefix === 'event_target' ||
+            prefix === 'scope';
+
         scopeStack.push({
-            scopeName: global ? '{' + nodeName + '}' : currentScope.scopeName + '.{' + nodeName + '}',
+            scopeName: global ? '{' + nodeName + '}' : joinScope(currentScope.scopeName, '{' + nodeName + '}'),
             scopeType: 'unknown',
         });
         return true;
@@ -129,7 +126,7 @@ export function tryMoveScope(node: Node, scopeStack: Scope[], type: 'condition' 
             return true;
         } else if (scopeDef.from === currentScope.scopeType || currentScope.scopeType === 'unknown') {
             scopeStack.push({
-                scopeName: currentScope.scopeName + '.' + scopeDef.name,
+                scopeName: joinScope(currentScope.scopeName, scopeDef.name),
                 scopeType: scopeDef.to,
             });
             return true;

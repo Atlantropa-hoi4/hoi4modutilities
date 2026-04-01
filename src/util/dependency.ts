@@ -10,28 +10,8 @@ import { getEvents, HOIEvents, HOIEvent } from "../previewdef/event/schema";
 import { getLanguageIdInYml, getRelativePathInWorkspace, isSameUri } from "./vsccommon";
 import { flatMap, flatten } from "lodash";
 import { parseYaml } from "./yaml";
-
-export type Dependency = { type: string, path: string };
-
-export function getDependenciesFromText(text: string): Dependency[] {
-    const dependencies: Dependency[] = [];
-    const regex = /^\s*#!(?<type>.*?):(?<path>.*\.(?<ext>.*?))$/gm;
-    let match = regex.exec(text);
-    while (match) {
-        const type = match.groups?.type;
-        const ext = match.groups?.ext!;
-        if (type && (type === ext || ext === 'txt' || ext === 'yml')) {   
-            const path = match.groups?.path!;
-            const pathValue = path.trim().replace(/\/\/+|\\+/g, '/');
-
-            dependencies.push({ type, path: pathValue });
-        }
-
-        match = regex.exec(text);
-    }
-
-    return dependencies;
-}
+export { Dependency, getDependenciesFromText } from "./dependencyheader";
+import { getDependenciesFromText } from "./dependencyheader";
 
 export function registerScanReferencesCommand(): vscode.Disposable {
     return vscode.commands.registerCommand(Commands.ScanReferences, scanReferences);

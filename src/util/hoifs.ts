@@ -14,10 +14,7 @@ export function registerHoiFs(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
     disposables.push(vscode.commands.registerCommand(Commands.SelectHoiFolder, selectHoiFolder));
     disposables.push(vscode.workspace.registerFileSystemProvider(Hoi4FsSchema, new Hoi4UtilsFsProvider(), { isReadonly: true }));
-
-    if (!IS_WEB_EXT) {
-        disposables.push(vscode.workspace.onDidChangeConfiguration(onChangeWorkspaceConfiguration));
-    }
+    disposables.push(vscode.workspace.onDidChangeConfiguration(onChangeWorkspaceConfiguration));
 
     return vscode.Disposable.from(...disposables);
 }
@@ -37,7 +34,7 @@ async function selectHoiFolder(): Promise<void> {
     installPathContainer.current = uri;
     clearDlcZipCache();
 
-    if (!IS_WEB_EXT && isFileScheme(uri)) {
+    if (isFileScheme(uri)) {
         const conf = getConfiguration();
         conf.update('installPath', uri.fsPath, vscode.ConfigurationTarget.Global);
     }

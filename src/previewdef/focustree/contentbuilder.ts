@@ -216,7 +216,7 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
         if (localizedText === focus.id || !localizedText){
             if (focus.text){
                 localizedText = await getLocalisedTextQuick(focus.text);
-                if (localizedText !== focus.text && localizedText != null){
+                if (localizedText !== focus.text && localizedText !== null){
                     textContent += `<br/>${localizedText}`;
                 }
             }

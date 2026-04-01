@@ -1,0 +1,55 @@
+add_namespace = modern
+
+country_event = {
+    id = modern.1
+    title = modern.1.t
+    immediate = {
+        news_event = modern.2
+    }
+    option = {
+        name = modern.1.a
+        hidden_effect = {
+            operative_leader_event = {
+                id = modern.3
+                hours = 6
+                random_hours = 2
+            }
+        }
+    }
+}
+
+news_event = {
+    id = modern.2
+    title = modern.2.t
+    is_triggered_only = yes
+    immediate = { }
+    option = {
+        name = modern.2.a
+    }
+}
+
+operative_leader_event = {
+    id = modern.3
+    title = modern.3.t
+    immediate = {
+        mio:test_vendor = {
+            country_event = {
+                id = modern.4
+                days = 2
+                random_days = 1
+            }
+        }
+    }
+    option = {
+        name = modern.3.a
+    }
+}
+
+country_event = {
+    id = modern.4
+    title = modern.4.t
+    immediate = { }
+    option = {
+        name = modern.4.a
+    }
+}

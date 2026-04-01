@@ -1,0 +1,8 @@
+symbol_with_pipe = building_state_modifier|dam
+array_entry = equipment_stockpile^0
+scoped_total = province_controllers^1234:capital:resistance_score?12.5
+targeted_total = var:GER.capital:factory_count@ROOT?3
+percent_value = 35%%
+attached_value = producer_tag {
+    id = modern.asset
+}
