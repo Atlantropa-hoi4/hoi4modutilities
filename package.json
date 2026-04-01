@@ -2,7 +2,7 @@
   "name": "hoi4modutilities",
   "displayName": "%hoi4modutilities.displayName%",
   "description": "Utilities for Heart of Iron IV mods developers",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "author": "server (forked from Chaofan Yang)",
   "publisher": "server",
   "icon": "icon.png",
@@ -27,6 +27,8 @@
   ],
   "activationEvents": [
     "onLanguage:plaintext",
+    "onLanguage:hoi4",
+    "onLanguage:paradox",
     "onLanguage:yaml",
     "onCommand:server.hoi4modutilities.preview",
     "onCommand:server.hoi4modutilities.previewworld",
@@ -167,7 +169,7 @@
       "editor/title": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "!server.shouldShowHoi4Preview && editorLangId =~ /^(?:plaintext|hoi4|paradox)$/ && !server.shouldHideHoi4Preview",
+          "when": "editorLangId =~ /^(plaintext|hoi4|paradox)$/ && resourceScheme != webview-panel && !server.shouldHideHoi4Preview",
           "group": "navigation"
         },
         {
@@ -179,7 +181,7 @@
       "commandPalette": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "!server.shouldHideHoi4Preview && resourceScheme != webview-panel"
+          "when": "resourceScheme != webview-panel && (!server.hoi4MULoaded || server.shouldShowHoi4Preview || editorLangId =~ /^(plaintext|hoi4|paradox)$/)"
         },
         {
           "command": "server.hoi4modutilities.scanreferences",

@@ -4,7 +4,13 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.0] - 2026/04/01 - Latest
+## [0.13.1] - 2026/04/01 - Latest
+
+### Fixed
+* Restore activation on `hoi4` and `paradox` language documents so focus previews and localisation highlighting still initialize when another syntax extension changes the language mode.
+* Relax the preview command visibility rules so the toolbar and command palette surface the preview entry again on HOI4 script documents while the forked runtime contexts warm up.
+
+## [0.13.0] - 2026/04/01
 
 ### Added
 * Add fixture-backed parser, dependency-header, and extension smoke coverage with the current VS Code test runner.
