@@ -5,7 +5,7 @@ import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
 import { sendEvent } from './telemetry';
 import { Logger } from "./logger";
-import { getFocusTree } from "../previewdef/focustree/schema";
+import { extractFocusIds } from "../previewdef/focustree/schema";
 import { parseHoi4File } from "../hoiformat/hoiparser";
 import { sharedFocusIndex } from "./featureflags";
 
@@ -91,17 +91,14 @@ async function fillFocusItems(focusFile: string, focusIndex: FocusIndex, options
     const [fileBuffer, uri] = await readFileFromModOrHOI4(focusFile, options);
     const fileContent = fileBuffer.toString();
 
-    try {
-        const sharedFocusTrees: any[] = [];
-        const focusTrees = getFocusTree(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile)), sharedFocusTrees, focusFile);
+    if (!fileContent.includes('focus_tree')
+        && !fileContent.includes('shared_focus')
+        && !fileContent.includes('joint_focus')) {
+        return;
+    }
 
-        // Only store focus trees where isSharedFocues is true
-        focusTrees.forEach(tree => {
-            if (tree.isSharedFocues) {
-                const focusKeys = Object.keys(tree.focuses);
-                focusIndex[focusFile] = focusKeys;
-            }
-        });
+    try {
+        focusIndex[focusFile] = extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile)));
 
         if (estimatedSize) {
             estimatedSize[0] += fileBuffer.length;

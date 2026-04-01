@@ -4,6 +4,7 @@ import { localize } from './i18n';
 import { UserError } from './common';
 import { isSamePath } from './nodecommon';
 import { ConfigurationKey } from '../constants';
+import { normalizeFileOrUriString } from './pathinput';
 
 export function getConfiguration() {
     return vscode.workspace.getConfiguration(ConfigurationKey);
@@ -104,16 +105,21 @@ export function basename(uri: vscode.Uri, ext?: string): string {
 }
 
 export function fileOrUriStringToUri(path: string): vscode.Uri | undefined {
-    if (path.trim() === '') {
+    const normalizedPath = normalizeFileOrUriString(path);
+    if (normalizedPath === '') {
         return undefined;
     }
 
     try {
-        if (path.indexOf(':') > 2) { // try to avoid prefix like "D:\"
-            return vscode.Uri.parse(path);
-        } else {
-            return vscode.Uri.file(path);
+        if (/^[a-zA-Z]:[\\/]/.test(normalizedPath) || /^\\\\/.test(normalizedPath)) {
+            return vscode.Uri.file(normalizedPath);
         }
+
+        if (normalizedPath.indexOf(':') > 2) { // try to avoid prefix like "D:\"
+            return vscode.Uri.parse(normalizedPath);
+        }
+
+        return vscode.Uri.file(normalizedPath);
     } catch (e) {
         return undefined;
     }

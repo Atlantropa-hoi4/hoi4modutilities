@@ -26,7 +26,7 @@ function showBranch(visibility: boolean, optionClass: string) {
         const element = elements[i] as HTMLDivElement;
         element.style.display = element.className.split(' ').some(b => hiddenBranches[b]) ? "none" : "block";
     }
-};
+}
 
 function search(searchContent: string, navigate: boolean = true) {
     const focuses = document.getElementsByClassName('focus');
@@ -55,10 +55,35 @@ const useConditionInFocus: boolean = (window as any).useConditionInFocus;
 const focusTrees: FocusTree[] = (window as any).focusTrees;
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
+let selectedInlayExprs: ConditionItem[] = getState().selectedInlayExprs ?? [];
 let selectedFocusTreeIndex: number = Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0);
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
+let inlayConditions: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
+
+function showInlayWindows() {
+    return !!(window as any).__showInlayWindows;
+}
+
+function getSelectedInlayWindowIds() {
+    return getState().selectedInlayWindowIds ?? {} as Record<string, string | undefined>;
+}
+
+function getSelectedInlayWindowId(focusTree: FocusTree): string | undefined {
+    const selected = getSelectedInlayWindowIds()[focusTree.id];
+    if (focusTree.inlayWindows.some(inlay => inlay.id === selected)) {
+        return selected;
+    }
+
+    return focusTree.inlayWindows[0]?.id;
+}
+
+function setSelectedInlayWindowId(focusTree: FocusTree, inlayWindowId: string | undefined) {
+    const selectedInlayWindowIds = getSelectedInlayWindowIds();
+    selectedInlayWindowIds[focusTree.id] = inlayWindowId;
+    setState({ selectedInlayWindowIds });
+}
 
 async function buildContent() {
     const focusCheckState = getState().checkedFocuses ?? {};
@@ -68,34 +93,39 @@ async function buildContent() {
     clearCheckedFocuses();
 
     const focustreeplaceholder = document.getElementById('focustreeplaceholder') as HTMLDivElement;
-    
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = (window as any).renderedFocus;
     const focusTree = focusTrees[selectedFocusTreeIndex];
     const focuses = Object.values(focusTree.focuses);
 
     const allowBranchOptionsValue: Record<string, boolean> = {};
-    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs, ...selectedExprs];
+    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs, ...selectedExprs, ...selectedInlayExprs];
     focusTree.allowBranchOptions.forEach(option => {
         const focus = focusTree.focuses[option];
         allowBranchOptionsValue[option] = !focus || focus.allowBranch === undefined || applyCondition(focus.allowBranch, exprs);
     });
 
+    if (focusTree.isSharedFocues) {
+        focusTree.allowBranchOptions.forEach(option => {
+            allowBranchOptionsValue[option] = true;
+        });
+    }
+
     const gridbox: GridBoxType = (window as any).gridBox;
 
     const focusPosition: Record<string, NumberPosition> = {};
     calculateFocusAllowed(focusTree, allowBranchOptionsValue);
-    const focusGrixBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, exprs)).filter((v): v is GridBoxItem => !!v);
-    
+    const focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, exprs)).filter((v): v is GridBoxItem => !!v);
+
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
     const leftPadding = gridbox.position.x._value - Math.min(minX * (window as any).xGridSize, 0);
 
-    const focusTreeContent = await renderGridBoxCommon({ ...gridbox, position: {...gridbox.position, x: toNumberLike(leftPadding)} }, {
+    const focusTreeContent = await renderGridBoxCommon({ ...gridbox, position: { ...gridbox.position, x: toNumberLike(leftPadding) } }, {
         size: { width: 0, height: 0 },
         orientation: 'upper_left'
     }, {
         styleTable,
-        items: arrayToMap(focusGrixBoxItems, 'id'),
+        items: arrayToMap(focusGridBoxItems, 'id'),
         onRenderItem: item => Promise.resolve(
             renderedFocus[item.id]
                 .replace('{{position}}', item.gridX + ', ' + item.gridY)
@@ -105,6 +135,8 @@ async function buildContent() {
     });
 
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement((window as any).styleNonce);
+    const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
+    inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, exprs);
 
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
@@ -160,7 +192,9 @@ function updateSelectedFocusTree(clearCondition: boolean) {
     }
 
     if (useConditionInFocus) {
-        const conditionExprs = focusTree.conditionExprs.filter(e => e.scopeName !== '' ||
+        const conditionExprs = dedupeConditionExprs(focusTree.conditionExprs).filter(e => e.scopeName !== '' ||
+            (!e.nodeContent.startsWith('has_focus_tree = ') && !e.nodeContent.startsWith('has_completed_focus = ')));
+        const currentInlayConditionExprs = dedupeConditionExprs(focusTree.inlayConditionExprs).filter(e => e.scopeName !== '' ||
             (!e.nodeContent.startsWith('has_focus_tree = ') && !e.nodeContent.startsWith('has_completed_focus = ')));
 
         const conditionContainerElement = document.getElementById('condition-container') as HTMLDivElement | null;
@@ -176,6 +210,19 @@ function updateSelectedFocusTree(clearCondition: boolean) {
             conditions.selectedValues$.next(clearCondition ? [] : selectedExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
         }
 
+        const inlayConditionContainerElement = document.getElementById('inlay-condition-container') as HTMLDivElement | null;
+        if (inlayConditionContainerElement) {
+            inlayConditionContainerElement.style.display = showInlayWindows() && currentInlayConditionExprs.length > 0 ? 'block' : 'none';
+        }
+
+        if (inlayConditions) {
+            inlayConditions.select.innerHTML = `<span class="value"></span>
+                ${currentInlayConditionExprs.map(option =>
+                    `<div class="option" value='${option.scopeName}!|${option.nodeContent}'>${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}</div>`
+                ).join('')}`;
+            inlayConditions.selectedValues$.next(clearCondition ? [] : selectedInlayExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
+        }
+
     } else {
         const allowBranchesContainerElement = document.getElementById('allowbranch-container') as HTMLDivElement | null;
         if (allowBranchesContainerElement) {
@@ -186,6 +233,24 @@ function updateSelectedFocusTree(clearCondition: boolean) {
             allowBranches.select.innerHTML = `<span class="value"></span>
                 ${focusTree.allowBranchOptions.map(option => `<div class="option" value="inbranch_${option}">${option}</div>`).join('')}`;
             allowBranches.selectAll();
+        }
+    }
+
+    const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLSelectElement | null;
+    const inlayWindowsContainerElement = document.getElementById('inlay-window-container') as HTMLDivElement | null;
+    const showInlayWindowsContainerElement = document.getElementById('show-inlay-windows-container') as HTMLDivElement | null;
+    if (showInlayWindowsContainerElement) {
+        showInlayWindowsContainerElement.style.display = focusTree.inlayWindows.length > 0 ? 'flex' : 'none';
+    }
+    if (inlayWindowsContainerElement) {
+        inlayWindowsContainerElement.style.display = focusTree.inlayWindows.length > 0 ? 'block' : 'none';
+    }
+    if (inlayWindowsElement) {
+        inlayWindowsElement.innerHTML = focusTree.inlayWindows.map(inlay => `<option value="${inlay.id}">${inlay.id}</option>`).join('');
+        const selectedInlayWindowId = getSelectedInlayWindowId(focusTree);
+        if (selectedInlayWindowId) {
+            inlayWindowsElement.value = selectedInlayWindowId;
+            setSelectedInlayWindowId(focusTree, selectedInlayWindowId);
         }
     }
 
@@ -249,30 +314,23 @@ function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTab
 
 function focusToGridItem(
     focus: Focus,
-    focustree: FocusTree,
+    focusTree: FocusTree,
     allowBranchOptionsValue: Record<string, boolean>,
     positionByFocusId: Record<string, NumberPosition>,
     exprs: ConditionItem[],
 ): GridBoxItem | undefined {
-    if (useConditionInFocus) {
-        if (allowBranchOptionsValue[focus.id] === false) {
-            return undefined;
-        }
+    if (useConditionInFocus && allowBranchOptionsValue[focus.id] === false) {
+        return undefined;
     }
 
     const classNames = focus.inAllowBranch.map(v => 'inbranch_' + v).join(' ');
     const connections: GridBoxConnection[] = [];
-    
+
     for (const prerequisites of focus.prerequisite) {
-        let style: string;
-        if (prerequisites.length > 1) {
-            style = "1px dashed #88aaff";
-        } else {
-            style = "1px solid #88aaff";
-        }
+        const style = prerequisites.length > 1 ? "1px dashed #88aaff" : "1px solid #88aaff";
 
         prerequisites.forEach(p => {
-            const fp = focustree.focuses[p];
+            const fp = focusTree.focuses[p];
             const classNames2 = fp?.inAllowBranch.map(v => 'inbranch_' + v).join(' ') ?? '';
             connections.push({
                 target: p,
@@ -284,7 +342,7 @@ function focusToGridItem(
     }
 
     focus.exclusive.forEach(e => {
-        const fe = focustree.focuses[e];
+        const fe = focusTree.focuses[e];
         const classNames2 = fe?.inAllowBranch.map(v => 'inbranch_' + v).join(' ') ?? '';
         connections.push({
             target: e,
@@ -294,7 +352,7 @@ function focusToGridItem(
         });
     });
 
-    const position = getFocusPosition(focus, positionByFocusId, focustree, [], exprs);
+    const position = getFocusPosition(focus, positionByFocusId, focusTree, [], exprs);
 
     return {
         id: focus.id,
@@ -336,16 +394,16 @@ function setupCheckedFocuses(focuses: Focus[], focusTree: FocusTree) {
                     setState({ checkedFocuses: focusCheckState });
 
                     const rect = checkbox.getBoundingClientRect();
-                    const oldLeft = rect.left, oldTop = rect.top;
+                    const oldLeft = rect.left;
+                    const oldTop = rect.top;
                     await buildContent();
 
                     const newCheckbox = document.getElementById(`checkbox-${normalizeForStyle(focus.id)}`) as HTMLInputElement;
                     if (newCheckbox) {
-                        const rect = newCheckbox.getBoundingClientRect();
-                        const newLeft = rect.left, newTop = rect.top;
-                        window.scrollBy(newLeft - oldLeft, newTop - oldTop);
+                        const newRect = newCheckbox.getBoundingClientRect();
+                        window.scrollBy(newRect.left - oldLeft, newRect.top - oldTop);
                     }
-                    
+
                     retriggerSearch();
                 });
             } else {
@@ -355,21 +413,91 @@ function setupCheckedFocuses(focuses: Focus[], focusTree: FocusTree) {
     }
 }
 
+function dedupeConditionExprs(exprs: ConditionItem[]): ConditionItem[] {
+    const result: ConditionItem[] = [];
+    for (const expr of exprs) {
+        if (!result.some(existing => existing.scopeName === expr.scopeName && existing.nodeContent === expr.nodeContent)) {
+            result.push(expr);
+        }
+    }
+
+    return result;
+}
+
+function renderInlayWindows(focusTree: FocusTree, exprs: ConditionItem[]): string {
+    if (!showInlayWindows()) {
+        return '';
+    }
+
+    const selectedInlayWindowId = getSelectedInlayWindowId(focusTree);
+    if (!selectedInlayWindowId) {
+        return '';
+    }
+
+    const selectedInlayWindow = focusTree.inlayWindows.find(inlay => inlay.id === selectedInlayWindowId);
+    if (!selectedInlayWindow || !applyCondition(selectedInlayWindow.visible, exprs)) {
+        return '';
+    }
+
+    const renderedInlayWindows: Record<string, string> = (window as any).renderedInlayWindows ?? {};
+    const template = renderedInlayWindows[selectedInlayWindow.id] ?? '';
+    return selectedInlayWindow.scriptedImages.reduce((content, slot) => {
+        const activeOption = getActiveInlayOption(slot.gfxOptions, exprs);
+        return content.split(`{{inlay_slot_class:${slot.id}}}`).join(activeOption ? getInlayGfxClassName(activeOption.gfxName, activeOption.gfxFile) : '');
+    }, template);
+}
+
+function getActiveInlayOption<T extends { condition: any }>(options: T[], exprs: ConditionItem[]): T | undefined {
+    for (const option of options) {
+        if (applyCondition(option.condition, exprs)) {
+            return option;
+        }
+    }
+
+    return undefined;
+}
+
+function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | undefined): string {
+    return 'st-inlay-gfx-' + normalizeForStyle((gfxFile ?? 'missing') + '-' + (gfxName ?? 'missing'));
+}
+
 let retriggerSearch: () => void = () => {};
 
 window.addEventListener('load', tryRun(async function() {
-    // Focuses
-    const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
-    if (focusesElement) {
-        focusesElement.value = selectedFocusTreeIndex.toString();
-        focusesElement.addEventListener('change', () => {
-            selectedFocusTreeIndex = parseInt(focusesElement.value);
-            setState({ selectedFocusTreeIndex });
-            updateSelectedFocusTree(true);
+    const showInlayWindowsElement = document.getElementById('show-inlay-windows') as HTMLInputElement | null;
+    if (showInlayWindowsElement) {
+        (window as any).__showInlayWindows = false;
+        showInlayWindowsElement.checked = false;
+        showInlayWindowsElement.addEventListener('change', async () => {
+            (window as any).__showInlayWindows = showInlayWindowsElement.checked;
+            updateSelectedFocusTree(false);
+            await buildContent();
+            retriggerSearch();
         });
     }
 
-    // Allow branch
+    const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
+    if (focusesElement) {
+        focusesElement.value = selectedFocusTreeIndex.toString();
+        focusesElement.addEventListener('change', async () => {
+            selectedFocusTreeIndex = parseInt(focusesElement.value);
+            setState({ selectedFocusTreeIndex });
+            updateSelectedFocusTree(true);
+            await buildContent();
+            retriggerSearch();
+        });
+    }
+
+    const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLSelectElement | null;
+    if (inlayWindowsElement) {
+        inlayWindowsElement.addEventListener('change', async () => {
+            const focusTree = focusTrees[selectedFocusTreeIndex];
+            setSelectedInlayWindowId(focusTree, inlayWindowsElement.value);
+            await buildContent();
+            retriggerSearch();
+        });
+    }
+
     if (!useConditionInFocus) {
         const hiddenBranches = getState().hiddenBranches || {};
         for (const key in hiddenBranches) {
@@ -398,7 +526,6 @@ window.addEventListener('load', tryRun(async function() {
         }
     }
 
-    // Searchbox
     const searchbox = document.getElementById('searchbox') as HTMLInputElement;
     let currentNavigatedIndex = 0;
     let oldSearchboxValue: string = getState().searchboxValue || '';
@@ -434,12 +561,11 @@ window.addEventListener('load', tryRun(async function() {
 
     retriggerSearch = () => { searchedFocus = search(oldSearchboxValue, false); };
 
-    // Conditions
     if (useConditionInFocus) {
         const conditionsElement = document.getElementById('conditions') as HTMLDivElement | null;
         if (conditionsElement) {
             conditions = new DivDropdown(conditionsElement, true);
-            
+
             conditions.selectedValues$.next(selectedExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
             conditions.selectedValues$.subscribe(async (selection) => {
                 selectedExprs = selection.map<ConditionItem>(selection => {
@@ -449,27 +575,53 @@ window.addEventListener('load', tryRun(async function() {
                             scopeName: '',
                             nodeContent: selection,
                         };
-                    } else {
-                        return {
-                            scopeName: selection.substring(0, index),
-                            nodeContent: selection.substring(index + 2),
-                        };
                     }
+
+                    return {
+                        scopeName: selection.substring(0, index),
+                        nodeContent: selection.substring(index + 2),
+                    };
                 });
 
                 setState({ selectedExprs });
-                
+
+                await buildContent();
+                retriggerSearch();
+            });
+        }
+
+        const inlayConditionsElement = document.getElementById('inlay-conditions') as HTMLDivElement | null;
+        if (inlayConditionsElement) {
+            inlayConditions = new DivDropdown(inlayConditionsElement, true);
+
+            inlayConditions.selectedValues$.next(selectedInlayExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
+            inlayConditions.selectedValues$.subscribe(async (selection) => {
+                selectedInlayExprs = selection.map<ConditionItem>(selection => {
+                    const index = selection.indexOf('!|');
+                    if (index === -1) {
+                        return {
+                            scopeName: '',
+                            nodeContent: selection,
+                        };
+                    }
+
+                    return {
+                        scopeName: selection.substring(0, index),
+                        nodeContent: selection.substring(index + 2),
+                    };
+                });
+
+                setState({ selectedInlayExprs });
+
                 await buildContent();
                 retriggerSearch();
             });
         }
     }
 
-    // Zoom
     const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
     enableZoom(contentElement, 0, 40);
 
-    // Toggle warnings
     const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
     if (showWarnings) {
         const warnings = document.getElementById('warnings-container') as HTMLDivElement;
@@ -479,7 +631,7 @@ window.addEventListener('load', tryRun(async function() {
             warnings.style.display = visible ? 'none' : 'block';
         });
     }
-    
+
     updateSelectedFocusTree(false);
     await buildContent();
     scrollToState();

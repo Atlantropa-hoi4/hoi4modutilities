@@ -204,7 +204,7 @@
     "package:dist": "webpack --mode production",
     "vscode:prepublish": "npm run clean && npm run package:dist",
     "lint": "eslint src webviewsrc test --ext .ts",
-    "test:unit": "mocha --recursive \"out/test/unit/**/*.test.js\"",
+    "test:unit": "mocha --exit --recursive \"out/test/unit/**/*.test.js\"",
     "test": "npm run compile-ts && npm run lint && npm run test:unit",
     "test-ui": "npm run compile-ts && vscode-test --config .vscode-test.mjs",
     "package": "vsce package --no-dependencies",

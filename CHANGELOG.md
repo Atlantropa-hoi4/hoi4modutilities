@@ -9,10 +9,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Added
 * Add fixture-backed parser, dependency-header, and extension smoke coverage with the current VS Code test runner.
 * Add regression coverage for newer HOI4 scoped variable syntax such as array references, scoped variables, and attached values.
+* Add focus tree preview support for focus inlay windows, including scripted GUI resolution and preview toggles.
 
 ### Changed
 * Modernize the development toolchain around local `npm ci`, TypeScript 6, webpack 5, and desktop-only VS Code extension packaging.
 * Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
+* Complete `joint_focus` preview handling so joint focus files render as their own tree and linked national focus trees can surface them consistently.
+
+### Fixed
+* Accept quoted `.mod` file paths copied from Explorer or terminal output when resolving the working mod descriptor.
 
 ## [0.12.2] - 2024/12/07
 

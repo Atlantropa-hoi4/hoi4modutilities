@@ -1,16 +1,25 @@
-import { Node, Token } from "../../hoiformat/hoiparser";
-import { HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
-import { normalizeNumberLike } from "../../util/hoi4gui/common";
+import * as path from 'path';
 import { flatten, chain } from 'lodash';
 import { ConditionItem, ConditionComplexExpr, extractConditionValues, extractConditionValue, extractConditionalExprs } from "../../hoiformat/condition";
+import { Node, Token } from "../../hoiformat/hoiparser";
+import { ContainerWindowType } from "../../hoiformat/gui";
+import { HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
 import { countryScope } from "../../hoiformat/scope";
-import { useConditionInFocus } from "../../util/featureflags";
 import { randomString, Warning } from "../../util/common";
+import { useConditionInFocus } from "../../util/featureflags";
+import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
+import { parseInlayWindowRef } from "./inlay";
+
+export type FocusTreeKind = 'focus' | 'shared' | 'joint';
 
 export interface FocusTree {
     id: string;
+    kind: FocusTreeKind;
     focuses: Record<string, Focus>;
+    inlayWindowRefs: FocusTreeInlayRef[];
+    inlayWindows: FocusTreeInlay[];
+    inlayConditionExprs: ConditionItem[];
     allowBranchOptions: string[];
     conditionExprs: ConditionItem[];
     isSharedFocues: boolean;
@@ -45,6 +54,50 @@ export interface FocusWarning extends Warning<string> {
     navigations?: { file: string, start: number, end: number }[];
 }
 
+export interface FocusTreeInlayRef {
+    id: string;
+    position: { x: number, y: number };
+    file: string;
+    token: Token | undefined;
+}
+
+export interface FocusTreeInlay {
+    id: string;
+    file: string;
+    token: Token | undefined;
+    windowName?: string;
+    guiFile?: string;
+    guiWindow?: HOIPartial<ContainerWindowType>;
+    internal: boolean;
+    visible: ConditionComplexExpr;
+    position: { x: number, y: number };
+    scriptedImages: FocusInlayImageSlot[];
+    scriptedButtons: FocusTreeInlayButtonMeta[];
+    conditionExprs: ConditionItem[];
+}
+
+export interface FocusInlayImageSlot {
+    id: string;
+    file: string;
+    token: Token | undefined;
+    gfxOptions: FocusInlayGfxOption[];
+}
+
+export interface FocusInlayGfxOption {
+    gfxName: string;
+    condition: ConditionComplexExpr;
+    file: string;
+    token: Token | undefined;
+    gfxFile?: string;
+}
+
+export interface FocusTreeInlayButtonMeta {
+    id: string;
+    file: string;
+    token: Token | undefined;
+    available?: ConditionComplexExpr;
+}
+
 interface Offset {
     x: number;
     y: number;
@@ -56,6 +109,7 @@ interface FocusTreeDef {
     shared_focus: string[];
     focus: FocusDef[];
     continuous_focus_position: Position;
+    inlay_window: Raw[];
 }
 
 interface FocusDef {
@@ -66,7 +120,7 @@ interface FocusDef {
     prerequisite: FocusOrORList[];
     mutually_exclusive: FocusOrORList[];
     relative_position_id: string;
-    allow_branch: Raw[]; /* FIXME not symbol node */
+    allow_branch: Raw[];
     offset: OffsetDef[];
     _token: Token;
     text?: string;
@@ -151,6 +205,10 @@ const focusTreeSchema: SchemaDef<FocusTreeDef> = {
         _type: 'array',
     },
     continuous_focus_position: positionSchema,
+    inlay_window: {
+        _innerType: 'raw',
+        _type: 'array',
+    },
 };
 
 const focusFileSchema: SchemaDef<FocusFile> = {
@@ -177,36 +235,93 @@ export function convertFocusFileNodeToJson(node: Node, constants: {}): HOIPartia
     return convertNodeToJson<FocusFile>(node, focusFileSchema, constants);
 }
 
-export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFocusTrees: FocusTree[], filePath: string, constants: {} ): FocusTree[] {
+export function extractFocusIds(node: Node): string[] {
+    const constants = {};
+    const file = convertFocusFileNodeToJson(node, constants);
+    const ids: string[] = [];
+
+    for (const tree of file.focus_tree) {
+        for (const focus of tree.focus) {
+            if (focus.id) {
+                ids.push(focus.id);
+            }
+        }
+    }
+
+    for (const focus of file.shared_focus) {
+        if (focus.id) {
+            ids.push(focus.id);
+        }
+    }
+
+    for (const focus of file.joint_focus) {
+        if (focus.id) {
+            ids.push(focus.id);
+        }
+    }
+
+    return ids;
+}
+
+export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFocusTrees: FocusTree[], filePath: string, constants: {}): FocusTree[] {
     const focusTrees: FocusTree[] = [];
+    const linkedFocusTrees = [...sharedFocusTrees];
 
     if (file.shared_focus.length > 0) {
         const conditionExprs: ConditionItem[] = [];
         const warnings: FocusWarning[] = [];
-        const focuses = getFocuses([...file.shared_focus, ...file.joint_focus], conditionExprs, filePath, warnings, constants);
-        const sharedFocusTree = {
+        const focuses = getFocuses(file.shared_focus, conditionExprs, filePath, warnings, constants);
+        validateRelativePositionId(focuses, warnings);
+
+        const sharedFocusTree: FocusTree = {
             id: localize('focustree.sharedfocuses', '<Shared focuses>'),
+            kind: 'shared',
             focuses,
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            inlayConditionExprs: [],
             allowBranchOptions: getAllowBranchOptions(focuses),
             conditionExprs,
             isSharedFocues: true,
             warnings,
         };
         focusTrees.push(sharedFocusTree);
-        sharedFocusTrees = [sharedFocusTree, ...sharedFocusTrees];
+        linkedFocusTrees.unshift(sharedFocusTree);
+    }
+
+    if (file.joint_focus.length > 0) {
+        const conditionExprs: ConditionItem[] = [];
+        const warnings: FocusWarning[] = [];
+        const focuses = getFocuses(file.joint_focus, conditionExprs, filePath, warnings, constants);
+        validateRelativePositionId(focuses, warnings);
+
+        const jointFocusTree: FocusTree = {
+            id: getJointFocusTreeId(filePath),
+            kind: 'joint',
+            focuses,
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            inlayConditionExprs: [],
+            allowBranchOptions: getAllowBranchOptions(focuses),
+            conditionExprs,
+            isSharedFocues: false,
+            warnings,
+        };
+        focusTrees.push(jointFocusTree);
+        linkedFocusTrees.unshift(jointFocusTree);
     }
 
     for (const focusTree of file.focus_tree) {
         const conditionExprs: ConditionItem[] = [];
         const warnings: FocusWarning[] = [];
         const focuses = getFocuses(focusTree.focus, conditionExprs, filePath, warnings, constants);
-        
+
         if (useConditionInFocus) {
             for (const sharedFocus of focusTree.shared_focus) {
                 if (!sharedFocus) {
                     continue;
                 }
-                addSharedFocus(focuses, filePath, sharedFocusTrees, sharedFocus, conditionExprs, warnings);
+                addSharedFocus(focuses, filePath, linkedFocusTrees, sharedFocus, conditionExprs, warnings);
             }
         }
 
@@ -214,7 +329,15 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
 
         focusTrees.push({
             id: focusTree.id ?? localize('focustree.ananymous', '<Anonymous focus tree>'),
+            kind: 'focus',
             focuses,
+            inlayWindowRefs: focusTree.inlay_window
+                .map(v => v?._raw)
+                .filter((v): v is Node => v !== undefined)
+                .map(v => parseInlayWindowRef(v, filePath))
+                .filter((v): v is FocusTreeInlayRef => v !== undefined),
+            inlayWindows: [],
+            inlayConditionExprs: [],
             allowBranchOptions: getAllowBranchOptions(focuses),
             continuousFocusPositionX: normalizeNumberLike(focusTree.continuous_focus_position?.x, 0) ?? 50,
             continuousFocusPositionY: normalizeNumberLike(focusTree.continuous_focus_position?.y, 0) ?? 1000,
@@ -225,6 +348,12 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
     }
 
     return focusTrees;
+}
+
+function getJointFocusTreeId(filePath: string): string {
+    const fileName = path.basename(filePath, path.extname(filePath));
+    const label = localize('TODO', '<Joint focus tree>');
+    return fileName ? `${label} (${fileName})` : label;
 }
 
 export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath: string): FocusTree[] {
@@ -239,28 +368,30 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
 
     for (const hoiFocus of hoiFocuses) {
         const focus = getFocus(hoiFocus, conditionExprs, filePath, warnings, constants);
-        if (focus !== null) {
-            if (focus.id in focuses) {
-                const otherFocus = focuses[focus.id];
-                warnings.push({
-                    text: localize('focustree.warnings.focusidconflict', "There're more than one focuses with ID {0} in file: {1}.", focus.id, filePath),
-                    source: focus.id,
-                    navigations: [
-                        {
-                            file: filePath,
-                            start: focus.token?.start ?? 0,
-                            end: focus.token?.end ?? 0,
-                        },
-                        {
-                            file: filePath,
-                            start: otherFocus.token?.start ?? 0,
-                            end: otherFocus.token?.end ?? 0,
-                        },
-                    ]
-                });
-            }
-            focuses[focus.id] = focus;
+        if (focus === null) {
+            continue;
         }
+
+        if (focus.id in focuses) {
+            const otherFocus = focuses[focus.id];
+            warnings.push({
+                text: localize('focustree.warnings.focusidconflict', "There're more than one focuses with ID {0} in file: {1}.", focus.id, filePath),
+                source: focus.id,
+                navigations: [
+                    {
+                        file: filePath,
+                        start: focus.token?.start ?? 0,
+                        end: focus.token?.end ?? 0,
+                    },
+                    {
+                        file: filePath,
+                        start: otherFocus.token?.start ?? 0,
+                        end: otherFocus.token?.end ?? 0,
+                    },
+                ]
+            });
+        }
+        focuses[focus.id] = focus;
     }
 
     let hasChangedInAllowBranch = true;
@@ -274,7 +405,7 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
             }
 
             chain(allPrerequisites)
-                .flatMap(p  => focuses[p].inAllowBranch)
+                .flatMap(p => focuses[p].inAllowBranch)
                 .forEach(ab => {
                     if (!focus.inAllowBranch.includes(ab)) {
                         focus.inAllowBranch.push(ab);
@@ -298,10 +429,6 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         });
     }
 
-    const x = hoiFocus.x ?? 0;
-    const y = hoiFocus.y ?? 0;
-    const relativePositionId = hoiFocus.relative_position_id;
-
     const exclusive = chain(hoiFocus.mutually_exclusive)
         .flatMap(f => f.focus.concat(f.OR))
         .filter((s): s is string => s !== undefined)
@@ -317,14 +444,12 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         trigger: o.trigger ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition : false,
     }));
 
-    const text = hoiFocus.text;
-
     return {
         id,
         icon,
-        x,
-        y,
-        relativePositionId,
+        x: hoiFocus.x ?? 0,
+        y: hoiFocus.y ?? 0,
+        relativePositionId: hoiFocus.relative_position_id,
         prerequisite,
         exclusive,
         hasAllowBranch,
@@ -333,7 +458,7 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         offset,
         token: hoiFocus._token,
         file: filePath,
-        text,
+        text: hoiFocus.text,
     };
 }
 
@@ -362,30 +487,32 @@ function addSharedFocus(focuses: Record<string, Focus>, filePath: string, shared
                 continue;
             }
 
-            if (allPrerequisites.every(p => p in focuses)) {
-                if (focus.id in focuses) {
-                    const otherFocus = focuses[focus.id];
-                    warnings.push({
-                        text: localize('focustree.warnings.focusidconflict2', "There're more than one focuses with ID {0} in files: {1}, {2}.", focus.id, filePath, focus.file),
-                        source: focus.id,
-                        navigations: [
-                            {
-                                file: focus.file,
-                                start: focus.token?.start ?? 0,
-                                end: focus.token?.end ?? 0,
-                            },
-                            {
-                                file: filePath,
-                                start: otherFocus.token?.start ?? 0,
-                                end: otherFocus.token?.end ?? 0,
-                            },
-                        ]
-                    });
-                }
-                focuses[key] = focus;
-                updateConditionExprsByFocus(focus, conditionExprs);
-                hasChanged = true;
+            if (!allPrerequisites.every(p => p in focuses)) {
+                continue;
             }
+
+            if (focus.id in focuses) {
+                const otherFocus = focuses[focus.id];
+                warnings.push({
+                    text: localize('focustree.warnings.focusidconflict2', "There're more than one focuses with ID {0} in files: {1}, {2}.", focus.id, filePath, focus.file),
+                    source: focus.id,
+                    navigations: [
+                        {
+                            file: focus.file,
+                            start: focus.token?.start ?? 0,
+                            end: focus.token?.end ?? 0,
+                        },
+                        {
+                            file: filePath,
+                            start: otherFocus.token?.start ?? 0,
+                            end: otherFocus.token?.end ?? 0,
+                        },
+                    ]
+                });
+            }
+            focuses[key] = focus;
+            updateConditionExprsByFocus(focus, conditionExprs);
+            hasChanged = true;
         }
     }
 
@@ -471,7 +598,7 @@ function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: Conditi
     if (stringResult) {
         return { icon: stringResult, condition: true };
     }
-    
+
     const iconWithCondition = convertNodeToJson<FocusIconDef>(node, focusIconSchema, constants);
     return {
         icon: iconWithCondition.value,

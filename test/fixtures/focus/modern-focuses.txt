@@ -1,0 +1,25 @@
+shared_focus = {
+    id = SHARED_ROOT
+    x = 0
+    y = 0
+}
+
+joint_focus = {
+    id = JOINT_ALPHA
+    x = 1
+    y = 2
+}
+
+focus_tree = {
+    id = test_tree
+    shared_focus = JOINT_ALPHA
+    inlay_window = {
+        id = test_inlay
+        position = { x = 150 y = 275 }
+    }
+    focus = {
+        id = ROOT_FOCUS
+        x = 0
+        y = 0
+    }
+}
