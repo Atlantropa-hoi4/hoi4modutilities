@@ -53,13 +53,13 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.commands.registerCommand(Commands.Preview, this.showPreview, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
-        disposables.push(vscode.window.onDidChangeActiveTextEditor(this.updateHoi4PreviewContextValue, this));
-        disposables.push(vscode.window.onDidChangeVisibleTextEditors(() => this.updateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
-        disposables.push(vscode.workspace.onDidOpenTextDocument(() => this.updateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
+        disposables.push(vscode.window.onDidChangeActiveTextEditor(this.safeUpdateHoi4PreviewContextValue, this));
+        disposables.push(vscode.window.onDidChangeVisibleTextEditors(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
+        disposables.push(vscode.workspace.onDidOpenTextDocument(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
 
         // Trigger context value setting
-        this.updateHoi4PreviewContextValue(vscode.window.activeTextEditor);
+        this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor);
 
         return vscode.Disposable.from(...disposables);
     }
@@ -122,6 +122,18 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         setVscodeContext(ContextName.ShouldShowHoi4Preview, shouldShowPreviewButton);
         setVscodeContext(ContextName.ShouldHideHoi4Preview, !shouldShowPreviewButton);
         setVscodeContext(ContextName.Hoi4PreviewType, hoi4PreviewType);
+    }
+
+    private safeUpdateHoi4PreviewContextValue(textEditor: vscode.TextEditor | undefined): void {
+        try {
+            this.updateHoi4PreviewContextValue(textEditor);
+        } catch (e) {
+            error(e);
+            debug(`Failed to update preview context for ${textEditor?.document.uri.toString() ?? '<no editor>'}`);
+            setVscodeContext(ContextName.ShouldShowHoi4Preview, false);
+            setVscodeContext(ContextName.ShouldHideHoi4Preview, false);
+            setVscodeContext(ContextName.Hoi4PreviewType, '');
+        }
     }
 
     private async showPreviewImpl(requestUri?: vscode.Uri, panel?: vscode.WebviewPanel): Promise<void> {
@@ -206,10 +218,20 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
     private findPreviewProvider(document: vscode.TextDocument): PreviewProviderDef | undefined {
         return chain(this._previewProviders)
-            .map(p => ({ provider: p, priority: p.canPreview(document) }))
+            .map(p => ({ provider: p, priority: this.safeCanPreview(p, document) }))
             .filter((value): value is ({ provider: PreviewProviderDef; priority: number }) => value.priority !== undefined)
             .minBy(value => value.priority)
             .value()?.provider;
+    }
+
+    private safeCanPreview(provider: PreviewProviderDef, document: vscode.TextDocument): number | undefined {
+        try {
+            return provider.canPreview(document);
+        } catch (e) {
+            error(e);
+            debug(`Preview provider ${provider.type} failed for ${document.uri.toString()}`);
+            return undefined;
+        }
     }
 
     private addPreviewToSubscription(previewItem: PreviewBase, dependency: string[]): void {

@@ -1,25 +1,23 @@
-# HOI4 Mod Utilities Persistent Runtime Regression Todo
+# HOI4 Mod Utilities Log-Based Runtime Diagnosis Todo
 
 ## Plan
-- [x] Re-check the still-broken localisation highlighting and focus preview button with emphasis on actual editor language IDs and activation assumptions
-- [x] Compare the fork against upstream/runtime expectations to find which language IDs or menu gates are still excluding valid HOI4 files
-- [x] Implement the smallest robust fix for both preview visibility and localisation highlighting
-- [x] Verify with local build/test/package steps and document the remaining manual validation step
+- [ ] Reset the still-open runtime regression notes and use the provided VS Code log as the primary evidence source
+- [ ] Inspect `main.log` and correlate any failures with this fork's activation, command registration, or preview/highlighting paths
+- [ ] Identify the concrete root cause and implement the smallest fix if it is inside the extension codebase
+- [ ] Verify locally and document any remaining manual validation step
 
 ## Notes
-- The prior `0.13.1` manifest adjustment was not sufficient according to user validation.
-- The next investigation should focus on concrete language IDs and preview gating rather than only extension identity collisions.
-- If the command still disappears, prefer broad but safe visibility plus command-side rejection over fragile menu logic.
+- User reports the same failure after multiple packaging iterations.
+- The current investigation should prefer actual logged runtime failures over further manifest speculation.
 
 ## Review
 - Implemented:
-  - inspected installed companion extensions and confirmed the active Paradox helpers on this machine use `hoi4`/`paradox` language IDs, while the Millennium Dawn fork uses file-extension-based preview visibility
-  - added `onStartupFinished` activation so the fork initializes its preview/highlighting registration even if editor restore misses a language-based activation edge
-  - changed the preview fallback visibility rule to key off `resourceExtname` for `.txt`, `.gfx`, `.gui`, and `.map` files instead of only language IDs
-  - refreshed preview context on visible-editor and open-document changes to reduce stale toolbar state
-  - bumped the package version to `0.13.2` and added manifest regression coverage for the activation/visibility rules
+  - inspected the provided VS Code logs with a local JS runtime and confirmed the real failure path was `activate -> previewManager.register -> updateHoi4PreviewContextValue -> findPreviewProvider`
+  - verified that the installed `0.13.2` package was still throwing during preview-provider probing on an active plaintext editor, which aborted extension activation before localisation highlighting and preview command wiring finished
+  - changed preview-provider detection to fail safely per provider and changed preview-context updates to catch and degrade instead of crashing activation
+  - bumped the package to `0.13.3` and documented the activation-crash fix in the changelog
 - Verification:
   - `npm run compile-ts`: passed
   - `npm run lint`: passed
   - `npm test`: passed
-  - `npm run package`: passed and produced `hoi4modutilities-0.13.2.vsix`
+  - `npm run package`: passed and produced `hoi4modutilities-0.13.3.vsix`

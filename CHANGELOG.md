@@ -4,7 +4,12 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.2] - 2026/04/01 - Latest
+## [0.13.3] - 2026/04/01 - Latest
+
+### Fixed
+* Prevent preview-provider probing from crashing extension activation when the currently active plaintext editor is an unsupported or unusual document. Preview context detection now degrades safely instead of aborting activation, so localisation highlighting and preview commands can still register.
+
+## [0.13.2] - 2026/04/01
 
 ### Fixed
 * Add `onStartupFinished` activation so localisation highlighting and preview context registration still initialize even when language-based activation is missed during editor restore.
