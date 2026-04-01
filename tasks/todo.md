@@ -1,23 +1,21 @@
-# HOI4 Mod Utilities Log-Based Runtime Diagnosis Todo
+# HOI4 Mod Utilities Lodash Chain Runtime Fix Todo
 
 ## Plan
-- [ ] Reset the still-open runtime regression notes and use the provided VS Code log as the primary evidence source
-- [ ] Inspect `main.log` and correlate any failures with this fork's activation, command registration, or preview/highlighting paths
-- [ ] Identify the concrete root cause and implement the smallest fix if it is inside the extension codebase
-- [ ] Verify locally and document any remaining manual validation step
+- [ ] Inspect the exact `(0, m.chain)(...).map is not a function` runtime failure path in preview provider lookup
+- [ ] Replace the fragile lodash chain usage with a native implementation that keeps preview selection behavior
+- [ ] Verify with local build/test/package steps and document the resulting fix
 
 ## Notes
-- User reports the same failure after multiple packaging iterations.
-- The current investigation should prefer actual logged runtime failures over further manifest speculation.
+- User provided a concrete runtime error from the installed extension: `(0 , m.chain)(...).map is not a function`.
+- The likely failure point is preview provider selection during activation, which matches the earlier log-based activation crash.
 
 ## Review
 - Implemented:
-  - inspected the provided VS Code logs with a local JS runtime and confirmed the real failure path was `activate -> previewManager.register -> updateHoi4PreviewContextValue -> findPreviewProvider`
-  - verified that the installed `0.13.2` package was still throwing during preview-provider probing on an active plaintext editor, which aborted extension activation before localisation highlighting and preview command wiring finished
-  - changed preview-provider detection to fail safely per provider and changed preview-context updates to catch and degrade instead of crashing activation
-  - bumped the package to `0.13.3` and documented the activation-crash fix in the changelog
+  - confirmed the reported runtime error matched `previewManager.findPreviewProvider()` using lodash `chain(...)`
+  - removed lodash `chain` from preview provider selection and replaced it with a native priority scan that preserves the same lowest-priority-wins behavior
+  - bumped the packaged version to `0.13.4` and documented the runtime fix in the changelog
 - Verification:
   - `npm run compile-ts`: passed
   - `npm run lint`: passed
   - `npm test`: passed
-  - `npm run package`: passed and produced `hoi4modutilities-0.13.3.vsix`
+  - `npm run package`: passed and produced `hoi4modutilities-0.13.4.vsix`

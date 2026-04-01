@@ -12,7 +12,6 @@ import { contextContainer, setVscodeContext } from '../context';
 import { basename, getDocumentByUri } from '../util/vsccommon';
 import { worldMapPreviewDef } from './worldmap';
 import { eventPreviewDef } from './event';
-import { chain } from 'lodash';
 import { sendEvent } from '../util/telemetry';
 import { guiPreviewDef } from './gui';
 import { mioPreviewDef } from './mio';
@@ -217,11 +216,22 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private findPreviewProvider(document: vscode.TextDocument): PreviewProviderDef | undefined {
-        return chain(this._previewProviders)
-            .map(p => ({ provider: p, priority: this.safeCanPreview(p, document) }))
-            .filter((value): value is ({ provider: PreviewProviderDef; priority: number }) => value.priority !== undefined)
-            .minBy(value => value.priority)
-            .value()?.provider;
+        let bestProvider: PreviewProviderDef | undefined;
+        let bestPriority: number | undefined;
+
+        for (const provider of this._previewProviders) {
+            const priority = this.safeCanPreview(provider, document);
+            if (priority === undefined) {
+                continue;
+            }
+
+            if (bestPriority === undefined || priority < bestPriority) {
+                bestProvider = provider;
+                bestPriority = priority;
+            }
+        }
+
+        return bestProvider;
     }
 
     private safeCanPreview(provider: PreviewProviderDef, document: vscode.TextDocument): number | undefined {
