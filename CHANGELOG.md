@@ -4,7 +4,13 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.4] - 2026/04/01 - Latest
+## [0.13.5] - 2026/04/01 - Latest
+
+### Fixed
+* Keep the fallback preview toolbar button mutually exclusive with the context-driven preview button so focus files show only one preview action.
+* Remove remaining lodash `chain(...).flatMap()` usage from focus preview runtime paths, fixing the focus-preview error `TypeError: (0 , s.chain)(...).flatMap is not a function`.
+
+## [0.13.4] - 2026/04/01
 
 ### Fixed
 * Remove lodash `chain()` from preview provider selection. The preview activation path now uses a native priority scan, fixing the runtime error `(0 , m.chain)(...).map is not a function`.

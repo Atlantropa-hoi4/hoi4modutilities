@@ -10,10 +10,11 @@ describe('extension manifest', () => {
     });
 
     it('keeps preview entry visible for supported HOI4 file extensions', () => {
-        const editorTitlePreviewEntry = manifest.contributes.menus['editor/title']
-            .find(entry => entry.command === 'server.hoi4modutilities.preview');
-        assert.ok(editorTitlePreviewEntry);
-        assert.ok(editorTitlePreviewEntry!.when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
-        assert.match(editorTitlePreviewEntry!.when, /resourceScheme != webview-panel/);
+        const editorTitlePreviewEntries = manifest.contributes.menus['editor/title']
+            .filter(entry => entry.command === 'server.hoi4modutilities.preview');
+        assert.strictEqual(editorTitlePreviewEntries.length, 2);
+        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
+        assert.ok(editorTitlePreviewEntries[0].when.includes('!server.shouldShowHoi4Preview'));
+        assert.match(editorTitlePreviewEntries[0].when, /resourceScheme != webview-panel/);
     });
 });

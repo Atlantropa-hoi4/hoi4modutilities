@@ -6,3 +6,4 @@
 - When a visibility or highlighting fix still fails after a manifest tweak, verify the real document language IDs in the target workflow before iterating again. HOI4 companion extensions may use IDs different from `plaintext`, `hoi4`, or `paradox`, and brittle menu gates hide the real issue.
 - When the user provides a concrete VS Code log file for an unresolved runtime issue, stop iterating on hypotheses and anchor the next fix to the logged error first.
 - When a runtime error points at a utility abstraction like lodash `chain`, prefer replacing that abstraction on the hot path with a small native implementation instead of trying to preserve a brittle shimmed chain API.
+- When broadening menu visibility as a fallback, keep the fallback entry mutually exclusive with the context-driven entry or VS Code will render duplicate toolbar buttons.

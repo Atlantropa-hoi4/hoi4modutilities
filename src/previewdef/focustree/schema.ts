@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { flatten, chain } from 'lodash';
+import { flatten } from 'lodash';
 import { ConditionItem, ConditionComplexExpr, extractConditionValues, extractConditionValue, extractConditionalExprs } from "../../hoiformat/condition";
 import { Node, Token } from "../../hoiformat/hoiparser";
 import { ContainerWindowType } from "../../hoiformat/gui";
@@ -404,15 +404,12 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
                 continue;
             }
 
-            chain(allPrerequisites)
-                .flatMap(p => focuses[p].inAllowBranch)
-                .forEach(ab => {
-                    if (!focus.inAllowBranch.includes(ab)) {
-                        focus.inAllowBranch.push(ab);
-                        hasChangedInAllowBranch = true;
-                    }
-                })
-                .value();
+            for (const allowBranchId of allPrerequisites.flatMap(p => focuses[p].inAllowBranch)) {
+                if (!focus.inAllowBranch.includes(allowBranchId)) {
+                    focus.inAllowBranch.push(allowBranchId);
+                    hasChangedInAllowBranch = true;
+                }
+            }
         }
     }
 
@@ -429,10 +426,9 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         });
     }
 
-    const exclusive = chain(hoiFocus.mutually_exclusive)
+    const exclusive = hoiFocus.mutually_exclusive
         .flatMap(f => f.focus.concat(f.OR))
-        .filter((s): s is string => s !== undefined)
-        .value();
+        .filter((s): s is string => s !== undefined);
     const prerequisite = hoiFocus.prerequisite
         .map(p => p.focus.concat(p.OR).filter((s): s is string => s !== undefined));
     const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants, conditionExprs);
@@ -540,11 +536,11 @@ function updateConditionExprsByFocus(focus: Focus, conditionExprs: ConditionItem
 }
 
 function getAllowBranchOptions(focuses: Record<string, Focus>): string[] {
-    return chain(focuses)
-        .filter(f => f.hasAllowBranch && f.allowBranch !== true)
-        .map(f => f.id)
-        .uniq()
-        .value();
+    return Array.from(new Set(
+        Object.values(focuses)
+            .filter(f => f.hasAllowBranch && f.allowBranch !== true)
+            .map(f => f.id)
+    ));
 }
 
 function validateRelativePositionId(focuses: Record<string, Focus>, warnings: FocusWarning[]) {
