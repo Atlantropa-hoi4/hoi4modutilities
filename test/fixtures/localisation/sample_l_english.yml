@@ -1,0 +1,5 @@
+﻿l_english:
+ TEST_PLAIN:0 "Nothing special here"
+ TEST_COLOR:0 "Before §Ggreen £pol_power $TARGET$ [ROOT.GetName]§! after"
+ TEST_ESCAPED:0 "Escaped quote: \"still inside\" and §Rred text"
+ # TEST_COMMENTED:0 "§Bcomment"

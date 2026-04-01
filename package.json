@@ -23,6 +23,8 @@
     "Heart of Iron"
   ],
   "activationEvents": [
+    "onLanguage:plaintext",
+    "onLanguage:yaml",
     "onCommand:hoi4modutilities.preview",
     "onCommand:hoi4modutilities.previewworld",
     "onCommand:hoi4modutilities.scanreferences",

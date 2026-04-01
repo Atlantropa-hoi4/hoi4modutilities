@@ -10,11 +10,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Add fixture-backed parser, dependency-header, and extension smoke coverage with the current VS Code test runner.
 * Add regression coverage for newer HOI4 scoped variable syntax such as array references, scoped variables, and attached values.
 * Add focus tree preview support for focus inlay windows, including scripted GUI resolution and preview toggles.
+* Add localisation editor highlighting for HOI4 color codes, text icons, localisation references, and scripted localisation tokens inside `.yml` strings.
 
 ### Changed
 * Modernize the development toolchain around local `npm ci`, TypeScript 6, webpack 5, and desktop-only VS Code extension packaging.
 * Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
 * Complete `joint_focus` preview handling so joint focus files render as their own tree and linked national focus trees can surface them consistently.
+* Activate on plaintext and YAML documents so localisation highlighting is available when opening HOI4 localisation files directly.
 
 ### Fixed
 * Accept quoted `.mod` file paths copied from Explorer or terminal output when resolving the working mod descriptor.
