@@ -3,12 +3,15 @@
   "displayName": "%hoi4modutilities.displayName%",
   "description": "Utilities for Heart of Iron IV mods developers",
   "version": "0.13.0",
-  "author": "Chaofan Yang",
-  "publisher": "chaofan",
+  "author": "server (forked from Chaofan Yang)",
+  "publisher": "server",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/herbix/hoi4modutilities"
+    "url": "https://github.com/Atlantropa-hoi4/hoi4modutilities"
+  },
+  "bugs": {
+    "url": "https://github.com/Atlantropa-hoi4/hoi4modutilities/issues"
   },
   "engines": {
     "vscode": "^1.110.0"

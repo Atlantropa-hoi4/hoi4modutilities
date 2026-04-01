@@ -17,6 +17,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
 * Complete `joint_focus` preview handling so joint focus files render as their own tree and linked national focus trees can surface them consistently.
 * Activate on plaintext and YAML documents so localisation highlighting is available when opening HOI4 localisation files directly.
+* Rename the packaged extension identity from `chaofan.hoi4modutilities` to `server.hoi4modutilities` so this fork can be installed independently from upstream.
 
 ### Fixed
 * Accept quoted `.mod` file paths copied from Explorer or terminal output when resolving the working mod descriptor.
