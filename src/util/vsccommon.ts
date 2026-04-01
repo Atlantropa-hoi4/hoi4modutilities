@@ -139,6 +139,7 @@ const languageYmlDict = {
     French: 'l_french',
     German: 'l_german',
     Japanese: 'l_japanese',
+    Korean: 'l_korean',
     Polish: 'l_polish',
     Russian: 'l_russian',
     ['Simplified Chinese']: 'l_simp_chinese',

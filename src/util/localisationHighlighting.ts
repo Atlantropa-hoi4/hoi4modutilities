@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { Logger } from './logger';
+import { sendException } from './telemetry';
 
 export const hoi4LocalisationColors = {
     R: { color: '#FF3232', name: 'Red' },
@@ -173,7 +175,11 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
                 continue;
             }
 
-            updateEditorDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
+            try {
+                updateEditorDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
+            } catch (error) {
+                reportLocalisationHighlightingError(error, editor.document);
+            }
         }
     };
 
@@ -352,4 +358,14 @@ function createDecorationBuckets() {
         localisationReference: [] as vscode.Range[],
         scriptedLocalisation: [] as vscode.Range[],
     };
+}
+
+function reportLocalisationHighlightingError(error: unknown, document: vscode.TextDocument): void {
+    const exception = error instanceof Error ? error : new Error(String(error));
+    const path = document.uri.toString(true);
+    Logger.error(`Localisation highlighting failed for ${path}: ${exception.stack ?? exception.message}`);
+    sendException(exception, {
+        feature: 'localisationHighlighting',
+        document: path,
+    });
 }
