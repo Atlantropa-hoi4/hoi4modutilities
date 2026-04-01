@@ -1,22 +1,22 @@
-# HOI4 Mod Utilities Modernization Todo
+# HOI4 Mod Utilities Localisation Highlighting Follow-up Todo
 
 ## Plan
-- [x] Phase 1: Recover local dependencies and normalize the build / test / packaging toolchain
-- [x] Phase 1: Replace sample tests with real parser, loader, and extension smoke coverage
-- [x] Phase 2: Update the extension to current desktop-only VS Code standards
-- [x] Phase 2: Tighten webview security and clean up desktop-only code paths
-- [x] Phase 3: Extend parser / schema / scope support for newer HOI4 syntax
-- [x] Phase 3: Add regression fixtures that cover old and new HOI4 script constructs
-- [ ] Verify `npm run compile-ts`, `npm run lint`, `npm test`, `npm run test-ui`, and `npm run package`
+- [x] Re-focus the investigation on the remaining localisation highlighting issue now that focus preview is working again
+- [x] Check the installed extension version and recent VS Code logs for highlighting-specific failures or detection misses
+- [x] Broaden localisation detection for spaced filenames and non-standard-but-valid HOI4 token cases
+- [x] Re-run verification and document the remaining manual validation step
 
 ## Notes
-- Scope is desktop VS Code only.
-- Public command IDs, custom editor view types, and settings keys must remain stable.
-- Parser work should be additive and keep older HOI4 mod syntax working.
+- User confirms focus preview is back, so the remaining defect is isolated to localisation highlighting.
+- The latest logs showed activation without localisation-highlighting exceptions, which pointed to file detection rather than another extension-host crash.
+- The installed package has already moved to `server.hoi4modutilities-0.13.6`, so the next pass needs to target a narrower false-negative in localisation detection rather than installation drift.
+- A plausible missed case is filenames like `name l_english.yml`, so this pass adds direct regression coverage for spaced and dashed localisation filenames.
+- Another plausible miss is localisation entries written as `KEY: "value"` without the optional numeric version token, so this pass checks the string-range parser as well as document detection.
+- Readability is also a concern now that highlighting reaches more files, so the current pass adjusts the displayed string colors without changing the underlying HOI4 color semantics.
 
 ## Review
-- `npm run compile-ts`: passed.
-- `npm run lint`: passed with no errors.
-- `npm test`: passed with fixture-backed parser, dependency-header, and event-schema coverage.
-- `npm run package`: passed and produced `hoi4modutilities-0.12.2.vsix`.
-- `npm run test-ui`: blocked in this environment because the VS Code host launch failed with `spawn EPERM` after downloading the stable test binary.
+- Root cause candidate: the previous fix still treated localisation filenames too narrowly and only recognized `_l_*.yml`, which could miss valid filenames like `name l_english.yml` or `name-l_english.yaml`.
+- Fix: accept spaced/dashed `l_<language>` file names, support `.yaml`, and fall back to detecting HOI4 inline tokens such as `§`, `£`, `$...$`, and `[scripted_loc]` when the path is not standard.
+- Additional fix: make localisation string extraction accept `KEY: "value"` as well as `KEY:0 "value"` so highlight spans still materialize when the numeric version token is omitted.
+- Verification: `npm test` and `npm run package` passed again without another version bump, still producing `hoi4modutilities-0.13.7.vsix`.
+- Readability pass: apply theme-aware color correction and a subtle tinted background to coloured localisation text spans, while keeping the `§` color-code markers on their original HOI4 colors.

@@ -22,6 +22,7 @@ export class Cache<V> {
     constructor(protected readonly options: CacheOptions<V>) {
         if (options.life > 0) {
             this._intervalToken = setInterval(() => this.tryClean(), options.life / 5);
+            this._intervalToken.unref?.();
         }
         if (!options.expireWhenChange) {
             options.expireWhenChange = () => undefined;

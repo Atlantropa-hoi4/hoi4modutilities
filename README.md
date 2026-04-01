@@ -1,6 +1,8 @@
-# HOI4 Mod Utilities
+# HOI4 Mod Utilities (Server)
 
 This extension add tools for Heart of Iron IV modding. Some of the tools may work on other Paradox games.
+
+This repository is the `server.hoi4modutilities` fork of the original `chaofan.hoi4modutilities` extension. The extension ID is intentionally different so it can be installed and maintained independently from the upstream release.
 
 > I'm disappointed by Paradox because of the Silk Road thing. I'll pause this project until they fix it.
 
@@ -15,7 +17,7 @@ This extension add tools for Heart of Iron IV modding. Some of the tools may wor
 * `.gfx` file preview (sprites used by HOI4 are defined here)
 * `.dds`, `.tga` file preview (images files used by HOI4)
 
-For feature details and user manual, please refer to [HOI4 Mod Utilities Wiki](https://github.com/herbix/hoi4modutilities/wiki).
+For feature details and user manual, please refer to the fork wiki and repository documentation. Upstream historical docs are still useful for background, but this fork ships independently.
 
 ## Steps to start
 
@@ -63,7 +65,7 @@ For feature details and user manual, please refer to [HOI4 Mod Utilities Wiki](h
 |`hoi4ModUtilities.modFile`|`string`|Path to the working `.mod` file. This file is used to read replace_path. If not specified, will use first `.mod` file in first folder of the workspace.|
 |`hoi4ModUtilities.enableSupplyArea`|`boolean`|If you are developing mod for HOI4(version<=1.10). Use this to check enable supply area.|
 |`hoi4ModUtilities.previewLocalisation`|`enum`|Language of content in event tree preview.|
-|`hoi4ModUtilities.featureFlags`|`array` of `string`|Feature flags are used to disable or enable features. Reloading is required after changing this. Please refer to [Wiki](https://github.com/herbix/hoi4modutilities/wiki/Feature-flags) on Github for details.|
+|`hoi4ModUtilities.featureFlags`|`array` of `string`|Feature flags are used to disable or enable features. Reloading is required after changing this. Please refer to this fork's GitHub documentation for details.|
 
 ## Known Issues
 
@@ -90,7 +92,7 @@ npm run verify
 * Allow `|` in symbol type (to support the case `localization_key = building_state_modifier|dam`) (#105) (Contributor: [IShiraiKurokoI(Shirai_Kuroko)](https://github.com/IShiraiKurokoI)).
 
 ## Contribute
-* If you have any suggestion, feel free to create issue on this [Github repo](https://github.com/herbix/hoi4modutilities).
-* If you want to contribute translation, feel free to create pull request to this [Github repo](https://github.com/herbix/hoi4modutilities). All localization related files are under `i18n` folder.
+* If you have any suggestion, feel free to create issue on this [Github repo](https://github.com/Atlantropa-hoi4/hoi4modutilities).
+* If you want to contribute translation, feel free to create pull request to this [Github repo](https://github.com/Atlantropa-hoi4/hoi4modutilities). All localization related files are under `i18n` folder.
 
-* Thanks to all contributors listed [here](https://github.com/herbix/hoi4modutilities/graphs/contributors).
+* Thanks to all contributors listed [here](https://github.com/Atlantropa-hoi4/hoi4modutilities/graphs/contributors).

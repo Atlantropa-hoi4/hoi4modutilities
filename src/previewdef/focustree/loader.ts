@@ -2,10 +2,11 @@ import { ContentLoader, LoadResultOD, Dependency, LoaderSession, mergeInLoadResu
 import { convertFocusFileNodeToJson, FocusTree, getFocusTreeWithFocusFile } from "./schema";
 import { parseHoi4File } from "../../hoiformat/hoiparser";
 import { localize } from "../../util/i18n";
-import { uniq, flatten, chain } from "lodash";
+import { uniq, flatten } from "lodash";
 import { getGfxContainerFiles } from "../../util/gfxindex";
 import { sharedFocusIndex } from "../../util/featureflags";
 import { findFileByFocusKey } from "../../util/sharedFocusIndex";
+import { addInlayGfxWarnings, loadFocusInlayWindows, resolveInlayGfxFiles, resolveInlayGuiWindows, resolveInlaysForTree } from "./inlay";
 
 export interface FocusTreeLoaderResult {
     focusTrees: FocusTree[];
@@ -25,16 +26,16 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const file = convertFocusFileNodeToJson(parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file)), constants);
 
         if (sharedFocusIndex) {
+            const dependencyPaths = new Set(dependencies.map(d => d.path));
             for (const focusTree of file.focus_tree) {
                 for (const sharedFocus of focusTree.shared_focus) {
                     if (!sharedFocus) {
                         continue;
                     }
-                    const filePath = findFileByFocusKey(sharedFocus);
-                    if (filePath) {
-                        if (dependencies.findIndex((item) => item.path === filePath) === -1) {
-                            dependencies.push({type: 'focus', path: filePath});
-                        }
+                    const filePath = await findFileByFocusKey(sharedFocus);
+                    if (filePath && !dependencyPaths.has(filePath)) {
+                        dependencyPaths.add(filePath);
+                        dependencies.push({ type: 'focus', path: filePath });
                     }
                 }
             }
@@ -43,17 +44,45 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const focusTreeDependencies = dependencies.filter(d => d.type === 'focus').map(d => d.path);
         const focusTreeDepFiles = await this.loaderDependencies.loadMultiple(focusTreeDependencies, session, FocusTreeLoader);
 
-        const sharedFocusTrees = chain(focusTreeDepFiles)
-            .flatMap(f => f.result.focusTrees)
-            .filter(ft => ft.isSharedFocues)
-            .value();
+        const importedFocusTrees = focusTreeDepFiles.flatMap(f => f.result.focusTrees);
 
-        const focusTrees = getFocusTreeWithFocusFile(file, sharedFocusTrees, this.file, constants);
+        const focusTrees = getFocusTreeWithFocusFile(file, importedFocusTrees, this.file, constants);
+        focusTrees.push(...importedFocusTrees.filter(tree => tree.kind === 'joint' && !focusTrees.some(localTree => localTree.id === tree.id)));
 
+        const loadedInlays = await loadFocusInlayWindows();
+        for (const focusTree of focusTrees) {
+            const resolved = resolveInlaysForTree(focusTree.inlayWindowRefs, loadedInlays.inlays);
+            focusTree.inlayWindows = resolved.inlayWindows;
+            focusTree.inlayConditionExprs = resolved.inlayConditionExprs;
+            if (focusTree.inlayWindowRefs.length > 0) {
+                focusTree.warnings.push(...loadedInlays.warnings);
+            }
+            focusTree.warnings.push(...resolved.warnings);
+        }
+
+        const allInlays = focusTrees.flatMap(ft => ft.inlayWindows);
+        const guiResolution = await resolveInlayGuiWindows(allInlays);
+        for (const focusTree of focusTrees) {
+            focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
+        }
+
+        const inlayGfxResolution = await resolveInlayGfxFiles(allInlays);
+        for (const focusTree of focusTrees) {
+            addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
+        }
+
+        const focusIconNames = focusTrees
+            .flatMap(ft => Object.values(ft.focuses))
+            .flatMap(focus => focus.icon)
+            .map(icon => icon.icon)
+            .filter((icon): icon is string => icon !== undefined);
+        const uniqueInlayFiles = Array.from(new Set(allInlays.map(inlay => inlay.file)));
         const gfxDependencies = [
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
-            ...await getGfxContainerFiles(chain(focusTrees).flatMap(ft => Object.values(ft.focuses)).flatMap(f => f.icon).map(i => i.icon).value()),
+            ...await getGfxContainerFiles(focusIconNames),
+            ...guiResolution.guiFiles,
+            ...inlayGfxResolution.resolvedFiles,
         ];
 
         return {
@@ -65,6 +94,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 this.file,
                 focusesGFX,
                 ...gfxDependencies,
+                ...uniqueInlayFiles,
                 ...focusTreeDependencies,
                 ...mergeInLoadResult(focusTreeDepFiles, 'dependencies')
             ]),

@@ -4,14 +4,14 @@ import { registerContextContainer, setVscodeContext } from './context';
 import { DDSViewProvider, TGAViewProvider } from './ddsviewprovider';
 import { registerModFile } from './util/modfile';
 import { worldMap } from './previewdef/worldmap';
-import { ViewType, ContextName } from './constants';
+import { ViewType, ContextName, Commands } from './constants';
 import { registerTelemetryReporter, sendEvent } from './util/telemetry';
 import { registerScanReferencesCommand } from './util/dependency';
 import { registerHoiFs } from './util/hoifs';
 import { loadI18n } from './util/i18n';
 import { registerGfxIndex } from './util/gfxindex';
-import { Logger } from "./util/logger";
 import { registerLocalisationIndex } from "./util/localisationIndex";
+import { registerLocalisationHighlighting } from './util/localisationHighlighting';
 import { registerSharedFocusIndex } from "./util/sharedFocusIndex";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -19,9 +19,6 @@ export function activate(context: vscode.ExtensionContext) {
     if (locale === "%hoi4modutilities.locale%") {
         locale = 'en';
     }
-
-    Logger.initialize();
-    Logger.show();
 
     loadI18n(locale);
 
@@ -41,9 +38,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(registerSharedFocusIndex());
     context.subscriptions.push(registerGfxIndex());
     context.subscriptions.push(registerLocalisationIndex());
+    context.subscriptions.push(registerLocalisationHighlighting());
 
     if (process.env.NODE_ENV !== 'production') {
-        vscode.commands.registerCommand('hoi4modutilities.test', () => {
+        vscode.commands.registerCommand(Commands.Test, () => {
             const debugModule = require('./util/debug.shouldignore');
             debugModule.testCommand();
         });

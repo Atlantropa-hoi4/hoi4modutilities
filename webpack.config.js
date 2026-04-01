@@ -23,7 +23,10 @@ const mainConfig = {
     'original-fs': 'original-fs'
   },
   resolve: {
-    extensions: ['.ts', '.js']
+    extensions: ['.ts', '.js'],
+    alias: {
+      'lodash$': path.resolve(__dirname, 'src/util/lodash-shim.ts')
+    }
   },
   module: {
     rules: [
@@ -89,7 +92,10 @@ const webviewJsConfig = {
   },
   devtool: 'source-map',
   resolve: {
-    extensions: ['.ts', '.js']
+    extensions: ['.ts', '.js'],
+    alias: {
+      'lodash$': path.resolve(__dirname, 'src/util/lodash-shim.ts')
+    }
   },
   module: {
     rules: [

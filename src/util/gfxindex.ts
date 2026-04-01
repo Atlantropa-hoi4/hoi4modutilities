@@ -16,17 +16,14 @@ interface GfxIndexItem {
 
 const globalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
 let workspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+let globalGfxIndexTask: Promise<void> | undefined;
+let workspaceGfxIndexTask: Promise<void> | undefined;
+let globalGfxIndexReady = false;
+let workspaceGfxIndexReady = false;
 
 export function registerGfxIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
     if (gfxIndex) {
-        const estimatedSize: [number] = [0];
-        const task = Promise.all([ buildGlobalGfxIndex(estimatedSize), buildWorkspaceGfxIndex(estimatedSize) ]);
-        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.building', 'Building GFX index...'), task);
-        task.then(() => {
-            vscode.window.showInformationMessage(localize('gfxindex.builddone', 'Building GFX index done.'));
-            sendEvent('gfxIndex', { size: estimatedSize[0].toString() });
-        });
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
         disposables.push(vscode.workspace.onDidCloseTextDocument(onCloseTextDocument));
@@ -43,6 +40,7 @@ export async function getGfxContainerFile(gfxName: string | undefined): Promise<
         return undefined;
     }
 
+    await Promise.all([ensureGlobalGfxIndex(), ensureWorkspaceGfxIndex()]);
     return (globalGfxIndex[gfxName] ?? workspaceGfxIndex[gfxName])?.file;
 }
 
@@ -60,6 +58,46 @@ async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<void> {
     const options = { hoi4: false, recursively: true };
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
     await Promise.all(gfxFiles.map(f => fillGfxItems('interface/' + f, workspaceGfxIndex, options, estimatedSize)));
+}
+
+function ensureGlobalGfxIndex(): Promise<void> {
+    if (globalGfxIndexReady) {
+        return Promise.resolve();
+    }
+    if (globalGfxIndexTask) {
+        return globalGfxIndexTask;
+    }
+
+    const estimatedSize: [number] = [0];
+    const task = buildGlobalGfxIndex(estimatedSize);
+    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.building', 'Building GFX index...'), task);
+    globalGfxIndexTask = task.then(() => {
+        globalGfxIndexReady = true;
+        sendEvent('gfxIndex', { size: estimatedSize[0].toString() });
+    }).finally(() => {
+        globalGfxIndexTask = undefined;
+    });
+    return globalGfxIndexTask;
+}
+
+function ensureWorkspaceGfxIndex(): Promise<void> {
+    if (workspaceGfxIndexReady) {
+        return Promise.resolve();
+    }
+    if (workspaceGfxIndexTask) {
+        return workspaceGfxIndexTask;
+    }
+
+    const estimatedSize: [number] = [0];
+    const task = buildWorkspaceGfxIndex(estimatedSize);
+    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.workspace.building', 'Building workspace GFX index...'), task);
+    workspaceGfxIndexTask = task.then(() => {
+        workspaceGfxIndexReady = true;
+        sendEvent('gfxIndex.workspace', { size: estimatedSize[0].toString() });
+    }).finally(() => {
+        workspaceGfxIndexTask = undefined;
+    });
+    return workspaceGfxIndexTask;
 }
 
 async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean }, estimatedSize?: [number]): Promise<void> {
@@ -81,17 +119,18 @@ async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexIt
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     workspaceGfxIndex = {};
-    const estimatedSize: [number] = [0];
-    const task = buildWorkspaceGfxIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.workspace.building', 'Building workspace GFX index...'), task);
-    task.then(() => {
-        vscode.window.showInformationMessage(localize('gfxindex.workspace.builddone', 'Building workspace GFX index done.'));
-        sendEvent('gfxIndex.workspace', { size: estimatedSize[0].toString() });
-    });
+    workspaceGfxIndexReady = false;
+    void ensureWorkspaceGfxIndex();
 }
 
 function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     const file = e.document.uri;
     if (file.path.endsWith('.gfx')) {
         onChangeTextDocumentImpl(file);
@@ -109,6 +148,9 @@ const onChangeTextDocumentImpl = debounceByInput(
 );
 
 function onCloseTextDocument(document: vscode.TextDocument) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     const file = document.uri;
     if (file.path.endsWith('.gfx')) {
         removeWorkspaceGfxIndex(file);
@@ -117,6 +159,9 @@ function onCloseTextDocument(document: vscode.TextDocument) {
 }
 
 function onCreateFiles(e: vscode.FileCreateEvent) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     for (const file of e.files) {
         if (file.path.endsWith('.gfx')) {
             addWorkspaceGfxIndex(file);
@@ -125,6 +170,9 @@ function onCreateFiles(e: vscode.FileCreateEvent) {
 }
 
 function onDeleteFiles(e: vscode.FileDeleteEvent) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     for (const file of e.files) {
         if (file.path.endsWith('.gfx')) {
             removeWorkspaceGfxIndex(file);
@@ -133,6 +181,9 @@ function onDeleteFiles(e: vscode.FileDeleteEvent) {
 }
 
 function onRenameFiles(e: vscode.FileRenameEvent) {
+    if (!workspaceGfxIndexReady) {
+        return;
+    }
     onDeleteFiles({ files: e.files.map(f => f.oldUri) });
     onCreateFiles({ files: e.files.map(f => f.newUri) });
 }

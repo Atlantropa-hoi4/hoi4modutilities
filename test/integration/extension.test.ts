@@ -23,7 +23,7 @@ suite('extension smoke', () => {
     });
 
     test('activates and registers public commands', async () => {
-        const extension = vscode.extensions.getExtension('chaofan.hoi4modutilities');
+        const extension = vscode.extensions.getExtension('server.hoi4modutilities');
         assert.ok(extension);
 
         await extension?.activate();

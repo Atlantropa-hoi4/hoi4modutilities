@@ -4,7 +4,63 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.12.2] - 2024/12/07 - Latest
+## [0.13.7] - 2026/04/02 - Latest
+
+### Fixed
+* Broaden HOI4 localisation highlighting detection to accept spaced or dashed localisation filenames such as `name l_english.yml` and `name-l_english.yaml`, and fall back to inline HOI4 token hints when a file does not advertise itself through a standard path.
+
+## [0.13.6] - 2026/04/02
+
+### Fixed
+* Make HOI4 localisation highlighting recognize normal localisation file paths like `localisation/.../*_l_*.yml` even before the file text is fully parsed, so highlighting appears on typical mod localisation files that were previously skipped by the overly strict text-only detector.
+
+## [0.13.5] - 2026/04/01
+
+### Fixed
+* Keep the fallback preview toolbar button mutually exclusive with the context-driven preview button so focus files show only one preview action.
+* Remove remaining lodash `chain(...).flatMap()` usage from focus preview runtime paths, fixing the focus-preview error `TypeError: (0 , s.chain)(...).flatMap is not a function`.
+
+## [0.13.4] - 2026/04/01
+
+### Fixed
+* Remove lodash `chain()` from preview provider selection. The preview activation path now uses a native priority scan, fixing the runtime error `(0 , m.chain)(...).map is not a function`.
+
+## [0.13.3] - 2026/04/01
+
+### Fixed
+* Prevent preview-provider probing from crashing extension activation when the currently active plaintext editor is an unsupported or unusual document. Preview context detection now degrades safely instead of aborting activation, so localisation highlighting and preview commands can still register.
+
+## [0.13.2] - 2026/04/01
+
+### Fixed
+* Add `onStartupFinished` activation so localisation highlighting and preview context registration still initialize even when language-based activation is missed during editor restore.
+* Switch the preview button fallback visibility to extension-based file matching (`.txt`, `.gfx`, `.gui`, `.map`) so focus preview entry points are not hidden by language-mode differences across companion Paradox extensions.
+
+## [0.13.1] - 2026/04/01
+
+### Fixed
+* Restore activation on `hoi4` and `paradox` language documents so focus previews and localisation highlighting still initialize when another syntax extension changes the language mode.
+* Relax the preview command visibility rules so the toolbar and command palette surface the preview entry again on HOI4 script documents while the forked runtime contexts warm up.
+
+## [0.13.0] - 2026/04/01
+
+### Added
+* Add fixture-backed parser, dependency-header, and extension smoke coverage with the current VS Code test runner.
+* Add regression coverage for newer HOI4 scoped variable syntax such as array references, scoped variables, and attached values.
+* Add focus tree preview support for focus inlay windows, including scripted GUI resolution and preview toggles.
+* Add localisation editor highlighting for HOI4 color codes, text icons, localisation references, and scripted localisation tokens inside `.yml` strings.
+
+### Changed
+* Modernize the development toolchain around local `npm ci`, TypeScript 6, webpack 5, and desktop-only VS Code extension packaging.
+* Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
+* Complete `joint_focus` preview handling so joint focus files render as their own tree and linked national focus trees can surface them consistently.
+* Activate on plaintext and YAML documents so localisation highlighting is available when opening HOI4 localisation files directly.
+* Rename the packaged extension identity from `chaofan.hoi4modutilities` to `server.hoi4modutilities` so this fork can be installed independently from upstream.
+
+### Fixed
+* Accept quoted `.mod` file paths copied from Explorer or terminal output when resolving the working mod descriptor.
+
+## [0.12.2] - 2024/12/07
 
 ### Fixed
 * Allow `|` in symbol type (to support the case `localization_key = building_state_modifier|dam`) (#105) (Contributor: [IShiraiKurokoI(Shirai_Kuroko)](https://github.com/IShiraiKurokoI)).

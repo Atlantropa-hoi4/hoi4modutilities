@@ -1,30 +1,31 @@
 // This file contains constants that may be used in package.json
 
 export const ConfigurationKey = 'hoi4ModUtilities';
-export const Hoi4FsSchema = 'hoi4installpath';
+export const Hoi4FsSchema = 'server.hoi4installpath';
 
 export namespace ViewType {
-    export const DDS = 'hoi4modutilities.dds';
-    export const TGA = 'hoi4modutilities.tga';
+    export const DDS = 'server.hoi4modutilities.dds';
+    export const TGA = 'server.hoi4modutilities.tga';
 }
 
 export namespace ContextName {
-    export const ShouldHideHoi4Preview = 'shouldHideHoi4Preview';
-    export const ShouldShowHoi4Preview = 'shouldShowHoi4Preview';
-    export const Hoi4PreviewType = 'hoi4PreviewType';
-    export const Hoi4MUInDev = 'hoi4MUInDev';
-    export const Hoi4MULoaded = 'hoi4MULoaded';
+    export const ShouldHideHoi4Preview = 'server.shouldHideHoi4Preview';
+    export const ShouldShowHoi4Preview = 'server.shouldShowHoi4Preview';
+    export const Hoi4PreviewType = 'server.hoi4PreviewType';
+    export const Hoi4MUInDev = 'server.hoi4MUInDev';
+    export const Hoi4MULoaded = 'server.hoi4MULoaded';
 }
 
 export namespace Commands {
-    export const Preview = 'hoi4modutilities.preview';
-    export const PreviewWorld = 'hoi4modutilities.previewworld';
-    export const ScanReferences = 'hoi4modutilities.scanreferences';
-    export const SelectModFile = 'hoi4modutilities.selectmodfile';
-    export const SelectHoiFolder = 'hoi4modutilities.selecthoifolder';
+    export const Preview = 'server.hoi4modutilities.preview';
+    export const PreviewWorld = 'server.hoi4modutilities.previewworld';
+    export const ScanReferences = 'server.hoi4modutilities.scanreferences';
+    export const SelectModFile = 'server.hoi4modutilities.selectmodfile';
+    export const SelectHoiFolder = 'server.hoi4modutilities.selecthoifolder';
+    export const Test = 'server.hoi4modutilities.test';
 }
 
 export namespace WebviewType {
-    export const Preview = 'hoi4ftpreview';
-    export const PreviewWorldMap = 'hoi4worldmappreview';
+    export const Preview = 'server.hoi4ftpreview';
+    export const PreviewWorldMap = 'server.hoi4worldmappreview';
 }
