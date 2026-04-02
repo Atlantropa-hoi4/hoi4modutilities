@@ -46,6 +46,28 @@ export interface LocalisationDecoration {
     colorCode?: Hoi4LocalisationColorCode;
 }
 
+interface LocalisationRangeBuckets {
+    colorCode: Record<Hoi4LocalisationColorCode, vscode.Range[]>;
+    colorText: Record<NonResetColorCode, vscode.Range[]>;
+    textIcon: vscode.Range[];
+    localisationReference: vscode.Range[];
+    scriptedLocalisation: vscode.Range[];
+}
+
+interface LocalisationDocumentAnalysis {
+    key: string;
+    version: number;
+    isHoi4Localisation: boolean;
+    buckets?: LocalisationRangeBuckets;
+}
+
+interface AppliedDecorationState {
+    documentKey: string;
+    version: number;
+    generation: number;
+    hasDecorations: boolean;
+}
+
 const localisationHeaderPattern = /^\uFEFF?\s*l_[a-z_]+:/im;
 const localisationEntryPattern = /^\uFEFF?\s*[^\s#][^:]*:\s*\d+\s*"/;
 const localisationValuePattern = /^\uFEFF?\s*[^\s#][^:]*:\s*(?:\d+\s*)?"/;
@@ -139,28 +161,52 @@ export function collectLocalisationDecorations(text: string): LocalisationDecora
 
 export function registerLocalisationHighlighting(): vscode.Disposable {
     let decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
+    let decorationGeneration = 0;
+    const documentAnalysisCache = new Map<string, LocalisationDocumentAnalysis>();
+    const appliedEditorState = new WeakMap<vscode.TextEditor, AppliedDecorationState>();
 
     let refreshHandle: NodeJS.Timeout | undefined;
+    let refreshAllVisibleEditors = false;
+    const pendingDocumentKeys = new Set<string>();
+
     const scheduleRefresh = (document?: vscode.TextDocument) => {
+        if (document) {
+            pendingDocumentKeys.add(getDocumentCacheKey(document));
+        } else {
+            refreshAllVisibleEditors = true;
+        }
+
         if (refreshHandle) {
             clearTimeout(refreshHandle);
         }
 
         refreshHandle = setTimeout(() => {
             refreshHandle = undefined;
-            refreshVisibleEditors(document);
+            refreshVisibleEditors();
         }, 50);
         refreshHandle.unref?.();
     };
 
-    const refreshVisibleEditors = (document?: vscode.TextDocument) => {
-        for (const editor of vscode.window.visibleTextEditors) {
-            if (document && editor.document !== document) {
-                continue;
-            }
+    const refreshVisibleEditors = () => {
+        const editors = refreshAllVisibleEditors
+            ? vscode.window.visibleTextEditors
+            : vscode.window.visibleTextEditors.filter(editor => pendingDocumentKeys.has(getDocumentCacheKey(editor.document)));
+
+        refreshAllVisibleEditors = false;
+        pendingDocumentKeys.clear();
+
+        for (const editor of editors) {
 
             try {
-                updateEditorDecorations(editor, decorationSet.colorCodeTypes, decorationSet.colorTextTypes, decorationSet.tokenTypes);
+                updateEditorDecorations(
+                    editor,
+                    decorationSet.colorCodeTypes,
+                    decorationSet.colorTextTypes,
+                    decorationSet.tokenTypes,
+                    documentAnalysisCache,
+                    appliedEditorState,
+                    decorationGeneration,
+                );
             } catch (error) {
                 reportLocalisationHighlightingError(error, editor.document);
             }
@@ -170,6 +216,7 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
     const rebuildDecorationTypes = () => {
         decorationSet.dispose();
         decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
+        decorationGeneration++;
         scheduleRefresh();
     };
 
@@ -177,16 +224,23 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
 
     const disposables: vscode.Disposable[] = [
         vscode.window.onDidChangeActiveColorTheme(() => rebuildDecorationTypes()),
-        vscode.window.onDidChangeActiveTextEditor(() => scheduleRefresh()),
+        vscode.window.onDidChangeActiveTextEditor(editor => scheduleRefresh(editor?.document)),
         vscode.window.onDidChangeVisibleTextEditors(() => scheduleRefresh()),
-        vscode.window.onDidChangeTextEditorVisibleRanges(e => scheduleRefresh(e.textEditor.document)),
-        vscode.workspace.onDidOpenTextDocument(document => scheduleRefresh(document)),
-        vscode.workspace.onDidChangeTextDocument(event => scheduleRefresh(event.document)),
-        vscode.workspace.onDidCloseTextDocument(document => scheduleRefresh(document)),
+        vscode.workspace.onDidOpenTextDocument(document => {
+            documentAnalysisCache.delete(getDocumentCacheKey(document));
+        }),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            documentAnalysisCache.delete(getDocumentCacheKey(event.document));
+            scheduleRefresh(event.document);
+        }),
+        vscode.workspace.onDidCloseTextDocument(document => {
+            documentAnalysisCache.delete(getDocumentCacheKey(document));
+        }),
         new vscode.Disposable(() => {
             if (refreshHandle) {
                 clearTimeout(refreshHandle);
             }
+            documentAnalysisCache.clear();
             decorationSet.dispose();
         }),
     ];
@@ -399,51 +453,52 @@ function updateEditorDecorations(
     colorCodeTypes: Map<Hoi4LocalisationColorCode, vscode.TextEditorDecorationType>,
     colorTextTypes: Map<NonResetColorCode, vscode.TextEditorDecorationType>,
     tokenTypes: Record<Exclude<LocalisationDecorationKind, 'colorCode' | 'colorText'>, vscode.TextEditorDecorationType>,
+    documentAnalysisCache: Map<string, LocalisationDocumentAnalysis>,
+    appliedEditorState: WeakMap<vscode.TextEditor, AppliedDecorationState>,
+    decorationGeneration: number,
 ): void {
     const document = editor.document;
-    if (!isHoi4LocalisationDocument(document)) {
-        clearDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
+    const analysis = getDocumentAnalysis(document, documentAnalysisCache);
+    const appliedState = appliedEditorState.get(editor);
+
+    if (appliedState &&
+        appliedState.documentKey === analysis.key &&
+        appliedState.version === analysis.version &&
+        appliedState.generation === decorationGeneration) {
         return;
     }
 
-    const buckets = createDecorationBuckets();
-    for (const decoration of collectLocalisationDecorations(document.getText())) {
-        const range = new vscode.Range(document.positionAt(decoration.start), document.positionAt(decoration.end));
-
-        switch (decoration.kind) {
-        case 'colorCode':
-            if (decoration.colorCode) {
-                buckets.colorCode[decoration.colorCode].push(range);
-            }
-            break;
-        case 'colorText':
-            if (decoration.colorCode && decoration.colorCode !== '!') {
-                buckets.colorText[decoration.colorCode].push(range);
-            }
-            break;
-        case 'textIcon':
-            buckets.textIcon.push(range);
-            break;
-        case 'localisationReference':
-            buckets.localisationReference.push(range);
-            break;
-        case 'scriptedLocalisation':
-            buckets.scriptedLocalisation.push(range);
-            break;
+    if (!analysis.isHoi4Localisation || !analysis.buckets) {
+        if (appliedState?.hasDecorations) {
+            clearDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
         }
+        appliedEditorState.set(editor, {
+            documentKey: analysis.key,
+            version: analysis.version,
+            generation: decorationGeneration,
+            hasDecorations: false,
+        });
+        return;
     }
 
     for (const [code, decorationType] of colorCodeTypes) {
-        editor.setDecorations(decorationType, buckets.colorCode[code]);
+        editor.setDecorations(decorationType, analysis.buckets.colorCode[code]);
     }
 
     for (const [code, decorationType] of colorTextTypes) {
-        editor.setDecorations(decorationType, buckets.colorText[code]);
+        editor.setDecorations(decorationType, analysis.buckets.colorText[code]);
     }
 
-    editor.setDecorations(tokenTypes.textIcon, buckets.textIcon);
-    editor.setDecorations(tokenTypes.localisationReference, buckets.localisationReference);
-    editor.setDecorations(tokenTypes.scriptedLocalisation, buckets.scriptedLocalisation);
+    editor.setDecorations(tokenTypes.textIcon, analysis.buckets.textIcon);
+    editor.setDecorations(tokenTypes.localisationReference, analysis.buckets.localisationReference);
+    editor.setDecorations(tokenTypes.scriptedLocalisation, analysis.buckets.scriptedLocalisation);
+
+    appliedEditorState.set(editor, {
+        documentKey: analysis.key,
+        version: analysis.version,
+        generation: decorationGeneration,
+        hasDecorations: true,
+    });
 }
 
 function clearDecorations(
@@ -475,7 +530,7 @@ function isHoi4LocalisationDocument(document: vscode.TextDocument): boolean {
         return true;
     }
 
-    const previewText = document.getText().slice(0, 64000);
+    const previewText = getDocumentPreviewText(document, 64000);
     return isHoi4LocalisationText(previewText) || hasHoi4LocalisationTokenHints(previewText);
 }
 
@@ -497,6 +552,90 @@ function createDecorationBuckets() {
         localisationReference: [] as vscode.Range[],
         scriptedLocalisation: [] as vscode.Range[],
     };
+}
+
+function getDocumentAnalysis(
+    document: vscode.TextDocument,
+    documentAnalysisCache: Map<string, LocalisationDocumentAnalysis>,
+): LocalisationDocumentAnalysis {
+    const key = getDocumentCacheKey(document);
+    const cached = documentAnalysisCache.get(key);
+    if (cached && cached.version === document.version) {
+        return cached;
+    }
+
+    if (!isHoi4LocalisationDocument(document)) {
+        const analysis: LocalisationDocumentAnalysis = {
+            key,
+            version: document.version,
+            isHoi4Localisation: false,
+        };
+        documentAnalysisCache.set(key, analysis);
+        return analysis;
+    }
+
+    const text = document.getText();
+    const analysis: LocalisationDocumentAnalysis = {
+        key,
+        version: document.version,
+        isHoi4Localisation: true,
+        buckets: createRangeBuckets(document, collectLocalisationDecorations(text)),
+    };
+    documentAnalysisCache.set(key, analysis);
+    return analysis;
+}
+
+function getDocumentCacheKey(document: vscode.TextDocument): string {
+    return document.uri.toString(true);
+}
+
+function getDocumentPreviewText(document: vscode.TextDocument, maxChars: number): string {
+    let remaining = maxChars;
+    let preview = '';
+    const maxLineCount = Math.min(document.lineCount, 256);
+
+    for (let i = 0; i < maxLineCount && remaining > 0; i++) {
+        const fragment = document.lineAt(i).text.slice(0, remaining);
+        preview += fragment;
+        remaining -= fragment.length;
+        if (remaining > 0 && i < maxLineCount - 1) {
+            preview += '\n';
+            remaining--;
+        }
+    }
+
+    return preview;
+}
+
+function createRangeBuckets(document: vscode.TextDocument, decorations: LocalisationDecoration[]): LocalisationRangeBuckets {
+    const buckets = createDecorationBuckets();
+    for (const decoration of decorations) {
+        const range = new vscode.Range(document.positionAt(decoration.start), document.positionAt(decoration.end));
+
+        switch (decoration.kind) {
+        case 'colorCode':
+            if (decoration.colorCode) {
+                buckets.colorCode[decoration.colorCode].push(range);
+            }
+            break;
+        case 'colorText':
+            if (decoration.colorCode && decoration.colorCode !== '!') {
+                buckets.colorText[decoration.colorCode].push(range);
+            }
+            break;
+        case 'textIcon':
+            buckets.textIcon.push(range);
+            break;
+        case 'localisationReference':
+            buckets.localisationReference.push(range);
+            break;
+        case 'scriptedLocalisation':
+            buckets.scriptedLocalisation.push(range);
+            break;
+        }
+    }
+
+    return buckets;
 }
 
 function reportLocalisationHighlightingError(error: unknown, document: vscode.TextDocument): void {

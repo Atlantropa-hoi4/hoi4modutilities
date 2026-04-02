@@ -10,3 +10,4 @@
 - When the user reports one surface is fixed but another still fails, narrow the next pass to that subsystem only instead of reopening the whole activation theory.
 - When the user offers a concrete edge-case hypothesis like a spaced localisation filename, turn it into a direct regression test instead of only broadening the theory in prose.
 - Do not bump the extension version for every intermediate debugging pass. In this repo, keep version changes for intentional release batches or user-facing install points, and group multiple small fixes under one planned version when possible.
+- When a highlighting feature feels slow, inspect its editor event subscriptions before touching parsing logic. Recomputing decorations on `visibleRanges` or every refresh is usually the hot path in VS Code, so cache by document version and skip unchanged editor applications first.
