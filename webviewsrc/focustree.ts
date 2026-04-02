@@ -470,6 +470,27 @@ function updateLayoutPointerInterlocks() {
     });
 }
 
+function getLayoutTargetElementAtPoint(clientX: number, clientY: number): HTMLElement | null {
+    const dragger = document.getElementById('dragger') as HTMLDivElement | null;
+    const previousPointerEvents = dragger?.style.pointerEvents ?? '';
+    if (dragger) {
+        dragger.style.pointerEvents = 'none';
+    }
+
+    const target = (document.elementFromPoint(clientX, clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]') ?? null;
+
+    if (dragger) {
+        dragger.style.pointerEvents = previousPointerEvents;
+    }
+
+    return target;
+}
+
+function getLayoutTargetElementFromMouseEvent(event: MouseEvent): HTMLElement | null {
+    return (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]')
+        ?? getLayoutTargetElementAtPoint(event.clientX, event.clientY);
+}
+
 function cssEscape(value: string): string {
     return value.replace(/["\\]/g, '\\$&');
 }
@@ -827,7 +848,7 @@ function setupLayoutInteractionHandlers() {
             return;
         }
 
-        const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]');
+        const target = getLayoutTargetElementFromMouseEvent(event);
         const key = target?.dataset.layoutKey;
         if (!target || !key) {
             return;
@@ -849,18 +870,17 @@ function setupLayoutInteractionHandlers() {
 
         event.preventDefault();
         event.stopPropagation();
-        beginLayoutDrag(descriptor, event.pageX, event.pageY);
+        beginLayoutDrag(descriptor, target, event.pageX, event.pageY);
     }, true);
 }
 
-function beginLayoutDrag(target: LayoutTargetDescriptor, startPageX: number, startPageY: number) {
+function beginLayoutDrag(target: LayoutTargetDescriptor, dragElement: HTMLElement | null, startPageX: number, startPageY: number) {
     const draft = ensureLayoutDraft();
     const scale = getState().scale || 1;
     const focusDraft = target.kind === 'focus' ? draft.focuses[target.key] : undefined;
     const pointDraft = target.kind !== 'focus'
         ? (target.kind === 'continuous' ? draft.continuous[target.key] : draft.inlayRefs[target.key])
         : undefined;
-    const dragElement = document.querySelector<HTMLElement>(`[data-layout-key="${cssEscape(target.key)}"]`);
 
     if ((focusDraft && !focusDraft.editable) || (pointDraft && !pointDraft.editable)) {
         return;
