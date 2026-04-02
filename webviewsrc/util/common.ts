@@ -22,6 +22,24 @@ export function scrollToState() {
     window.scroll(xOffset, yOffset);
 }
 
+function isPreviewPanDisabled(): boolean {
+    return document.body?.dataset.disablePreviewPan === 'true';
+}
+
+export function setPreviewPanDisabled(disabled: boolean): void {
+    if (!document.body) {
+        return;
+    }
+
+    document.body.dataset.disablePreviewPan = disabled ? 'true' : 'false';
+
+    const dragger = document.getElementById('dragger') as HTMLDivElement | null;
+    if (dragger) {
+        dragger.style.pointerEvents = disabled ? 'none' : '';
+        dragger.style.cursor = disabled ? 'default' : '';
+    }
+}
+
 export function copyArray<T>(src: T[], dst: T[], offsetSrc: number, offsetDst: number, length: number): void {
     for (let i = offsetSrc, j = offsetDst, k = 0; k < length; i++, j++, k++) {
         dst[j] = src[i];
@@ -151,12 +169,22 @@ window.addEventListener('load', function() {
         let mdy = -1;
         let pressed = false;
         dragger.addEventListener('mousedown', function(e) {
+            if (isPreviewPanDisabled()) {
+                pressed = false;
+                return;
+            }
+
             mdx = e.pageX;
             mdy = e.pageY;
             pressed = true;
         });
 
         document.body.addEventListener('mousemove', function(e) {
+            if (isPreviewPanDisabled()) {
+                pressed = false;
+                return;
+            }
+
             if (pressed) {
                 window.scroll(window.pageXOffset - e.pageX + mdx, window.pageYOffset - e.pageY + mdy);
             }

@@ -245,16 +245,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable, focusLay
 
     const layoutButtons = !focusLayoutEditorEnabled ? '' : `
         <div id="focus-layout-toolbar" class="${styleTable.style('focusLayoutToolbar', () => `display:flex; align-items:center; gap:6px; margin-right:10px;`)}">
-            <button id="focus-layout-edit" title="${localize('TODO', 'Toggle layout edit mode')}">${localize('TODO', 'Edit Layout')}</button>
-            <button id="focus-layout-apply" title="${localize('TODO', 'Apply layout changes')}" style="display:none">${localize('TODO', 'Apply')}</button>
-            <button id="focus-layout-discard" title="${localize('TODO', 'Discard layout draft')}" style="display:none">${localize('TODO', 'Discard')}</button>
-            <div id="focus-layout-status" class="${styleTable.style('focusLayoutStatus', () => `
-                display:none;
-                align-items:center;
-                gap:6px;
-                min-width:0;
-                color: var(--vscode-descriptionForeground);
-            `)}"></div>
+            <button id="focus-layout-edit" title="${localize('TODO', 'Toggle layout edit mode')}">${localize('TODO', 'Edit')}</button>
         </div>`;
 
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
