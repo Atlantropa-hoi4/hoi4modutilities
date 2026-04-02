@@ -1,22 +1,18 @@
-# HOI4 Mod Utilities Localisation Highlighting Follow-up Todo
+# HOI4 Mod Utilities Focus Preview Bottom Create Buffer Todo
 
 ## Plan
-- [x] Re-focus the investigation on the remaining localisation highlighting issue now that focus preview is working again
-- [x] Check the installed extension version and recent VS Code logs for highlighting-specific failures or detection misses
-- [x] Broaden localisation detection for spaced filenames and non-standard-but-valid HOI4 token cases
-- [x] Re-run verification and document the remaining manual validation step
+- [x] Add persistent bottom canvas space so blank-space create can continue below the current lowest focus
+- [x] Keep the change scoped to focus preview sizing and blank-space editing without altering focus positioning rules
+- [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
+- [x] Record review results and the final packaged VSIX name
 
 ## Notes
-- User confirms focus preview is back, so the remaining defect is isolated to localisation highlighting.
-- The latest logs showed activation without localisation-highlighting exceptions, which pointed to file detection rather than another extension-host crash.
-- The installed package has already moved to `server.hoi4modutilities-0.13.6`, so the next pass needs to target a narrower false-negative in localisation detection rather than installation drift.
-- A plausible missed case is filenames like `name l_english.yml`, so this pass adds direct regression coverage for spaced and dashed localisation filenames.
-- Another plausible miss is localisation entries written as `KEY: "value"` without the optional numeric version token, so this pass checks the string-range parser as well as document detection.
-- Readability is also a concern now that highlighting reaches more files, so the current pass adjusts the displayed string colors without changing the underlying HOI4 color semantics.
+- User request: when the lowest focus sits near the viewport bottom, the preview should still leave enough blank canvas to create more focuses underneath it.
+- Best fix is to grow the rendered focus preview height with an explicit bottom creation buffer instead of changing focus-coordinate math.
+- This should stay within the existing consolidated `0.13.19` release line unless a separate release is explicitly requested.
 
 ## Review
-- Root cause candidate: the previous fix still treated localisation filenames too narrowly and only recognized `_l_*.yml`, which could miss valid filenames like `name l_english.yml` or `name-l_english.yaml`.
-- Fix: accept spaced/dashed `l_<language>` file names, support `.yaml`, and fall back to detecting HOI4 inline tokens such as `§`, `£`, `$...$`, and `[scripted_loc]` when the path is not standard.
-- Additional fix: make localisation string extraction accept `KEY: "value"` as well as `KEY:0 "value"` so highlight spans still materialize when the numeric version token is omitted.
-- Verification: `npm test` and `npm run package` passed again without another version bump, still producing `hoi4modutilities-0.13.7.vsix`.
-- Readability pass: apply theme-aware color correction and a subtle tinted background to coloured localisation text spans, while keeping the `§` color-code markers on their original HOI4 colors.
+- `webviewsrc/focustree.ts` now keeps a fixed edit buffer below the lowest rendered focus by applying a computed minimum canvas height after each rebuild, using the current grid padding and several extra HOI4 rows.
+- The fix stays in preview sizing only; focus coordinate math, drag editing, and blank-space click-to-grid conversion were left unchanged.
+- Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
+- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.

@@ -52,36 +52,16 @@ export abstract class PreviewBase {
 
     protected registerEvents(panel: vscode.WebviewPanel): void {
         panel.webview.onDidReceiveMessage((msg) => {
-            switch (msg.command) {
-                case 'navigate':
-                    if (msg.start !== undefined) {
-                        if (msg.file === undefined) {
-                            const document = getDocumentByUri(this.uri);
-                            if (document === undefined) {
-                                return;
-                            }
-        
-                            vscode.window.showTextDocument(this.uri, {
-                                selection: new vscode.Range(document.positionAt(msg.start), document.positionAt(msg.end)),
-                                viewColumn: vscode.ViewColumn.One
-                            });
-                        } else {
-                            this.openOrCopyFile(msg.file, msg.start, msg.end);
-                        }
-                    }
-                    break;
-                case 'telemetry':
-                    sendByMessage(msg);
-                    break;
-                case 'reload':
-                    this.reload();
-                    break;
-            }
+            void this.handleMessage(msg);
         });
         
         panel.onDidDispose(() => {
             this.dispose();
         });
+    }
+
+    protected async onDidReceiveMessage(_msg: any): Promise<boolean> {
+        return false;
     }
     
     protected updateDependencies(dependencies: string[]): void {
@@ -148,4 +128,40 @@ export abstract class PreviewBase {
     }
 
     protected abstract getContent(document: vscode.TextDocument): Promise<string>;
+
+    private async handleMessage(msg: any): Promise<void> {
+        try {
+            if (await this.onDidReceiveMessage(msg)) {
+                return;
+            }
+
+            switch (msg.command) {
+                case 'navigate':
+                    if (msg.start !== undefined) {
+                        if (msg.file === undefined) {
+                            const document = getDocumentByUri(this.uri);
+                            if (document === undefined) {
+                                return;
+                            }
+        
+                            await vscode.window.showTextDocument(this.uri, {
+                                selection: new vscode.Range(document.positionAt(msg.start), document.positionAt(msg.end)),
+                                viewColumn: vscode.ViewColumn.One
+                            });
+                        } else {
+                            await this.openOrCopyFile(msg.file, msg.start, msg.end);
+                        }
+                    }
+                    break;
+                case 'telemetry':
+                    sendByMessage(msg);
+                    break;
+                case 'reload':
+                    this.reload();
+                    break;
+            }
+        } catch (e) {
+            error(e);
+        }
+    }
 }

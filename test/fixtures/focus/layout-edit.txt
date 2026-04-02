@@ -1,0 +1,35 @@
+focus_tree = {
+    id = editor_tree
+    continuous_focus_position = {
+        x = 150
+        y = 275
+    }
+    inlay_window = {
+        id = test_inlay
+        position = {
+            x = 300
+            y = 400
+        }
+    }
+    focus = {
+        id = ROOT
+        x = 1
+        y = 2
+        offset = {
+            x = 3
+            y = 4
+            trigger = {
+                has_government = democratic
+            }
+        }
+    }
+    focus = {
+        id = CHILD
+        x = 5
+        y = 6
+        relative_position_id = ROOT
+    }
+    focus = {
+        id = INSERTED
+    }
+}

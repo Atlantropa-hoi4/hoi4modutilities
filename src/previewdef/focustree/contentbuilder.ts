@@ -3,7 +3,7 @@ import { flatMap } from 'lodash';
 import { FocusTree, Focus } from './schema';
 import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
-import { forceError } from '../../util/common';
+import { forceError, NumberPosition } from '../../util/common';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
 import { html, htmlEscape } from '../../util/html';
@@ -20,8 +20,9 @@ import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
+const focusToolbarHeight = 68;
 
-export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
+export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
@@ -40,7 +41,16 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file);
+        const baseContent = await renderFocusTrees(
+            focustrees,
+            styleTable,
+            loadResult.result.gfxFiles,
+            loadResult.result.focusSpacing,
+            jsCodes,
+            styleNonce,
+            loader.file,
+            documentVersion,
+        );
         jsCodes.push(i18nTableAsScript());
 
         return html(
@@ -68,10 +78,25 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
 
 const leftPaddingBase = 50;
 const topPaddingBase = 50;
-const xGridSize = 96;
-const yGridSize = 130;
+const defaultXGridSize = 96;
+const defaultYGridSize = 130;
 
-async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable, gfxFiles: string[], jsCodes: string[], styleNonce: string, file: string): Promise<string> {
+function attributeEscape(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+async function renderFocusTrees(
+    focusTrees: FocusTree[],
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    focusSpacing: NumberPosition | undefined,
+    jsCodes: string[],
+    styleNonce: string,
+    file: string,
+    documentVersion: number,
+): Promise<string> {
+    const xGridSize = normalizeFocusSpacingValue(focusSpacing?.x, defaultXGridSize);
+    const yGridSize = normalizeFocusSpacingValue(focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
         format: toStringAsSymbolIgnoreCase('up'),
@@ -97,6 +122,10 @@ async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable,
     jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
     jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
     jsCodes.push('window.xGridSize = ' + xGridSize);
+    jsCodes.push('window.yGridSize = ' + yGridSize);
+    jsCodes.push('window.focusToolbarHeight = ' + focusToolbarHeight);
+    jsCodes.push('window.focusPositionDocumentVersion = ' + JSON.stringify(documentVersion));
+    jsCodes.push('window.focusPositionActiveFile = ' + JSON.stringify(file));
 
     const continuousFocusContent =
         `<div id="continuousFocuses" class="${styleTable.oneTimeStyle('continuousFocuses', () => `
@@ -107,6 +136,7 @@ async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable,
             background: rgba(128, 128, 128, 0.2);
             text-align: center;
             pointer-events: none;
+            z-index: 0;
         `)}">Continuous focuses</div>`;
 
     return (
@@ -117,14 +147,18 @@ async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable,
             left:0;
             top:0;
         `)}"></div>` +
-        `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:40px;left:-20px;position:relative`)}">
-            <div id="focustreeplaceholder"></div>
-            <div id="inlaywindowplaceholder"></div>
+        `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:${focusToolbarHeight}px;left:-20px;position:relative`)}">
+            <div id="focustreeplaceholder" class="${styleTable.oneTimeStyle('focustreeplaceholder', () => `position: relative; z-index: 2;`)}"></div>
+            <div id="inlaywindowplaceholder" class="${styleTable.oneTimeStyle('inlaywindowplaceholder', () => `position: relative; z-index: 3;`)}"></div>
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
         renderToolBar(focusTrees, styleTable)
     );
+}
+
+function normalizeFocusSpacingValue(value: number | undefined, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function renderWarningContainer(styleTable: StyleTable) {
@@ -136,7 +170,7 @@ function renderWarningContainer(styleTable: StyleTable) {
         position: fixed;
         top: 0;
         left: 0;
-        padding-top: 40px;
+        padding-top: ${focusToolbarHeight}px;
         background: var(--vscode-editor-background);
         box-sizing: border-box;
         display: none;
@@ -157,43 +191,52 @@ function renderWarningContainer(styleTable: StyleTable) {
 }
 
 function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string {
+    const toolbarGroupStyle = (marginRight: string = '10px') => styleTable.style('toolbarGroup', () => `display:flex; align-items:center; margin-right:${marginRight}; min-height:24px;`);
+    const toolbarLabelStyle = (extra: string = '') => styleTable.style('toolbarLabel', () => `margin-right:5px; display:flex; align-items:center;${extra}`);
+
     const focuses = focusTrees.length <= 1 ? '' : `
-        <label for="focuses" class="${styleTable.style('focusesLabel', () => `margin-right:5px`)}">${localize('focustree.focustree', 'Focus tree: ')}</label>
-        <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
-            <select id="focuses" class="select multiple-select" tabindex="0" role="combobox">
-                ${focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('')}
-            </select>
+        <div class="${toolbarGroupStyle()}">
+            <label for="focuses" class="${toolbarLabelStyle()}">${localize('focustree.focustree', 'Focus tree: ')}</label>
+            <div class="select-container">
+                <select id="focuses" class="select multiple-select" tabindex="0" role="combobox">
+                    ${focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('')}
+                </select>
+            </div>
         </div>`;
 
-    const searchbox = `    
-        <label for="searchbox" class="${styleTable.style('searchboxLabel', () => `margin-right:5px`)}">${localize('focustree.search', 'Search: ')}</label>
-        <input
-            class="${styleTable.style('searchbox', () => `margin-right:10px`)}"
-            id="searchbox"
-            type="text"
-        />`;
-
-    const inlayWindowsToggle = `
-        <div id="show-inlay-windows-container" class="${styleTable.style('inlayWindowsContainer', () => `margin-right:10px; display:flex; align-items:center;`)}">
-            <label for="show-inlay-windows">${localize('TODO', 'Inlay windows')}</label>
+    const searchbox = `
+        <div class="${toolbarGroupStyle()}">
+            <label for="searchbox" class="${toolbarLabelStyle()}">${localize('focustree.search', 'Search: ')}</label>
             <input
-                id="show-inlay-windows"
-                type="checkbox"
+                class="${styleTable.style('searchbox', () => `height:22px; box-sizing:border-box;`)}"
+                id="searchbox"
+                type="text"
             />
         </div>`;
 
+    const editToggle = `
+        <div class="${toolbarGroupStyle()}">
+            <button
+                id="focus-position-edit"
+                title="${localize('TODO', 'Toggle focus position editing')}"
+                class="${styleTable.style('focusPositionEditButton', () => `display:flex; align-items:center; justify-content:center; height:22px; width:auto; min-width:46px; padding:0 8px;`)}"
+            >${localize('TODO', 'Edit')}</button>
+        </div>`;
+
     const inlayWindows = `
-        <div id="inlay-window-container">
-            <label for="inlay-windows" class="${styleTable.style('inlayWindowsLabel', () => `margin-right:5px`)}">${localize('TODO', 'Inlay window: ')}</label>
-            <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
-                <select id="inlay-windows" class="select multiple-select" tabindex="0" role="combobox"></select>
+        <div id="inlay-window-container" class="${toolbarGroupStyle()}">
+            <label for="inlay-windows" class="${toolbarLabelStyle()}">${localize('TODO', 'Inlay window: ')}</label>
+            <div class="select-container">
+                <div id="inlay-windows" class="select multiple-select" tabindex="0" role="combobox">
+                    <span class="value"></span>
+                </div>
             </div>
         </div>`;
 
     const allowbranch = `
-        <div id="allowbranch-container">
-            <label for="allowbranch" class="${styleTable.style('allowbranchLabel', () => `margin-right:5px`)}">${localize('focustree.allowbranch', 'Allow branch: ')}</label>
-            <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
+        <div id="allowbranch-container" class="${toolbarGroupStyle()}">
+            <label for="allowbranch" class="${toolbarLabelStyle()}">${localize('focustree.allowbranch', 'Allow branch: ')}</label>
+            <div class="select-container">
                 <div id="allowbranch" class="select multiple-select" tabindex="0" role="combobox">
                     <span class="value"></span>
                 </div>
@@ -201,20 +244,10 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
         </div>`;
 
     const conditions = `
-        <div id="condition-container">
-            <label for="conditions" class="${styleTable.style('conditionsLabel', () => `margin-right:5px`)}">${localize('focustree.conditions', 'Conditions: ')}</label>
-            <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
-                <div id="conditions" class="select multiple-select" tabindex="0" role="combobox" class="${styleTable.style('conditionsLabel', () => `max-width:400px`)}">
-                    <span class="value"></span>
-                </div>
-            </div>
-        </div>`;
-
-    const inlayConditions = `
-        <div id="inlay-condition-container">
-            <label for="inlay-conditions" class="${styleTable.style('inlayConditionsLabel', () => `margin-right:5px`)}">${localize('TODO', 'Inlay conditions: ')}</label>
-            <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
-                <div id="inlay-conditions" class="select multiple-select" tabindex="0" role="combobox">
+        <div id="condition-container" class="${toolbarGroupStyle()}">
+            <label for="conditions" class="${toolbarLabelStyle()}">${localize('focustree.conditions', 'Conditions: ')}</label>
+            <div class="select-container">
+                <div id="conditions" class="select multiple-select ${styleTable.style('conditionsLabel', () => `max-width:400px`)}" tabindex="0" role="combobox">
                     <span class="value"></span>
                 </div>
             </div>
@@ -225,14 +258,18 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             <i class="codicon codicon-warning"></i>
         </button>`;
 
-    return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
-        <div class="toolbar">
-            ${focuses}
-            ${searchbox}
-            ${inlayWindowsToggle}
-            ${inlayWindows}
-            ${useConditionInFocus ? conditions + inlayConditions : allowbranch}
-            ${warningsButton}
+    return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; min-height:${focusToolbarHeight}px; padding: 4px 6px;`)}">
+        <div class="toolbar ${styleTable.style('toolbarAlign', () => `display:flex; flex-direction:column; align-items:stretch; gap:4px;`) }">
+            <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
+                ${focuses}
+                ${editToggle}
+                ${searchbox}
+            </div>
+            <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
+                ${useConditionInFocus ? conditions : allowbranch}
+                ${inlayWindows}
+                ${warningsButton}
+            </div>
         </div>
     </div>`;
 }
@@ -322,7 +359,10 @@ async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], style
         left: ${inlay.position.x}px;
         top: ${inlay.position.y}px;
         z-index: 5;
-    `)}" start="${inlay.token?.start}" end="${inlay.token?.end}" file="${inlay.file}">${content}</div>`;
+    `)}"
+        start="${inlay.token?.start}"
+        end="${inlay.token?.end}"
+        file="${inlay.file}">${content}</div>`;
 }
 
 async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
@@ -432,6 +472,9 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     start="${focus.token?.start}"
     end="${focus.token?.end}"
     ${file === focus.file ? '' : `file="${focus.file}"`}
+    data-focus-id="${attributeEscape(focus.id)}"
+    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
+    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
     title="${focus.id}\n({{position}})">
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>

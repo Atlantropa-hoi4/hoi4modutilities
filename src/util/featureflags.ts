@@ -1,6 +1,10 @@
 import { getConfiguration } from "./vsccommon";
 
-const featureFlags = getConfiguration().featureFlags;
+function getFeatureFlags() {
+    return getConfiguration().featureFlags ?? [];
+}
+
+const featureFlags = getFeatureFlags();
 
 export const useConditionInFocus = !featureFlags.includes('!useConditionInFocus');
 export const eventTreePreview = !featureFlags.includes('!eventTreePreview');

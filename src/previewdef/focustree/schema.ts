@@ -10,6 +10,8 @@ import { useConditionInFocus } from "../../util/featureflags";
 import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
 import { parseInlayWindowRef } from "./inlay";
+import { FocusPositionMeta, FocusTreeCreateMeta, createFocusPositionEditKey } from "./positioneditcommon";
+import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 export type FocusTreeKind = 'focus' | 'shared' | 'joint';
 
@@ -17,6 +19,7 @@ export interface FocusTree {
     id: string;
     kind: FocusTreeKind;
     focuses: Record<string, Focus>;
+    createTemplate?: FocusTreeCreateMeta;
     inlayWindowRefs: FocusTreeInlayRef[];
     inlayWindows: FocusTreeInlay[];
     inlayConditionExprs: ConditionItem[];
@@ -34,6 +37,7 @@ interface FocusIconWithCondition {
 }
 
 export interface Focus {
+    layoutEditKey: string;
     x: number;
     y: number;
     id: string;
@@ -47,7 +51,9 @@ export interface Focus {
     offset: Offset[];
     token: Token | undefined;
     file: string;
+    isInCurrentFile: boolean;
     text?: string;
+    layout?: FocusPositionMeta;
 }
 
 export interface FocusWarning extends Warning<string> {
@@ -359,8 +365,29 @@ function getJointFocusTreeId(filePath: string): string {
 export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath: string): FocusTree[] {
     const constants = {};
     const file = convertFocusFileNodeToJson(node, constants);
+    const trees = getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
+    const metadata = collectFocusPositionFileMetadata(node, filePath);
+    let localFocusTreeIndex = 0;
 
-    return getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
+    for (const tree of trees) {
+        if (tree.kind === 'focus' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.focusTrees[localFocusTreeIndex];
+            localFocusTreeIndex++;
+        } else if (tree.kind === 'shared' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.sharedTree;
+        } else if (tree.kind === 'joint' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.jointTree;
+        }
+
+        for (const focus of Object.values(tree.focuses)) {
+            if (!focus.layout && focus.file === filePath) {
+                focus.layout = metadata.focuses[focus.layoutEditKey];
+            }
+            focus.isInCurrentFile = focus.file === filePath;
+        }
+    }
+
+    return trees;
 }
 
 function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: ConditionItem[], filePath: string, warnings: FocusWarning[], constants: {}): Record<string, Focus> {
@@ -437,10 +464,13 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
     const offset: Offset[] = hoiFocus.offset.map(o => ({
         x: o.x ?? 0,
         y: o.y ?? 0,
-        trigger: o.trigger ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition : false,
+        trigger: o.trigger && o.trigger.length > 0
+            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition
+            : undefined,
     }));
 
     return {
+        layoutEditKey: createFocusPositionEditKey(filePath, hoiFocus._token?.start ?? id),
         id,
         icon,
         x: hoiFocus.x ?? 0,
@@ -454,6 +484,7 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         offset,
         token: hoiFocus._token,
         file: filePath,
+        isInCurrentFile: true,
         text: hoiFocus.text,
     };
 }

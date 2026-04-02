@@ -4,7 +4,75 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.7] - 2026/04/02 - Latest
+## [0.13.19] - 2026/04/04 - Latest
+
+### Added
+* Add edit-mode focus linking: double-click an existing focus to start a parent link line, then click another focus to write the child focus's `prerequisite` and `relative_position_id` back into the current document.
+
+### Fixed
+* Snap blank-space create coordinates to the grid cell that contains the click, preventing focus templates from appearing one column or row to the side when clicking near slot edges.
+* Preserve a child's rendered position when applying a new focus link by recalculating and saving local `x` and `y` together with the new `relative_position_id`.
+* Align the focus preview toolbar's `Edit` button and `Search` controls on the same centered row instead of leaving them on slightly mismatched baselines.
+* Reorder the focus preview toolbar so the main controls now read `Focus tree`, `Edit`, `Search`, `Conditions`, and `Inlay window` from left to right while keeping them aligned.
+* Replace the native `Inlay window` selector with the same dropdown styling used by `Conditions`, remove the separate `Inlay conditions` control, and make inlay-window visibility follow the main condition selection.
+* Split the crowded focus preview toolbar into two explicit rows and move the canvas offset down with it so the controls stay aligned instead of fighting for one compressed line.
+* Keep the `Conditions` label inline with its dropdown by preserving flex layout during toolbar visibility updates, and place the `Edit` button inside the same grouped rhythm as the other controls.
+* Leave extra blank canvas below the lowest rendered focus so edit-mode double-click creation can continue downward even when the current tree already reaches the bottom of the viewport.
+
+## [0.13.18] - 2026/04/04
+
+### Fixed
+* Make repeated blank-space creates choose a unique generated placeholder id such as `TAG_FOCUS_ID_2` when the base placeholder already exists in the current file, preventing ambiguous-focus edit failures.
+
+## [0.13.17] - 2026/04/04
+
+### Fixed
+* Insert newly created focus blocks with a blank line separator from the previous block, derive the placeholder prefix from the focus tree's configured country tag when available, and keep consecutive create operations parse-safe.
+
+## [0.13.16] - 2026/04/04
+
+### Fixed
+* Treat the visible preview canvas below the toolbar as a valid blank-space create surface instead of requiring double clicks to land inside a narrow gridbox DOM container.
+
+## [0.13.15] - 2026/04/04
+
+### Fixed
+* Make blank-space Focus Preview double clicks resolve the real pointer target before deciding whether to create a new focus template, so empty-canvas creates are no longer blocked by misleading container targets.
+
+## [0.13.14] - 2026/04/04
+
+### Fixed
+* Keep the continuous-focus helper behind the rendered focus grid and fall back from stale persisted condition filters when they would otherwise open the preview as an empty canvas.
+
+## [0.13.13] - 2026/04/04
+
+### Changed
+* Expand the blank-space Focus Preview create template to the requested HOI4 scaffold with `icon`, `cost`, and a `completion_reward` log that reuses the new `TAG_FOCUS_ID` placeholder.
+
+## [0.13.12] - 2026/04/04
+
+### Added
+* Allow blank-space double-click creation in Focus Preview `Edit` mode, inserting a snapped focus template into the currently selected local focus tree and selecting the new `TAG_FOCUS_ID` placeholder for immediate typing.
+
+### Changed
+* Add stable tree-level edit metadata for local `focus_tree`, `shared_focus`, and `joint_focus` creation targets so imported dependency trees remain read-only.
+* Refresh the focus preview immediately after a created template is inserted by rerendering the webview from the updated document and skipping the delayed duplicate reload for that same version.
+
+## [0.13.11] - 2026/04/03
+
+### Added
+* Reintroduce a minimal Focus Preview `Edit` toggle that lets you drag focuses defined in the current file and saves their `x`/`y` positions on mouseup.
+
+### Changed
+* Keep drag editing local to current-file `focus`, `shared_focus`, and `joint_focus` entries while leaving imported dependency focuses read-only in the preview.
+* Derive saved local `x`/`y` values from the rendered drop position so `relative_position_id` and active focus `offset` rules stay intact.
+
+## [0.13.10] - 2026/04/03
+
+### Removed
+* Remove the Focus Preview `Edit` feature surface, including its settings, migrations, drag handlers, and layout-edit plumbing, while keeping the rest of the focus preview behavior unchanged.
+
+## [0.13.7] - 2026/04/02
 
 ### Fixed
 * Broaden HOI4 localisation highlighting detection to accept spaced or dashed localisation filenames such as `name l_english.yml` and `name-l_english.yaml`, and fall back to inline HOI4 token hints when a file does not advertise itself through a standard path.
