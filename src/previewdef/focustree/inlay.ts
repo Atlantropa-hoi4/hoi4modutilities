@@ -7,6 +7,7 @@ import { countryScope } from "../../hoiformat/scope";
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from "../../util/fileloader";
 import { getGfxContainerFile } from "../../util/gfxindex";
 import { localize } from "../../util/i18n";
+import { createLayoutEditKey } from "./layouteditcommon";
 import type {
     FocusInlayGfxOption,
     FocusInlayImageSlot,
@@ -201,6 +202,7 @@ export function resolveInlaysForTree(refs: FocusTreeInlayRef[], allInlays: Focus
         const resolved: FocusTreeInlay = {
             ...matched,
             position: ref.position,
+            layout: ref.layout,
         };
         extractConditionalExprs(resolved.visible, conditionExprs);
         resolved.scriptedImages.forEach(slot => slot.gfxOptions.forEach(option => extractConditionalExprs(option.condition, conditionExprs)));
@@ -380,6 +382,7 @@ export function parseInlayWindowRef(node: Node, file: string): FocusTreeInlayRef
     }
 
     return {
+        editKey: createLayoutEditKey('inlayRef', file, node.nameToken?.start ?? id),
         id,
         file,
         token: node.nameToken ?? undefined,

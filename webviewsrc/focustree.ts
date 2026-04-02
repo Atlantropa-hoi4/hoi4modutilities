@@ -10,6 +10,14 @@ import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
 import { feLocalize } from './util/i18n';
 import { Checkbox } from "./util/checkbox";
+import { vscode } from "./util/vscode";
+import {
+    FocusLayoutDraft,
+    FocusLayoutFocusDraft,
+    FocusLayoutMessage,
+    FocusLayoutOffsetDraft,
+    FocusLayoutPointDraft,
+} from "../src/previewdef/focustree/layouteditcommon";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -61,6 +69,43 @@ let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let inlayConditions: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
+const focusLayoutEditorEnabled: boolean = !!(window as any).focusLayoutEditorEnabled;
+const focusLayoutActiveFile: string = (window as any).focusLayoutActiveFile ?? '';
+const focusLayoutDocumentVersion: number = (window as any).focusLayoutDocumentVersion ?? 0;
+const xGridSize: number = (window as any).xGridSize;
+const yGridSize: number = (window as any).yGridSize ?? 130;
+
+interface LayoutTargetDescriptor {
+    key: string;
+    kind: 'focus' | 'continuous' | 'inlayRef';
+    label: string;
+    editable: boolean;
+    sourceFile: string;
+    sourceStart?: number;
+    sourceEnd?: number;
+    currentPosition: NumberPosition;
+    focusId?: string;
+}
+
+let focusLayoutEditMode = focusLayoutEditorEnabled && !!getState().focusLayoutEditMode;
+let focusLayoutDraft = restoreLayoutDraft();
+let focusLayoutSelectedKey: string | undefined = getState().focusLayoutSelectedKey;
+let focusLayoutStale = !!getState().focusLayoutStale;
+let focusLayoutStatusMessage: string | undefined = getState().focusLayoutStatusMessage;
+let focusLayoutPendingApplyVersion: number | undefined = getState().focusLayoutPendingApplyVersion;
+let currentLayoutTargets: Record<string, LayoutTargetDescriptor> = {};
+
+if (focusLayoutPendingApplyVersion !== undefined && focusLayoutDocumentVersion >= focusLayoutPendingApplyVersion) {
+    focusLayoutDraft = undefined;
+    focusLayoutEditMode = false;
+    focusLayoutSelectedKey = undefined;
+    focusLayoutStale = false;
+    focusLayoutStatusMessage = undefined;
+    focusLayoutPendingApplyVersion = undefined;
+    persistLayoutState();
+} else if (focusLayoutDraft && focusLayoutDraft.baseVersion !== focusLayoutDocumentVersion) {
+    focusLayoutStale = true;
+}
 
 function showInlayWindows() {
     return !!(window as any).__showInlayWindows;
@@ -85,6 +130,171 @@ function setSelectedInlayWindowId(focusTree: FocusTree, inlayWindowId: string | 
     setState({ selectedInlayWindowIds });
 }
 
+function restoreLayoutDraft(): FocusLayoutDraft | undefined {
+    const stored = getState().focusLayoutDraft as FocusLayoutDraft | undefined;
+    if (!stored) {
+        return undefined;
+    }
+
+    return stored;
+}
+
+function persistLayoutState() {
+    setState({
+        focusLayoutDraft,
+        focusLayoutEditMode,
+        focusLayoutSelectedKey,
+        focusLayoutStale,
+        focusLayoutStatusMessage,
+        focusLayoutPendingApplyVersion,
+    });
+}
+
+function createLayoutDraftFromFocusTrees(): FocusLayoutDraft {
+    const draft: FocusLayoutDraft = {
+        baseVersion: focusLayoutDocumentVersion,
+        focuses: {},
+        continuous: {},
+        inlayRefs: {},
+    };
+
+    for (const focusTree of focusTrees) {
+        for (const focus of Object.values(focusTree.focuses)) {
+            if (!focus.layout || draft.focuses[focus.layout.editKey]) {
+                continue;
+            }
+
+            draft.focuses[focus.layout.editKey] = {
+                kind: 'focus',
+                editKey: focus.layout.editKey,
+                focusId: focus.id,
+                editable: focus.layout.editable && focus.layout.sourceFile === focusLayoutActiveFile,
+                sourceFile: focus.layout.sourceFile,
+                sourceRange: focus.layout.sourceRange,
+                x: focus.layout.basePosition.x,
+                y: focus.layout.basePosition.y,
+                relativePositionId: focus.layout.relativePositionId ?? null,
+                offsets: focus.layout.offsets.map<FocusLayoutOffsetDraft>(offset => ({
+                    editKey: offset.editKey,
+                    x: offset.x,
+                    y: offset.y,
+                    hasTrigger: offset.hasTrigger,
+                    triggerText: offset.triggerText,
+                })),
+            };
+        }
+
+        if (focusTree.continuousFocusLayout && !draft.continuous[focusTree.continuousFocusLayout.editKey]) {
+            draft.continuous[focusTree.continuousFocusLayout.editKey] = {
+                kind: 'continuous',
+                editKey: focusTree.continuousFocusLayout.editKey,
+                editable: focusTree.continuousFocusLayout.editable && focusTree.continuousFocusLayout.sourceFile === focusLayoutActiveFile,
+                sourceFile: focusTree.continuousFocusLayout.sourceFile,
+                sourceRange: focusTree.continuousFocusLayout.sourceRange,
+                x: focusTree.continuousFocusLayout.basePosition.x,
+                y: focusTree.continuousFocusLayout.basePosition.y,
+                label: focusTree.continuousFocusLayout.label,
+            };
+        }
+
+        for (const inlay of focusTree.inlayWindows) {
+            if (!inlay.layout || draft.inlayRefs[inlay.layout.editKey]) {
+                continue;
+            }
+
+            draft.inlayRefs[inlay.layout.editKey] = {
+                kind: 'inlayRef',
+                editKey: inlay.layout.editKey,
+                editable: inlay.layout.editable && inlay.layout.sourceFile === focusLayoutActiveFile,
+                sourceFile: inlay.layout.sourceFile,
+                sourceRange: inlay.layout.sourceRange,
+                x: inlay.layout.basePosition.x,
+                y: inlay.layout.basePosition.y,
+                label: inlay.layout.label,
+            };
+        }
+    }
+
+    return draft;
+}
+
+function ensureLayoutDraft(): FocusLayoutDraft {
+    if (!focusLayoutDraft || focusLayoutDraft.baseVersion !== focusLayoutDocumentVersion) {
+        focusLayoutDraft = createLayoutDraftFromFocusTrees();
+    }
+
+    return focusLayoutDraft;
+}
+
+function postDraftChange() {
+    if (!focusLayoutDraft) {
+        return;
+    }
+
+    persistLayoutState();
+    vscode.postMessage({
+        command: 'focusLayoutDraftChange',
+        draft: focusLayoutDraft,
+    });
+}
+
+function getRenderedFocusTree(focusTree: FocusTree): FocusTree {
+    if (!focusLayoutDraft) {
+        return focusTree;
+    }
+
+    const renderedFocuses = Object.fromEntries(Object.values(focusTree.focuses).map(focus => {
+        const focusDraft = focusLayoutDraft?.focuses[focus.layoutEditKey];
+        if (!focusDraft) {
+            return [focus.id, focus];
+        }
+
+        const layoutOffsets = focus.layout?.offsets ?? [];
+        const nextOffsets = focusDraft.offsets.map(offsetDraft => {
+            if (offsetDraft.isNew) {
+                return { x: offsetDraft.x, y: offsetDraft.y, trigger: undefined };
+            }
+
+            const offsetIndex = layoutOffsets.findIndex(offset => offset.editKey === offsetDraft.editKey);
+            const originalOffset = offsetIndex >= 0 ? focus.offset[offsetIndex] : undefined;
+            return {
+                x: offsetDraft.x,
+                y: offsetDraft.y,
+                trigger: originalOffset?.trigger,
+            };
+        });
+
+        return [focus.id, {
+            ...focus,
+            x: focusDraft.x,
+            y: focusDraft.y,
+            relativePositionId: focusDraft.relativePositionId ?? undefined,
+            offset: nextOffsets,
+        }];
+    })) as Record<string, Focus>;
+
+    const continuousDraft = focusTree.continuousFocusLayout ? focusLayoutDraft.continuous[focusTree.continuousFocusLayout.editKey] : undefined;
+    const renderedInlayWindows = focusTree.inlayWindows.map(inlay => {
+        const inlayDraft = inlay.layout ? focusLayoutDraft?.inlayRefs[inlay.layout.editKey] : undefined;
+        if (!inlayDraft) {
+            return inlay;
+        }
+
+        return {
+            ...inlay,
+            position: { x: inlayDraft.x, y: inlayDraft.y },
+        };
+    });
+
+    return {
+        ...focusTree,
+        focuses: renderedFocuses,
+        inlayWindows: renderedInlayWindows,
+        continuousFocusPositionX: continuousDraft?.x ?? focusTree.continuousFocusPositionX,
+        continuousFocusPositionY: continuousDraft?.y ?? focusTree.continuousFocusPositionY,
+    };
+}
+
 async function buildContent() {
     const focusCheckState = getState().checkedFocuses ?? {};
     const checkedFocusesExprs = Object.keys(focusCheckState)
@@ -95,11 +305,12 @@ async function buildContent() {
     const focustreeplaceholder = document.getElementById('focustreeplaceholder') as HTMLDivElement;
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = (window as any).renderedFocus;
-    const focusTree = focusTrees[selectedFocusTreeIndex];
+    const baseFocusTree = focusTrees[selectedFocusTreeIndex];
+    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + baseFocusTree.id }, ...checkedFocusesExprs, ...selectedExprs, ...selectedInlayExprs];
+    const focusTree = getRenderedFocusTree(baseFocusTree);
     const focuses = Object.values(focusTree.focuses);
 
     const allowBranchOptionsValue: Record<string, boolean> = {};
-    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs, ...selectedExprs, ...selectedInlayExprs];
     focusTree.allowBranchOptions.forEach(option => {
         const focus = focusTree.focuses[option];
         allowBranchOptionsValue[option] = !focus || focus.allowBranch === undefined || applyCondition(focus.allowBranch, exprs);
@@ -118,7 +329,7 @@ async function buildContent() {
     const focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, exprs)).filter((v): v is GridBoxItem => !!v);
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
-    const leftPadding = gridbox.position.x._value - Math.min(minX * (window as any).xGridSize, 0);
+    const leftPadding = gridbox.position.x._value - Math.min(minX * xGridSize, 0);
 
     const focusTreeContent = await renderGridBoxCommon({ ...gridbox, position: { ...gridbox.position, x: toNumberLike(leftPadding) } }, {
         size: { width: 0, height: 0 },
@@ -140,6 +351,444 @@ async function buildContent() {
 
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
+    currentLayoutTargets = createLayoutTargetIndex(focusTree, focusPosition);
+    syncContinuousLayoutTarget(focusTree);
+    if (focusLayoutSelectedKey && !currentLayoutTargets[focusLayoutSelectedKey]) {
+        focusLayoutSelectedKey = undefined;
+    }
+    renderLayoutSelection();
+    renderLayoutInspector();
+    updateLayoutToolbar();
+    persistLayoutState();
+}
+
+function createLayoutTargetIndex(focusTree: FocusTree, focusPosition: Record<string, NumberPosition>): Record<string, LayoutTargetDescriptor> {
+    const result: Record<string, LayoutTargetDescriptor> = {};
+
+    for (const focus of Object.values(focusTree.focuses)) {
+        const position = focusPosition[focus.id];
+        if (!position) {
+            continue;
+        }
+
+        result[focus.layoutEditKey] = {
+            key: focus.layoutEditKey,
+            kind: 'focus',
+            label: focus.id,
+            editable: focus.layout?.editable === true && focus.layout.sourceFile === focusLayoutActiveFile && !focusLayoutStale,
+            sourceFile: focus.layout?.sourceFile ?? focus.file,
+            sourceStart: focus.layout?.sourceRange?.start ?? focus.token?.start,
+            sourceEnd: focus.layout?.sourceRange?.end ?? focus.token?.end,
+            currentPosition: position,
+            focusId: focus.id,
+        };
+    }
+
+    if (focusTree.continuousFocusLayout && focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
+        result[focusTree.continuousFocusLayout.editKey] = {
+            key: focusTree.continuousFocusLayout.editKey,
+            kind: 'continuous',
+            label: focusTree.continuousFocusLayout.label,
+            editable: focusTree.continuousFocusLayout.editable && focusTree.continuousFocusLayout.sourceFile === focusLayoutActiveFile && !focusLayoutStale,
+            sourceFile: focusTree.continuousFocusLayout.sourceFile,
+            sourceStart: focusTree.continuousFocusLayout.sourceRange?.start,
+            sourceEnd: focusTree.continuousFocusLayout.sourceRange?.end,
+            currentPosition: {
+                x: focusTree.continuousFocusPositionX,
+                y: focusTree.continuousFocusPositionY,
+            },
+        };
+    }
+
+    for (const inlay of focusTree.inlayWindows) {
+        if (!inlay.layout) {
+            continue;
+        }
+
+        result[inlay.layout.editKey] = {
+            key: inlay.layout.editKey,
+            kind: 'inlayRef',
+            label: inlay.layout.label,
+            editable: inlay.layout.editable && inlay.layout.sourceFile === focusLayoutActiveFile && !focusLayoutStale,
+            sourceFile: inlay.layout.sourceFile,
+            sourceStart: inlay.layout.sourceRange?.start,
+            sourceEnd: inlay.layout.sourceRange?.end,
+            currentPosition: {
+                x: inlay.position.x,
+                y: inlay.position.y,
+            },
+        };
+    }
+
+    return result;
+}
+
+function syncContinuousLayoutTarget(focusTree: FocusTree) {
+    const continuous = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+    if (!continuous) {
+        return;
+    }
+
+    const layout = focusTree.continuousFocusLayout;
+    if (!layout || focusTree.continuousFocusPositionX === undefined || focusTree.continuousFocusPositionY === undefined || continuous.style.display === 'none') {
+        continuous.removeAttribute('data-layout-kind');
+        continuous.removeAttribute('data-layout-key');
+        continuous.removeAttribute('data-layout-editable');
+        continuous.removeAttribute('data-layout-source-file');
+        continuous.removeAttribute('data-layout-source-start');
+        continuous.removeAttribute('data-layout-source-end');
+        continuous.classList.remove('focus-layout-target');
+        continuous.style.pointerEvents = 'none';
+        return;
+    }
+
+    continuous.setAttribute('data-layout-kind', 'continuous');
+    continuous.setAttribute('data-layout-key', layout.editKey);
+    continuous.setAttribute('data-layout-editable', layout.editable && layout.sourceFile === focusLayoutActiveFile && !focusLayoutStale ? 'true' : 'false');
+    continuous.setAttribute('data-layout-source-file', layout.sourceFile);
+    continuous.setAttribute('data-layout-source-start', `${layout.sourceRange?.start ?? ''}`);
+    continuous.setAttribute('data-layout-source-end', `${layout.sourceRange?.end ?? ''}`);
+    continuous.classList.add('focus-layout-target');
+    continuous.style.pointerEvents = focusLayoutEditMode ? 'auto' : 'none';
+}
+
+function renderLayoutSelection() {
+    document.querySelectorAll<HTMLElement>('[data-layout-key]').forEach(element => {
+        element.style.boxShadow = '';
+        element.style.outline = '';
+    });
+
+    if (!focusLayoutSelectedKey) {
+        return;
+    }
+
+    const selected = document.querySelector<HTMLElement>(`[data-layout-key="${cssEscape(focusLayoutSelectedKey)}"]`);
+    if (!selected) {
+        return;
+    }
+
+    selected.style.boxShadow = '0 0 0 2px var(--vscode-focusBorder), 0 0 0 5px rgba(87, 148, 242, 0.2)';
+    selected.style.outline = '1px solid rgba(87, 148, 242, 0.4)';
+}
+
+function updateLayoutToolbar() {
+    if (!focusLayoutEditorEnabled) {
+        return;
+    }
+
+    const editButton = document.getElementById('focus-layout-edit') as HTMLButtonElement | null;
+    const applyButton = document.getElementById('focus-layout-apply') as HTMLButtonElement | null;
+    const discardButton = document.getElementById('focus-layout-discard') as HTMLButtonElement | null;
+    if (!editButton || !applyButton || !discardButton) {
+        return;
+    }
+
+    editButton.textContent = focusLayoutEditMode ? feLocalize('TODO', 'Editing Layout') : feLocalize('TODO', 'Edit Layout');
+    editButton.disabled = focusLayoutEditMode;
+    applyButton.style.display = focusLayoutEditMode ? '' : 'none';
+    discardButton.style.display = focusLayoutEditMode ? '' : 'none';
+    applyButton.disabled = !focusLayoutDraft || focusLayoutStale || focusLayoutPendingApplyVersion !== undefined;
+}
+
+function renderLayoutInspector() {
+    if (!focusLayoutEditorEnabled) {
+        return;
+    }
+
+    const inspector = document.getElementById('focus-layout-inspector') as HTMLDivElement | null;
+    const content = document.getElementById('focus-layout-inspector-content') as HTMLDivElement | null;
+    if (!inspector || !content) {
+        return;
+    }
+
+    if (!focusLayoutEditMode) {
+        inspector.style.display = 'none';
+        return;
+    }
+
+    inspector.style.display = 'block';
+    const selected = focusLayoutSelectedKey ? currentLayoutTargets[focusLayoutSelectedKey] : undefined;
+    const staleBanner = focusLayoutStale ? `
+        <div style="padding:8px 10px; margin-bottom:10px; border-radius:6px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder);">
+            <div style="margin-bottom:6px;">${feLocalize('TODO', 'The document changed while this draft was open.')}</div>
+            <button id="focus-layout-reload">${feLocalize('TODO', 'Reload From Document')}</button>
+            <button id="focus-layout-discard-stale" style="margin-left:6px;">${feLocalize('TODO', 'Discard Draft')}</button>
+        </div>` : '';
+    const status = focusLayoutStatusMessage ? `<div style="margin-bottom:10px; color: var(--vscode-descriptionForeground);">${escapeHtml(focusLayoutStatusMessage)}</div>` : '';
+
+    if (!selected) {
+        content.innerHTML = `${staleBanner}${status}
+            <h3 style="margin-top:0;">${feLocalize('TODO', 'Focus Layout Editor')}</h3>
+            <p style="margin-bottom:0;">${feLocalize('TODO', 'Select a focus, continuous focus area, or inlay window to edit its layout fields.')}</p>`;
+        wireLayoutInspectorActions();
+        return;
+    }
+
+    if (selected.kind === 'focus') {
+        const focusDraft = focusLayoutDraft?.focuses[selected.key];
+        content.innerHTML = `${staleBanner}${status}${renderFocusLayoutInspector(selected, focusDraft)}`;
+    } else {
+        const pointDraft = (selected.kind === 'continuous'
+            ? focusLayoutDraft?.continuous[selected.key]
+            : focusLayoutDraft?.inlayRefs[selected.key]) as FocusLayoutPointDraft | undefined;
+        content.innerHTML = `${staleBanner}${status}${renderPointLayoutInspector(selected, pointDraft)}`;
+    }
+
+    wireLayoutInspectorActions();
+}
+
+function renderFocusLayoutInspector(selected: LayoutTargetDescriptor, focusDraft: FocusLayoutFocusDraft | undefined): string {
+    const editable = !!focusDraft?.editable && !focusLayoutStale;
+    const activeFocusIds = Object.values(ensureLayoutDraft().focuses)
+        .filter(focus => focus.editable && focus.sourceFile === focusLayoutActiveFile)
+        .map(focus => focus.focusId)
+        .sort((a, b) => a.localeCompare(b));
+    const offsetRows = focusDraft?.offsets.map(offset => `
+        <div data-offset-key="${escapeHtml(offset.editKey)}" style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px; margin-bottom:8px; align-items:end;">
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>X</span>
+                <input type="number" data-offset-field="x" value="${offset.x}" ${editable ? '' : 'disabled'} />
+            </label>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>Y</span>
+                <input type="number" data-offset-field="y" value="${offset.y}" ${editable ? '' : 'disabled'} />
+            </label>
+            <button data-offset-delete="${escapeHtml(offset.editKey)}" ${editable ? '' : 'disabled'}>${feLocalize('TODO', 'Delete')}</button>
+            ${offset.hasTrigger ? `<div style="grid-column:1 / span 3; color: var(--vscode-descriptionForeground);">${feLocalize('TODO', 'Trigger is preserved and remains read-only in this preview editor.')}</div>` : ''}
+        </div>`).join('') ?? '';
+
+    return `
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+            <div>
+                <h3 style="margin:0;">${escapeHtml(selected.label)}</h3>
+                <div style="color: var(--vscode-descriptionForeground); margin-top:4px;">${feLocalize('TODO', 'Rendered position')}: ${selected.currentPosition.x}, ${selected.currentPosition.y}</div>
+            </div>
+            <span style="padding:2px 8px; border-radius:999px; background:${editable ? 'var(--vscode-badge-background)' : 'rgba(127,127,127,0.25)'}; color: var(--vscode-badge-foreground);">${editable ? feLocalize('TODO', 'Editable') : feLocalize('TODO', 'Read-only')}</span>
+        </div>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:12px; color: var(--vscode-descriptionForeground);">${escapeHtml(selected.sourceFile)}</div>
+            <button id="focus-layout-open-source">${feLocalize('TODO', 'Open Source')}</button>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>${feLocalize('TODO', 'Base X')}</span>
+                <input id="focus-layout-x" type="number" value="${focusDraft?.x ?? selected.currentPosition.x}" ${editable ? '' : 'disabled'} />
+            </label>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>${feLocalize('TODO', 'Base Y')}</span>
+                <input id="focus-layout-y" type="number" value="${focusDraft?.y ?? selected.currentPosition.y}" ${editable ? '' : 'disabled'} />
+            </label>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>${feLocalize('TODO', 'Relative Position ID')}</span>
+                <select id="focus-layout-relative" ${editable ? '' : 'disabled'}>
+                    <option value="">${feLocalize('TODO', '(none)')}</option>
+                    ${activeFocusIds.map(focusId => `<option value="${escapeHtml(focusId)}" ${focusDraft?.relativePositionId === focusId ? 'selected' : ''}>${escapeHtml(focusId)}</option>`).join('')}
+                </select>
+            </label>
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong>${feLocalize('TODO', 'Offsets')}</strong>
+                    <button id="focus-layout-add-offset" ${editable ? '' : 'disabled'}>${feLocalize('TODO', 'Add Offset')}</button>
+                </div>
+                ${offsetRows || `<div style="color: var(--vscode-descriptionForeground);">${feLocalize('TODO', 'No offsets')}</div>`}
+            </div>
+        </div>`;
+}
+
+function renderPointLayoutInspector(selected: LayoutTargetDescriptor, pointDraft: FocusLayoutPointDraft | undefined): string {
+    const editable = !!pointDraft?.editable && !focusLayoutStale;
+    return `
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+            <div>
+                <h3 style="margin:0;">${escapeHtml(selected.label)}</h3>
+                <div style="color: var(--vscode-descriptionForeground); margin-top:4px;">${feLocalize('TODO', 'Current position')}: ${selected.currentPosition.x}, ${selected.currentPosition.y}</div>
+            </div>
+            <span style="padding:2px 8px; border-radius:999px; background:${editable ? 'var(--vscode-badge-background)' : 'rgba(127,127,127,0.25)'}; color: var(--vscode-badge-foreground);">${editable ? feLocalize('TODO', 'Editable') : feLocalize('TODO', 'Read-only')}</span>
+        </div>
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:12px; color: var(--vscode-descriptionForeground);">${escapeHtml(selected.sourceFile)}</div>
+            <button id="focus-layout-open-source">${feLocalize('TODO', 'Open Source')}</button>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>X</span>
+                <input id="focus-layout-x" type="number" value="${pointDraft?.x ?? selected.currentPosition.x}" ${editable ? '' : 'disabled'} />
+            </label>
+            <label style="display:flex; flex-direction:column; gap:4px;">
+                <span>Y</span>
+                <input id="focus-layout-y" type="number" value="${pointDraft?.y ?? selected.currentPosition.y}" ${editable ? '' : 'disabled'} />
+            </label>
+        </div>`;
+}
+
+function wireLayoutInspectorActions() {
+    if (!focusLayoutEditorEnabled) {
+        return;
+    }
+
+    const reloadButton = document.getElementById('focus-layout-reload') as HTMLButtonElement | null;
+    reloadButton?.addEventListener('click', () => {
+        focusLayoutDraft = createLayoutDraftFromFocusTrees();
+        focusLayoutStale = false;
+        focusLayoutStatusMessage = undefined;
+        focusLayoutPendingApplyVersion = undefined;
+        persistLayoutState();
+        vscode.postMessage({ command: 'focusLayoutReload' });
+        void buildContent();
+    });
+
+    const discardStaleButton = document.getElementById('focus-layout-discard-stale') as HTMLButtonElement | null;
+    discardStaleButton?.addEventListener('click', discardLayoutDraft);
+
+    const openSourceButton = document.getElementById('focus-layout-open-source') as HTMLButtonElement | null;
+    openSourceButton?.addEventListener('click', () => {
+        const target = focusLayoutSelectedKey ? currentLayoutTargets[focusLayoutSelectedKey] : undefined;
+        if (!target || target.sourceStart === undefined) {
+            return;
+        }
+
+        vscode.postMessage({
+            command: 'navigate',
+            start: target.sourceStart,
+            end: target.sourceEnd ?? target.sourceStart,
+            file: target.sourceFile === focusLayoutActiveFile ? undefined : target.sourceFile,
+        });
+    });
+
+    const xInput = document.getElementById('focus-layout-x') as HTMLInputElement | null;
+    xInput?.addEventListener('change', () => updateSelectedLayoutScalar('x', parseInt(xInput.value, 10) || 0));
+
+    const yInput = document.getElementById('focus-layout-y') as HTMLInputElement | null;
+    yInput?.addEventListener('change', () => updateSelectedLayoutScalar('y', parseInt(yInput.value, 10) || 0));
+
+    const relativeSelect = document.getElementById('focus-layout-relative') as HTMLSelectElement | null;
+    relativeSelect?.addEventListener('change', () => {
+        if (!focusLayoutSelectedKey) {
+            return;
+        }
+        const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
+        if (!draft || !draft.editable || focusLayoutStale) {
+            return;
+        }
+        draft.relativePositionId = relativeSelect.value || null;
+        postDraftChange();
+        void buildContent();
+    });
+
+    const addOffsetButton = document.getElementById('focus-layout-add-offset') as HTMLButtonElement | null;
+    addOffsetButton?.addEventListener('click', () => {
+        if (!focusLayoutSelectedKey) {
+            return;
+        }
+        const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
+        if (!draft || !draft.editable || focusLayoutStale) {
+            return;
+        }
+
+        draft.offsets.push({
+            editKey: `offset:new:${draft.editKey}:${Date.now()}:${draft.offsets.length}`,
+            x: 0,
+            y: 0,
+            hasTrigger: false,
+            isNew: true,
+        });
+        postDraftChange();
+        void buildContent();
+    });
+
+    document.querySelectorAll<HTMLElement>('[data-offset-key]').forEach(row => {
+        const offsetKey = row.getAttribute('data-offset-key');
+        if (!offsetKey || !focusLayoutSelectedKey) {
+            return;
+        }
+
+        const xField = row.querySelector<HTMLInputElement>('[data-offset-field="x"]');
+        const yField = row.querySelector<HTMLInputElement>('[data-offset-field="y"]');
+        xField?.addEventListener('change', () => updateSelectedOffset(offsetKey, 'x', parseInt(xField.value, 10) || 0));
+        yField?.addEventListener('change', () => updateSelectedOffset(offsetKey, 'y', parseInt(yField.value, 10) || 0));
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('[data-offset-delete]').forEach(button => {
+        const offsetKey = button.getAttribute('data-offset-delete');
+        if (!offsetKey) {
+            return;
+        }
+        button.addEventListener('click', () => {
+            if (!focusLayoutSelectedKey) {
+                return;
+            }
+            const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
+            if (!draft || !draft.editable || focusLayoutStale) {
+                return;
+            }
+            draft.offsets = draft.offsets.filter(offset => offset.editKey !== offsetKey);
+            postDraftChange();
+            void buildContent();
+        });
+    });
+}
+
+function updateSelectedLayoutScalar(field: 'x' | 'y', value: number) {
+    if (!focusLayoutSelectedKey || focusLayoutStale) {
+        return;
+    }
+
+    const draft = ensureLayoutDraft();
+    const target = currentLayoutTargets[focusLayoutSelectedKey];
+    if (!target) {
+        return;
+    }
+
+    if (target.kind === 'focus') {
+        const focusDraft = draft.focuses[focusLayoutSelectedKey];
+        if (!focusDraft || !focusDraft.editable) {
+            return;
+        }
+        focusDraft[field] = Math.round(value);
+    } else {
+        const pointDraft = (target.kind === 'continuous' ? draft.continuous[focusLayoutSelectedKey] : draft.inlayRefs[focusLayoutSelectedKey]);
+        if (!pointDraft || !pointDraft.editable) {
+            return;
+        }
+        pointDraft[field] = Math.round(value);
+    }
+
+    postDraftChange();
+    void buildContent();
+}
+
+function updateSelectedOffset(offsetKey: string, field: 'x' | 'y', value: number) {
+    if (!focusLayoutSelectedKey || focusLayoutStale) {
+        return;
+    }
+
+    const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
+    const offset = draft?.offsets.find(existing => existing.editKey === offsetKey);
+    if (!draft || !draft.editable || !offset) {
+        return;
+    }
+
+    offset[field] = Math.round(value);
+    postDraftChange();
+    void buildContent();
+}
+
+function discardLayoutDraft() {
+    focusLayoutDraft = undefined;
+    focusLayoutEditMode = false;
+    focusLayoutSelectedKey = undefined;
+    focusLayoutStale = false;
+    focusLayoutStatusMessage = undefined;
+    focusLayoutPendingApplyVersion = undefined;
+    persistLayoutState();
+    vscode.postMessage({ command: 'focusLayoutDiscard' });
+    void buildContent();
+}
+
+function cssEscape(value: string): string {
+    return value.replace(/["\\]/g, '\\$&');
+}
+
+function escapeHtml(value: string): string {
+    const div = document.createElement('div');
+    div.textContent = value;
+    return div.innerHTML;
 }
 
 function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Record<string, boolean>) {
@@ -180,7 +829,7 @@ function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Re
 }
 
 function updateSelectedFocusTree(clearCondition: boolean) {
-    const focusTree = focusTrees[selectedFocusTreeIndex];
+    const focusTree = getRenderedFocusTree(focusTrees[selectedFocusTreeIndex]);
     const continuousFocuses = document.getElementById('continuousFocuses') as HTMLDivElement;
 
     if (focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
@@ -463,13 +1112,115 @@ function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | und
 
 let retriggerSearch: () => void = () => {};
 
+function setupLayoutInteractionHandlers() {
+    if (!focusLayoutEditorEnabled) {
+        return;
+    }
+
+    document.addEventListener('click', event => {
+        if (!focusLayoutEditMode) {
+            return;
+        }
+
+        const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]');
+        if (!target) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        focusLayoutSelectedKey = target.dataset.layoutKey;
+        focusLayoutStatusMessage = undefined;
+        persistLayoutState();
+        renderLayoutSelection();
+        renderLayoutInspector();
+    }, true);
+
+    document.addEventListener('mousedown', event => {
+        if (!focusLayoutEditMode || focusLayoutStale || event.button !== 0) {
+            return;
+        }
+
+        if ((event.target as HTMLElement | null)?.closest('input, select, button, textarea, option')) {
+            return;
+        }
+
+        const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]');
+        const key = target?.dataset.layoutKey;
+        if (!target || !key) {
+            return;
+        }
+
+        const descriptor = currentLayoutTargets[key];
+        if (!descriptor) {
+            return;
+        }
+
+        focusLayoutSelectedKey = key;
+        persistLayoutState();
+        renderLayoutSelection();
+        renderLayoutInspector();
+
+        if (!descriptor.editable) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        beginLayoutDrag(descriptor, event.pageX, event.pageY);
+    }, true);
+}
+
+function beginLayoutDrag(target: LayoutTargetDescriptor, startPageX: number, startPageY: number) {
+    const draft = ensureLayoutDraft();
+    const scale = getState().scale || 1;
+    const focusDraft = target.kind === 'focus' ? draft.focuses[target.key] : undefined;
+    const pointDraft = target.kind !== 'focus'
+        ? (target.kind === 'continuous' ? draft.continuous[target.key] : draft.inlayRefs[target.key])
+        : undefined;
+
+    if ((focusDraft && !focusDraft.editable) || (pointDraft && !pointDraft.editable)) {
+        return;
+    }
+
+    const baseX = focusDraft?.x ?? pointDraft?.x ?? 0;
+    const baseY = focusDraft?.y ?? pointDraft?.y ?? 0;
+
+    const mouseMoveHandler = (moveEvent: MouseEvent) => {
+        const deltaX = (moveEvent.pageX - startPageX) / scale;
+        const deltaY = (moveEvent.pageY - startPageY) / scale;
+        if (target.kind === 'focus' && focusDraft) {
+            focusDraft.x = Math.round(baseX + deltaX / xGridSize);
+            focusDraft.y = Math.round(baseY + deltaY / yGridSize);
+        } else if (pointDraft) {
+            pointDraft.x = Math.round(baseX + deltaX);
+            pointDraft.y = Math.round(baseY + deltaY);
+        }
+
+        focusLayoutStatusMessage = undefined;
+        postDraftChange();
+        void buildContent();
+    };
+
+    const mouseUpHandler = () => {
+        document.removeEventListener('mousemove', mouseMoveHandler);
+        document.removeEventListener('mouseup', mouseUpHandler);
+    };
+
+    document.addEventListener('mousemove', mouseMoveHandler);
+    document.addEventListener('mouseup', mouseUpHandler);
+}
+
 window.addEventListener('load', tryRun(async function() {
+    setupLayoutInteractionHandlers();
+
     const showInlayWindowsElement = document.getElementById('show-inlay-windows') as HTMLInputElement | null;
     if (showInlayWindowsElement) {
-        (window as any).__showInlayWindows = false;
-        showInlayWindowsElement.checked = false;
+        (window as any).__showInlayWindows = !!getState().showInlayWindows;
+        showInlayWindowsElement.checked = !!(window as any).__showInlayWindows;
         showInlayWindowsElement.addEventListener('change', async () => {
             (window as any).__showInlayWindows = showInlayWindowsElement.checked;
+            setState({ showInlayWindows: showInlayWindowsElement.checked });
             updateSelectedFocusTree(false);
             await buildContent();
             retriggerSearch();
@@ -482,6 +1233,7 @@ window.addEventListener('load', tryRun(async function() {
         focusesElement.addEventListener('change', async () => {
             selectedFocusTreeIndex = parseInt(focusesElement.value);
             setState({ selectedFocusTreeIndex });
+            focusLayoutSelectedKey = undefined;
             updateSelectedFocusTree(true);
             await buildContent();
             retriggerSearch();
@@ -493,6 +1245,7 @@ window.addEventListener('load', tryRun(async function() {
         inlayWindowsElement.addEventListener('change', async () => {
             const focusTree = focusTrees[selectedFocusTreeIndex];
             setSelectedInlayWindowId(focusTree, inlayWindowsElement.value);
+            focusLayoutSelectedKey = undefined;
             await buildContent();
             retriggerSearch();
         });
@@ -629,6 +1382,66 @@ window.addEventListener('load', tryRun(async function() {
             const visible = warnings.style.display === 'block';
             document.body.style.overflow = visible ? '' : 'hidden';
             warnings.style.display = visible ? 'none' : 'block';
+        });
+    }
+
+    if (focusLayoutEditorEnabled) {
+        const editButton = document.getElementById('focus-layout-edit') as HTMLButtonElement | null;
+        editButton?.addEventListener('click', async () => {
+            if (focusLayoutEditMode) {
+                return;
+            }
+
+            focusLayoutDraft = createLayoutDraftFromFocusTrees();
+            focusLayoutEditMode = true;
+            focusLayoutStale = false;
+            focusLayoutStatusMessage = undefined;
+            focusLayoutPendingApplyVersion = undefined;
+            persistLayoutState();
+            await buildContent();
+        });
+
+        const applyButton = document.getElementById('focus-layout-apply') as HTMLButtonElement | null;
+        applyButton?.addEventListener('click', () => {
+            if (!focusLayoutDraft || focusLayoutStale) {
+                return;
+            }
+
+            focusLayoutStatusMessage = undefined;
+            focusLayoutPendingApplyVersion = focusLayoutDocumentVersion + 1;
+            persistLayoutState();
+            vscode.postMessage({
+                command: 'focusLayoutApply',
+                draft: focusLayoutDraft,
+            });
+            renderLayoutInspector();
+            updateLayoutToolbar();
+        });
+
+        const discardButton = document.getElementById('focus-layout-discard') as HTMLButtonElement | null;
+        discardButton?.addEventListener('click', discardLayoutDraft);
+
+        window.addEventListener('message', event => {
+            const message = event.data as FocusLayoutMessage | undefined;
+            if (!message || message.command !== 'focusLayoutApplyResult') {
+                return;
+            }
+
+            if (message.ok) {
+                focusLayoutDraft = undefined;
+                focusLayoutEditMode = false;
+                focusLayoutSelectedKey = undefined;
+                focusLayoutStale = false;
+                focusLayoutStatusMessage = message.message;
+                focusLayoutPendingApplyVersion = undefined;
+            } else {
+                focusLayoutPendingApplyVersion = undefined;
+                focusLayoutStale = !!message.stale;
+                focusLayoutStatusMessage = message.message ?? feLocalize('TODO', 'Failed to apply the layout draft.');
+            }
+
+            persistLayoutState();
+            void buildContent();
         });
     }
 

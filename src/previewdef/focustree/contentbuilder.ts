@@ -11,7 +11,7 @@ import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { useConditionInFocus } from '../../util/featureflags';
+import { focusLayoutEditor, useConditionInFocus } from '../../util/featureflags';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
 import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
@@ -21,7 +21,7 @@ import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 
-export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
+export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
@@ -40,7 +40,7 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file);
+        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file, documentVersion);
         jsCodes.push(i18nTableAsScript());
 
         return html(
@@ -71,7 +71,19 @@ const topPaddingBase = 50;
 const xGridSize = 96;
 const yGridSize = 130;
 
-async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable, gfxFiles: string[], jsCodes: string[], styleNonce: string, file: string): Promise<string> {
+function attributeEscape(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+async function renderFocusTrees(
+    focusTrees: FocusTree[],
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    jsCodes: string[],
+    styleNonce: string,
+    file: string,
+    documentVersion: number,
+): Promise<string> {
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
         format: toStringAsSymbolIgnoreCase('up'),
@@ -97,6 +109,10 @@ async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable,
     jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
     jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
     jsCodes.push('window.xGridSize = ' + xGridSize);
+    jsCodes.push('window.yGridSize = ' + yGridSize);
+    jsCodes.push('window.focusLayoutEditorEnabled = ' + JSON.stringify(focusLayoutEditor));
+    jsCodes.push('window.focusLayoutDocumentVersion = ' + JSON.stringify(documentVersion));
+    jsCodes.push('window.focusLayoutActiveFile = ' + JSON.stringify(file));
 
     const continuousFocusContent =
         `<div id="continuousFocuses" class="${styleTable.oneTimeStyle('continuousFocuses', () => `
@@ -123,6 +139,7 @@ async function renderFocusTrees(focusTrees: FocusTree[], styleTable: StyleTable,
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
+        renderLayoutInspector(styleTable) +
         renderToolBar(focusTrees, styleTable)
     );
 }
@@ -225,6 +242,13 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             <i class="codicon codicon-warning"></i>
         </button>`;
 
+    const layoutButtons = !focusLayoutEditor ? '' : `
+        <div id="focus-layout-toolbar" class="${styleTable.style('focusLayoutToolbar', () => `display:flex; align-items:center; gap:6px; margin-left:auto;`)}">
+            <button id="focus-layout-edit" title="${localize('TODO', 'Toggle layout edit mode')}">${localize('TODO', 'Edit Layout')}</button>
+            <button id="focus-layout-apply" title="${localize('TODO', 'Apply layout changes')}" style="display:none">${localize('TODO', 'Apply')}</button>
+            <button id="focus-layout-discard" title="${localize('TODO', 'Discard layout draft')}" style="display:none">${localize('TODO', 'Discard')}</button>
+        </div>`;
+
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
         <div class="toolbar">
             ${focuses}
@@ -233,8 +257,35 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             ${inlayWindows}
             ${useConditionInFocus ? conditions + inlayConditions : allowbranch}
             ${warningsButton}
+            ${layoutButtons}
         </div>
     </div>`;
+}
+
+function renderLayoutInspector(styleTable: StyleTable): string {
+    if (!focusLayoutEditor) {
+        return '';
+    }
+
+    return `
+        <aside id="focus-layout-inspector" class="${styleTable.style('focusLayoutInspector', () => `
+            position: fixed;
+            top: 52px;
+            right: 16px;
+            width: 340px;
+            max-height: calc(100vh - 68px);
+            overflow: auto;
+            padding: 14px;
+            box-sizing: border-box;
+            display: none;
+            background: color-mix(in srgb, var(--vscode-sideBar-background) 92%, transparent);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            z-index: 40;
+            backdrop-filter: blur(8px);
+        `)}">
+            <div id="focus-layout-inspector-content"></div>
+        </aside>`;
 }
 
 function getInlayGfxStyleKey(gfxName: string | undefined, gfxFile: string | undefined) {
@@ -322,7 +373,16 @@ async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], style
         left: ${inlay.position.x}px;
         top: ${inlay.position.y}px;
         z-index: 5;
-    `)}" start="${inlay.token?.start}" end="${inlay.token?.end}" file="${inlay.file}">${content}</div>`;
+    `)}"
+        start="${inlay.token?.start}"
+        end="${inlay.token?.end}"
+        file="${inlay.file}"
+        data-layout-kind="inlayRef"
+        data-layout-key="${attributeEscape(inlay.layout?.editKey ?? '')}"
+        data-layout-editable="${inlay.layout?.editable === true ? 'true' : 'false'}"
+        data-layout-source-file="${attributeEscape(inlay.layout?.sourceFile ?? inlay.file)}"
+        data-layout-source-start="${inlay.layout?.sourceRange?.start ?? inlay.token?.start ?? ''}"
+        data-layout-source-end="${inlay.layout?.sourceRange?.end ?? inlay.token?.end ?? ''}">${content}</div>`;
 }
 
 async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
@@ -418,6 +478,7 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     return `<div
     class="
         navigator
+        focus-layout-target
         {{iconClass}}
         ${styleTable.style('focus-common', () => `
             background-position-x: center;
@@ -432,6 +493,12 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     start="${focus.token?.start}"
     end="${focus.token?.end}"
     ${file === focus.file ? '' : `file="${focus.file}"`}
+    data-layout-kind="focus"
+    data-layout-key="${attributeEscape(focus.layoutEditKey)}"
+    data-layout-editable="${focus.layout?.editable === true ? 'true' : 'false'}"
+    data-layout-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
+    data-layout-source-start="${focus.layout?.sourceRange?.start ?? focus.token?.start ?? ''}"
+    data-layout-source-end="${focus.layout?.sourceRange?.end ?? focus.token?.end ?? ''}"
     title="${focus.id}\n({{position}})">
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>

@@ -10,6 +10,8 @@ import { useConditionInFocus } from "../../util/featureflags";
 import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
 import { parseInlayWindowRef } from "./inlay";
+import { FocusLayoutFocusMeta, FocusLayoutPointMeta, createLayoutEditKey } from "./layouteditcommon";
+import { collectFocusLayoutFileMetadata } from "./layouteditmetadata";
 
 export type FocusTreeKind = 'focus' | 'shared' | 'joint';
 
@@ -25,6 +27,7 @@ export interface FocusTree {
     isSharedFocues: boolean;
     continuousFocusPositionX?: number;
     continuousFocusPositionY?: number;
+    continuousFocusLayout?: FocusLayoutPointMeta;
     warnings: FocusWarning[];
 }
 
@@ -34,6 +37,7 @@ interface FocusIconWithCondition {
 }
 
 export interface Focus {
+    layoutEditKey: string;
     x: number;
     y: number;
     id: string;
@@ -48,6 +52,7 @@ export interface Focus {
     token: Token | undefined;
     file: string;
     text?: string;
+    layout?: FocusLayoutFocusMeta;
 }
 
 export interface FocusWarning extends Warning<string> {
@@ -55,10 +60,12 @@ export interface FocusWarning extends Warning<string> {
 }
 
 export interface FocusTreeInlayRef {
+    editKey: string;
     id: string;
     position: { x: number, y: number };
     file: string;
     token: Token | undefined;
+    layout?: FocusLayoutPointMeta;
 }
 
 export interface FocusTreeInlay {
@@ -74,6 +81,7 @@ export interface FocusTreeInlay {
     scriptedImages: FocusInlayImageSlot[];
     scriptedButtons: FocusTreeInlayButtonMeta[];
     conditionExprs: ConditionItem[];
+    layout?: FocusLayoutPointMeta;
 }
 
 export interface FocusInlayImageSlot {
@@ -359,8 +367,28 @@ function getJointFocusTreeId(filePath: string): string {
 export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath: string): FocusTree[] {
     const constants = {};
     const file = convertFocusFileNodeToJson(node, constants);
+    const trees = getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
+    const metadata = collectFocusLayoutFileMetadata(node, filePath);
 
-    return getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
+    let focusTreeIndex = 0;
+    for (const tree of trees) {
+        for (const focus of Object.values(tree.focuses)) {
+            if (!focus.layout && focus.file === filePath) {
+                focus.layout = metadata.focuses[focus.layoutEditKey];
+            }
+        }
+
+        if (tree.kind === 'focus') {
+            tree.continuousFocusLayout = metadata.continuousByTreeIndex[focusTreeIndex];
+            focusTreeIndex++;
+        }
+
+        for (const inlayRef of tree.inlayWindowRefs) {
+            inlayRef.layout = metadata.inlayRefs[inlayRef.editKey];
+        }
+    }
+
+    return trees;
 }
 
 function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: ConditionItem[], filePath: string, warnings: FocusWarning[], constants: {}): Record<string, Focus> {
@@ -441,6 +469,7 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
     }));
 
     return {
+        layoutEditKey: createLayoutEditKey('focus', filePath, hoiFocus._token?.start ?? id),
         id,
         icon,
         x: hoiFocus.x ?? 0,
