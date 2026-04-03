@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { flatMap } from 'lodash';
 import { FocusTree, Focus } from './schema';
 import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
@@ -104,14 +103,21 @@ async function renderFocusTrees(
         slotsize: { width: toNumberLike(xGridSize), height: toNumberLike(yGridSize) },
     } as HOIPartial<GridBoxType>;
 
+    const allFocuses: Focus[] = [];
+    const allInlays: FocusTree["inlayWindows"][number][] = [];
+    for (const tree of focusTrees) {
+        allFocuses.push(...Object.values(tree.focuses));
+        allInlays.push(...tree.inlayWindows);
+    }
+
     const renderedFocus: Record<string, string> = {};
-    await Promise.all(flatMap(focusTrees, tree => Object.values(tree.focuses)).map(async (focus) => {
+    await Promise.all(allFocuses.map(async (focus) => {
         renderedFocus[focus.id] = (await renderFocus(focus, styleTable, gfxFiles, file)).replace(/\s\s+/g, ' ');
     }));
 
     await prepareInlayGfxStyles(focusTrees, styleTable);
     const renderedInlayWindows: Record<string, string> = {};
-    await Promise.all(flatMap(focusTrees, tree => tree.inlayWindows).map(async (inlay) => {
+    await Promise.all(allInlays.map(async (inlay) => {
         renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, gfxFiles)).replace(/\s\s+/g, ' ');
     }));
 

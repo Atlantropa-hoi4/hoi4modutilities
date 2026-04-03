@@ -64,6 +64,9 @@ let checkedFocuses: Record<string, Checkbox> = {};
 let focusPositionEditMode: boolean = !!getState().focusPositionEditMode;
 let currentRenderedFocusTree: FocusTree | undefined = undefined;
 let currentFocusPositions: Record<string, NumberPosition> = {};
+let currentRenderedFocusElements: Record<string, HTMLElement> = {};
+let currentRenderedFocusElementsList: HTMLElement[] = [];
+let currentOccupiedFocusPositionKeys = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
 let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
@@ -80,6 +83,32 @@ const focusPositionDragThresholdPx = 4;
 const focusNavigateDelayMs = 220;
 let currentGridLeftPadding = 0;
 let currentGridTopPadding = 0;
+
+function getFocusPositionKey(position: NumberPosition): string {
+    return `${position.x},${position.y}`;
+}
+
+function setCurrentFocusPositions(nextPositions: Record<string, NumberPosition>) {
+    currentFocusPositions = nextPositions;
+    currentOccupiedFocusPositionKeys = new Set(
+        Object.values(nextPositions).map(position => getFocusPositionKey(position)),
+    );
+}
+
+function rebuildRenderedFocusElementCache() {
+    currentRenderedFocusElements = {};
+    currentRenderedFocusElementsList = [];
+
+    document.querySelectorAll<HTMLElement>('[data-focus-id]').forEach(element => {
+        const focusId = element.dataset.focusId;
+        if (!focusId || currentRenderedFocusElements[focusId]) {
+            return;
+        }
+
+        currentRenderedFocusElements[focusId] = element;
+        currentRenderedFocusElementsList.push(element);
+    });
+}
 
 function getSelectedInlayWindowIds() {
     return getState().selectedInlayWindowIds ?? {} as Record<string, string | undefined>;
@@ -119,7 +148,7 @@ function updateFocusPositionEditUi() {
         editButton.style.borderRadius = focusPositionEditMode ? '3px' : '';
     }
 
-    document.querySelectorAll<HTMLElement>('[data-focus-id]').forEach(element => {
+    currentRenderedFocusElementsList.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
         const isPendingParent = pendingFocusLinkParentId !== undefined && element.dataset.focusId === pendingFocusLinkParentId;
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
@@ -493,8 +522,7 @@ function ensurePendingFocusLinkOverlay(): SVGSVGElement {
 }
 
 function getFocusElementById(focusId: string): HTMLElement | undefined {
-    return Array.from(document.querySelectorAll<HTMLElement>('[data-focus-id]'))
-        .find(element => element.dataset.focusId === focusId);
+    return currentRenderedFocusElements[focusId];
 }
 
 function getElementViewportCenter(element: HTMLElement): NumberPosition {
@@ -620,7 +648,7 @@ function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPositio
 }
 
 function hasRenderedFocusAtAbsolutePosition(position: NumberPosition): boolean {
-    return Object.values(currentFocusPositions).some(currentPosition => currentPosition.x === position.x && currentPosition.y === position.y);
+    return currentOccupiedFocusPositionKeys.has(getFocusPositionKey(position));
 }
 
 function setupFocusTemplateCreateHandler() {
@@ -677,7 +705,9 @@ function clearFocusPositionDragBindings() {
 function bindFocusPositionDragHandlers() {
     clearFocusPositionDragBindings();
 
-    document.querySelectorAll<HTMLElement>('[data-focus-id][data-focus-editable="true"]').forEach(focusElement => {
+    currentRenderedFocusElementsList
+        .filter(focusElement => focusElement.dataset.focusEditable === 'true')
+        .forEach(focusElement => {
         const handler = (event: MouseEvent) => {
             if (!focusPositionEditMode || event.button !== 0) {
                 return;
@@ -791,7 +821,7 @@ function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, ta
     Object.values(currentRenderedFocusTree.focuses).forEach(currentFocus => {
         getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
     });
-    currentFocusPositions = recalculatedPositions;
+    setCurrentFocusPositions(recalculatedPositions);
 }
 
 function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, targetLocalX?: number, targetLocalY?: number) {
@@ -817,7 +847,7 @@ function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, 
     Object.values(currentRenderedFocusTree.focuses).forEach(currentFocus => {
         getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
     });
-    currentFocusPositions = recalculatedPositions;
+    setCurrentFocusPositions(recalculatedPositions);
 }
 
 async function buildContent() {
@@ -876,7 +906,7 @@ async function buildContent() {
     if (pendingFocusLinkParentId !== undefined && !focusTree.focuses[pendingFocusLinkParentId]) {
         clearPendingFocusLink();
     }
-    currentFocusPositions = { ...focusPosition };
+    setCurrentFocusPositions({ ...focusPosition });
     currentRenderedExprs = renderExprs;
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
@@ -904,6 +934,7 @@ async function buildContent() {
     const minimumCanvasHeight = currentGridTopPadding + Math.max(maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
     focustreeplaceholder.style.minHeight = `${minimumCanvasHeight}px`;
     contentElement.style.minHeight = `${minimumCanvasHeight}px`;
+    rebuildRenderedFocusElementCache();
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
     inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, renderExprs);
 

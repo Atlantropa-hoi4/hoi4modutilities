@@ -33,6 +33,7 @@ interface PreviewProviderDefAlternative {
 
 export class PreviewManager implements vscode.WebviewPanelSerializer {
     private _previews: Record<string, PreviewBase> = {};
+    private _previewItemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     private _previewProviders: PreviewProviderDef[] = [
         focusTreePreviewDef,
@@ -298,15 +299,21 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         1000,
         { trailing: true });
 
-    private updatePreviewItem = debounceByInput(
-        (previewItem: PreviewBase, document: vscode.TextDocument) => {
+    private updatePreviewItem(previewItem: PreviewBase, document: vscode.TextDocument): void {
+        const key = previewItem.uri.toString();
+        const existingTimer = this._previewItemUpdateTimers.get(key);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+
+        const timer = setTimeout(() => {
+            this._previewItemUpdateTimers.delete(key);
             if (!previewItem.isDisposed) {
-                previewItem.onDocumentChange(document);
+                void previewItem.onDocumentChange(document);
             }
-        },
-        (preview) => preview.uri.toString(),
-        1000,
-        { trailing: true });
+        }, Math.max(0, previewItem.getDocumentChangeDebounceMs()));
+        this._previewItemUpdateTimers.set(key, timer);
+    }
 }
 
 export const previewManager = new PreviewManager();

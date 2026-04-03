@@ -37,6 +37,10 @@ class FocusTreePreview extends PreviewBase {
         return result;
     }
 
+    public override getDocumentChangeDebounceMs(): number {
+        return 150;
+    }
+
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
         if (this.pendingLocalEditDocumentVersions.delete(document.version)) {
             return;

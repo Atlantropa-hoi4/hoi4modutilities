@@ -33,6 +33,10 @@ export abstract class PreviewBase {
             error(e);
         }
     }
+
+    public getDocumentChangeDebounceMs(): number {
+        return 1000;
+    }
     
     public dispose(): void {
         this.dependencyChangedEmitter.dispose();
