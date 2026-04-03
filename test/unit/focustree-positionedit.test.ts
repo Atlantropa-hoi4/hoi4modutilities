@@ -113,9 +113,17 @@ describe('focus tree position edit helpers', () => {
         assert.deepStrictEqual(localPosition, { x: 7, y: 16 });
     });
 
-    it('creates the requested full focus template inside the selected local focus tree', () => {
+    it('creates the requested full focus template inside the selected local focus tree with a blank line separator and tag-derived prefix', () => {
         const content = `focus_tree = {
     id = TEST_TREE
+    country = {
+        factor = 0
+
+        modifier = {
+            add = 10
+            tag = MEO
+        }
+    }
     focus = {
         id = ROOT
         x = 0
@@ -133,7 +141,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /focus_tree = \{[\s\S]*?focus = \{[\s\S]*?id = ROOT[\s\S]*?focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 5[\s\S]*?y = 6[\s\S]*?completion_reward = \{[\s\S]*?log = "\[GetLogRoot\]: Focus Completed TAG_FOCUS_ID"[\s\S]*?\}\n    \}\n\}/);
+        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?log = "\[GetLogRoot\]: Focus Completed MEO_FOCUS_ID"[\s\S]*?\n    \}\n\}/);
     });
 
     it('creates the requested full shared focus template after the last local shared focus block', () => {
@@ -152,8 +160,8 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\n\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{[\s\S]*?log = "\[GetLogRoot\]: Focus Completed TAG_FOCUS_ID"[\s\S]*?\}\n\}\n\njoint_focus = \{/);
     });
 
-    it('returns a placeholder range that still points at TAG_FOCUS_ID in BOM files', () => {
-        const content = '\uFEFFfocus_tree = {\n    id = TEST_TREE\n}';
+    it('returns a placeholder range that still points at the generated tag-based focus id in BOM files', () => {
+        const content = '\uFEFFfocus_tree = {\n    id = TEST_TREE\n    country = {\n        modifier = {\n            tag = MEO\n        }\n    }\n}';
         const result = buildCreateFocusTemplateTextChanges(
             content,
             'common/national_focus/bom-create.txt',
@@ -168,8 +176,49 @@ describe('focus tree position edit helpers', () => {
             ? updated.slice(result.placeholderRange.start, result.placeholderRange.end)
             : undefined;
 
-        assert.strictEqual(placeholder, 'TAG_FOCUS_ID');
+        assert.strictEqual(placeholder, 'MEO_FOCUS_ID');
         assert.match(updated, /^\uFEFFfocus_tree = \{/);
+    });
+
+    it('can create focus templates consecutively without reusing the same placeholder id', () => {
+        const content = `focus_tree = {
+    id = TEST_TREE
+    country = {
+        factor = 0
+
+        modifier = {
+            add = 10
+            tag = MEO
+        }
+    }
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+}`;
+        const first = buildCreateFocusTemplateTextChanges(
+            content,
+            'common/national_focus/create-focus.txt',
+            'focus-tree:common/national_focus/create-focus.txt:focus:0',
+            5,
+            6,
+        );
+        assert.ifError(first.error);
+        const onceUpdated = applyTextChanges(content, first.changes ?? []);
+
+        const second = buildCreateFocusTemplateTextChanges(
+            onceUpdated,
+            'common/national_focus/create-focus.txt',
+            'focus-tree:common/national_focus/create-focus.txt:focus:0',
+            7,
+            8,
+        );
+        assert.ifError(second.error);
+        const twiceUpdated = applyTextChanges(onceUpdated, second.changes ?? []);
+
+        assert.match(twiceUpdated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID_2[\s\S]*?x = 7[\s\S]*?y = 8/);
+        assert.match(twiceUpdated, /log = "\[GetLogRoot\]: Focus Completed MEO_FOCUS_ID_2"/);
     });
 
     it('rejects create requests for imported or unknown tree edit keys', () => {

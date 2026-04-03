@@ -128,12 +128,14 @@ export function buildCreateFocusTemplateTextChanges(
     }
 
     const lineEnding = detectLineEnding(content);
+    const existingFocusIds = new Set(collectEditableFocuses(root).map(meta => meta.focusId));
     const change = createFocusTemplateInsertionChange(
         content,
         treeMeta,
         Math.round(targetAbsoluteX),
         Math.round(targetAbsoluteY),
         lineEnding,
+        existingFocusIds,
     );
 
     return {
@@ -184,13 +186,14 @@ function createFocusTemplateInsertionChange(
     targetAbsoluteX: number,
     targetAbsoluteY: number,
     lineEnding: string,
+    existingFocusIds: Set<string>,
 ): { change: FocusPositionTextChange; placeholderRange: TextRange } {
     const blockName = treeMeta.kind === 'shared'
         ? 'shared_focus'
         : treeMeta.kind === 'joint'
             ? 'joint_focus'
             : 'focus';
-    const placeholder = 'TAG_FOCUS_ID';
+    const placeholder = createUniquePlaceholderId(`${treeMeta.focusIdPrefix ?? 'TAG'}_FOCUS_ID`, existingFocusIds);
     const blockText = treeMeta.kind === 'focus'
         ? buildNestedFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding)
         : buildTopLevelFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding);
@@ -222,8 +225,9 @@ function buildNestedFocusTemplateBlock(
     const indentUnit = inferIndentUnit(content, getLineIndent(content, blockRange.start), blockRange);
     const nestedIndent = childIndent + indentUnit;
     const rewardIndent = nestedIndent + indentUnit;
+    const separator = getBlankLineSeparatorBeforeInsert(content, insertPosition, lineEnding);
     const text =
-        `${childIndent}${blockName} = {${lineEnding}` +
+        `${separator}${childIndent}${blockName} = {${lineEnding}` +
         `${nestedIndent}id = ${placeholder}${lineEnding}` +
         `${nestedIndent}icon = GFX${lineEnding}` +
         `${nestedIndent}cost = 1${lineEnding}` +
@@ -255,7 +259,7 @@ function buildTopLevelFocusTemplateBlock(
     const blockIndent = getLineIndent(content, blockRange.start);
     const indentUnit = inferIndentUnit(content, blockIndent, blockRange);
     const childIndent = blockIndent + indentUnit;
-    const prefix = insertPosition >= content.length ? `${lineEnding}${lineEnding}` : `${lineEnding}${lineEnding}`;
+    const prefix = getBlankLineSeparatorAtBoundary(content, insertPosition, lineEnding);
     const suffix = insertPosition >= content.length ? lineEnding : '';
     const text =
         `${prefix}${blockName} = {${lineEnding}` +
@@ -516,4 +520,39 @@ function getBlockIndentation(content: string, blockRange: TextRange): { childInd
 
 function detectLineEnding(content: string): string {
     return content.includes('\r\n') ? '\r\n' : '\n';
+}
+
+function createUniquePlaceholderId(baseId: string, existingFocusIds: Set<string>): string {
+    if (!existingFocusIds.has(baseId)) {
+        return baseId;
+    }
+
+    let index = 2;
+    let candidate = `${baseId}_${index}`;
+    while (existingFocusIds.has(candidate)) {
+        index++;
+        candidate = `${baseId}_${index}`;
+    }
+
+    return candidate;
+}
+
+function getBlankLineSeparatorBeforeInsert(content: string, insertPosition: number, lineEnding: string): string {
+    let cursor = Math.max(0, insertPosition);
+    while (cursor > 0 && (content[cursor - 1] === '\n' || content[cursor - 1] === '\r')) {
+        cursor--;
+    }
+
+    const lineStart = getLineStart(content, cursor);
+    const previousLine = content.slice(lineStart, cursor).trim();
+    return previousLine.length === 0 ? '' : lineEnding;
+}
+
+function getBlankLineSeparatorAtBoundary(content: string, insertPosition: number, lineEnding: string): string {
+    const previousNeedsSpacing = getBlankLineSeparatorBeforeInsert(content, insertPosition, lineEnding);
+    if (previousNeedsSpacing === '') {
+        return lineEnding;
+    }
+
+    return `${lineEnding}${lineEnding}`;
 }

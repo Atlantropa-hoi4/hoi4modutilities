@@ -4,7 +4,32 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.14] - 2026/04/04 - Latest
+## [0.13.19] - 2026/04/04 - Latest
+
+### Fixed
+* Snap blank-space create coordinates to the grid cell that contains the click, preventing focus templates from appearing one column or row to the side when clicking near slot edges.
+
+## [0.13.18] - 2026/04/04
+
+### Fixed
+* Make repeated blank-space creates choose a unique generated placeholder id such as `TAG_FOCUS_ID_2` when the base placeholder already exists in the current file, preventing ambiguous-focus edit failures.
+
+## [0.13.17] - 2026/04/04
+
+### Fixed
+* Insert newly created focus blocks with a blank line separator from the previous block, derive the placeholder prefix from the focus tree's configured country tag when available, and keep consecutive create operations parse-safe.
+
+## [0.13.16] - 2026/04/04
+
+### Fixed
+* Treat the visible preview canvas below the toolbar as a valid blank-space create surface instead of requiring double clicks to land inside a narrow gridbox DOM container.
+
+## [0.13.15] - 2026/04/04
+
+### Fixed
+* Make blank-space Focus Preview double clicks resolve the real pointer target before deciding whether to create a new focus template, so empty-canvas creates are no longer blocked by misleading container targets.
+
+## [0.13.14] - 2026/04/04
 
 ### Fixed
 * Keep the continuous-focus helper behind the rendered focus grid and fall back from stale persisted condition filters when they would otherwise open the preview as an empty canvas.

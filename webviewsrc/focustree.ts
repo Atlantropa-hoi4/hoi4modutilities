@@ -131,19 +131,24 @@ function getEditableFocusElement(target: EventTarget | null): HTMLDivElement | n
 }
 
 function getEditableFocusElementAtPoint(clientX: number, clientY: number): HTMLDivElement | null {
+    const focusElement = getEditableFocusElement(getElementAtPointIgnoringDragger(clientX, clientY));
+    return focusElement;
+}
+
+function getElementAtPointIgnoringDragger(clientX: number, clientY: number): HTMLElement | null {
     const dragger = document.getElementById('dragger') as HTMLDivElement | null;
     const previousPointerEvents = dragger?.style.pointerEvents ?? '';
     if (dragger) {
         dragger.style.pointerEvents = 'none';
     }
 
-    const focusElement = getEditableFocusElement(document.elementFromPoint(clientX, clientY));
+    const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
 
     if (dragger) {
         dragger.style.pointerEvents = previousPointerEvents;
     }
 
-    return focusElement;
+    return element;
 }
 
 function getEditableFocusElementFromMouseEvent(event: MouseEvent): HTMLDivElement | null {
@@ -172,8 +177,9 @@ function setupFocusPositionDragHandlers() {
 
 }
 
-function isBlankCreateTarget(target: EventTarget | null): boolean {
-    const element = target as HTMLElement | null;
+function isBlankCreateTarget(event: MouseEvent): boolean {
+    const element = getElementAtPointIgnoringDragger(event.clientX, event.clientY)
+        ?? ((event.target as Node | null) instanceof HTMLElement ? event.target as HTMLElement : null);
     if (!element) {
         return false;
     }
@@ -182,7 +188,19 @@ function isBlankCreateTarget(target: EventTarget | null): boolean {
         return false;
     }
 
-    return !!element.closest('#focustreecontent, #focus-gridbox, #focustreeplaceholder');
+    const toolbar = document.querySelector('.toolbar-outer') as HTMLElement | null;
+    const toolbarBottom = toolbar?.getBoundingClientRect().bottom ?? 0;
+    if (event.clientY < toolbarBottom) {
+        return false;
+    }
+
+    const contentElement = document.getElementById('focustreecontent') as HTMLElement | null;
+    const contentRect = contentElement?.getBoundingClientRect();
+    if (!contentRect) {
+        return false;
+    }
+
+    return event.clientX >= contentRect.left && event.clientY >= contentRect.top;
 }
 
 function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPosition | undefined {
@@ -197,8 +215,8 @@ function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPositio
     const localY = (event.clientY - contentRect.top) / scale;
 
     return {
-        x: Math.round((localX - currentGridLeftPadding) / xGridSize),
-        y: Math.round((localY - currentGridTopPadding) / yGridSize),
+        x: Math.floor((localX - currentGridLeftPadding) / xGridSize),
+        y: Math.floor((localY - currentGridTopPadding) / yGridSize),
     };
 }
 
@@ -212,7 +230,7 @@ function setupFocusTemplateCreateHandler() {
             return;
         }
 
-        if (!isBlankCreateTarget(event.target)) {
+        if (!isBlankCreateTarget(event)) {
             return;
         }
 

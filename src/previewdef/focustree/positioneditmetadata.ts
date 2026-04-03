@@ -89,7 +89,27 @@ function collectFocusTreeMetadata(node: Node, filePath: string, index: number): 
         kind: 'focus',
         sourceFile: filePath,
         sourceRange: createNodeRange(node),
+        focusIdPrefix: readFocusTreeCountryTag(node),
     };
+}
+
+function readFocusTreeCountryTag(node: Node): string | undefined {
+    const countryNode = findNamedChild(node, 'country');
+    if (!countryNode) {
+        return undefined;
+    }
+
+    const modifierNodes = Array.isArray(countryNode.value)
+        ? countryNode.value.filter(isNamedBlock('modifier'))
+        : [];
+    for (const modifierNode of modifierNodes) {
+        const tag = readStringChildValue(modifierNode, 'tag');
+        if (tag) {
+            return tag;
+        }
+    }
+
+    return undefined;
 }
 
 function collectFocusMetadata(node: Node, filePath: string): FocusPositionMeta | undefined {

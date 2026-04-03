@@ -39,6 +39,7 @@ export interface FocusTreeCreateMeta {
     kind: FocusTreeCreateKind;
     sourceFile: string;
     sourceRange?: TextRange;
+    focusIdPrefix?: string;
 }
 
 export interface ApplyFocusPositionEditMessage {
