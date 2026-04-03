@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom, setPreviewPanDisabled } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference, minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
@@ -8,19 +8,7 @@ import { applyCondition, ConditionItem } from "../src/hoiformat/condition";
 import { NumberPosition } from "../src/util/common";
 import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
-import { feLocalize } from './util/i18n';
 import { Checkbox } from "./util/checkbox";
-import { vscode } from "./util/vscode";
-import {
-    FocusLayoutDraft,
-    FocusLayoutMessage,
-    FocusLayoutOffsetDraft,
-} from "../src/previewdef/focustree/layouteditcommon";
-import {
-    LayoutTargetDescriptor,
-    applyDraggedLayoutPosition,
-    calculateDraggedLayoutPosition,
-} from "../src/previewdef/focustree/layouteditdrag";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -72,16 +60,8 @@ let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let inlayConditions: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
-const focusLayoutEditorEnabled: boolean = !!(window as any).focusLayoutEditorEnabled;
-const focusLayoutActiveFile: string = (window as any).focusLayoutActiveFile ?? '';
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
-
-let focusLayoutEditMode = focusLayoutEditorEnabled && !!getState().focusLayoutEditMode;
-let focusLayoutDraft: FocusLayoutDraft | undefined = undefined;
-let focusLayoutSelectedKey: string | undefined = getState().focusLayoutSelectedKey;
-let focusLayoutApplying = false;
-let currentLayoutTargets: Record<string, LayoutTargetDescriptor> = {};
 
 function showInlayWindows() {
     return !!(window as any).__showInlayWindows;
@@ -106,148 +86,6 @@ function setSelectedInlayWindowId(focusTree: FocusTree, inlayWindowId: string | 
     setState({ selectedInlayWindowIds });
 }
 
-function persistLayoutState() {
-    setState({
-        focusLayoutEditMode,
-        focusLayoutSelectedKey,
-    });
-}
-
-function createLayoutDraftFromFocusTrees(): FocusLayoutDraft {
-    const draft: FocusLayoutDraft = {
-        baseVersion: (window as any).focusLayoutDocumentVersion ?? 0,
-        focuses: {},
-        continuous: {},
-        inlayRefs: {},
-    };
-
-    for (const focusTree of focusTrees) {
-        for (const focus of Object.values(focusTree.focuses)) {
-            if (!focus.layout || draft.focuses[focus.layout.editKey]) {
-                continue;
-            }
-
-            draft.focuses[focus.layout.editKey] = {
-                kind: 'focus',
-                editKey: focus.layout.editKey,
-                focusId: focus.id,
-                editable: focus.layout.editable && focus.layout.sourceFile === focusLayoutActiveFile,
-                sourceFile: focus.layout.sourceFile,
-                sourceRange: focus.layout.sourceRange,
-                x: focus.layout.basePosition.x,
-                y: focus.layout.basePosition.y,
-                relativePositionId: focus.layout.relativePositionId ?? null,
-                offsets: focus.layout.offsets.map<FocusLayoutOffsetDraft>(offset => ({
-                    editKey: offset.editKey,
-                    x: offset.x,
-                    y: offset.y,
-                    hasTrigger: offset.hasTrigger,
-                    triggerText: offset.triggerText,
-                })),
-            };
-        }
-
-        if (focusTree.continuousFocusLayout && !draft.continuous[focusTree.continuousFocusLayout.editKey]) {
-            draft.continuous[focusTree.continuousFocusLayout.editKey] = {
-                kind: 'continuous',
-                editKey: focusTree.continuousFocusLayout.editKey,
-                editable: focusTree.continuousFocusLayout.editable && focusTree.continuousFocusLayout.sourceFile === focusLayoutActiveFile,
-                sourceFile: focusTree.continuousFocusLayout.sourceFile,
-                sourceRange: focusTree.continuousFocusLayout.sourceRange,
-                x: focusTree.continuousFocusLayout.basePosition.x,
-                y: focusTree.continuousFocusLayout.basePosition.y,
-                label: focusTree.continuousFocusLayout.label,
-            };
-        }
-
-        for (const inlay of focusTree.inlayWindows) {
-            if (!inlay.layout || draft.inlayRefs[inlay.layout.editKey]) {
-                continue;
-            }
-
-            draft.inlayRefs[inlay.layout.editKey] = {
-                kind: 'inlayRef',
-                editKey: inlay.layout.editKey,
-                editable: inlay.layout.editable && inlay.layout.sourceFile === focusLayoutActiveFile,
-                sourceFile: inlay.layout.sourceFile,
-                sourceRange: inlay.layout.sourceRange,
-                x: inlay.layout.basePosition.x,
-                y: inlay.layout.basePosition.y,
-                label: inlay.layout.label,
-            };
-        }
-    }
-
-    return draft;
-}
-
-function ensureLayoutDraft(): FocusLayoutDraft {
-    const currentDocumentVersion = (window as any).focusLayoutDocumentVersion ?? 0;
-    if (!focusLayoutDraft || focusLayoutDraft.baseVersion !== currentDocumentVersion) {
-        focusLayoutDraft = createLayoutDraftFromFocusTrees();
-    }
-
-    return focusLayoutDraft;
-}
-
-function getRenderedFocusTree(focusTree: FocusTree): FocusTree {
-    if (!focusLayoutDraft) {
-        return focusTree;
-    }
-
-    const renderedFocuses = Object.fromEntries(Object.values(focusTree.focuses).map(focus => {
-        const focusDraft = focusLayoutDraft?.focuses[focus.layoutEditKey];
-        if (!focusDraft) {
-            return [focus.id, focus];
-        }
-
-        const layoutOffsets = focus.layout?.offsets ?? [];
-        const nextOffsets = focusDraft.offsets.map(offsetDraft => {
-            if (offsetDraft.isNew) {
-                return { editKey: offsetDraft.editKey, x: offsetDraft.x, y: offsetDraft.y, trigger: undefined };
-            }
-
-            const offsetIndex = layoutOffsets.findIndex(offset => offset.editKey === offsetDraft.editKey);
-            const originalOffset = offsetIndex >= 0 ? focus.offset[offsetIndex] : undefined;
-            return {
-                editKey: offsetDraft.editKey,
-                x: offsetDraft.x,
-                y: offsetDraft.y,
-                trigger: originalOffset?.trigger,
-            };
-        });
-
-        return [focus.id, {
-            ...focus,
-            x: focusDraft.x,
-            y: focusDraft.y,
-            relativePositionId: focusDraft.relativePositionId ?? undefined,
-            offset: nextOffsets,
-        }];
-    })) as Record<string, Focus>;
-
-    const continuousDraft = focusTree.continuousFocusLayout ? focusLayoutDraft.continuous[focusTree.continuousFocusLayout.editKey] : undefined;
-    const renderedInlayWindows = focusTree.inlayWindows.map(inlay => {
-        const inlayDraft = inlay.layout ? focusLayoutDraft?.inlayRefs[inlay.layout.editKey] : undefined;
-        if (!inlayDraft) {
-            return inlay;
-        }
-
-        return {
-            ...inlay,
-            position: { x: inlayDraft.x, y: inlayDraft.y },
-        };
-    });
-
-    return {
-        ...focusTree,
-        focuses: renderedFocuses,
-        inlayWindows: renderedInlayWindows,
-        continuousFocusPositionX: continuousDraft?.x ?? focusTree.continuousFocusPositionX,
-        continuousFocusPositionY: continuousDraft?.y ?? focusTree.continuousFocusPositionY,
-    };
-}
-
 async function buildContent() {
     const focusCheckState = getState().checkedFocuses ?? {};
     const checkedFocusesExprs = Object.keys(focusCheckState)
@@ -258,9 +96,8 @@ async function buildContent() {
     const focustreeplaceholder = document.getElementById('focustreeplaceholder') as HTMLDivElement;
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = (window as any).renderedFocus;
-    const baseFocusTree = focusTrees[selectedFocusTreeIndex];
-    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + baseFocusTree.id }, ...checkedFocusesExprs, ...selectedExprs, ...selectedInlayExprs];
-    const focusTree = getRenderedFocusTree(baseFocusTree);
+    const focusTree = focusTrees[selectedFocusTreeIndex];
+    const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs, ...selectedExprs, ...selectedInlayExprs];
     const focuses = Object.values(focusTree.focuses);
 
     const allowBranchOptionsValue: Record<string, boolean> = {};
@@ -304,291 +141,6 @@ async function buildContent() {
 
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
-    currentLayoutTargets = createLayoutTargetIndex(focusTree, focusPosition, exprs);
-    syncContinuousLayoutTarget(focusTree);
-    renderOffsetHandles();
-    if (focusLayoutSelectedKey && !currentLayoutTargets[focusLayoutSelectedKey]) {
-        focusLayoutSelectedKey = undefined;
-    }
-    renderLayoutSelection();
-    updateLayoutToolbar();
-    updateLayoutPointerInterlocks();
-    persistLayoutState();
-}
-
-function isFocusOffsetActive(offset: Focus['offset'][number], exprs: ConditionItem[]): boolean {
-    return offset.trigger !== undefined && applyCondition(offset.trigger, exprs);
-}
-
-function createLayoutTargetIndex(
-    focusTree: FocusTree,
-    focusPosition: Record<string, NumberPosition>,
-    exprs: ConditionItem[],
-): Record<string, LayoutTargetDescriptor> {
-    const result: Record<string, LayoutTargetDescriptor> = {};
-
-    for (const focus of Object.values(focusTree.focuses)) {
-        const position = focusPosition[focus.id];
-        if (!position) {
-            continue;
-        }
-
-        result[focus.layoutEditKey] = {
-            key: focus.layoutEditKey,
-            kind: 'focus',
-            label: focus.id,
-            editable: focus.layout?.editable === true && focus.layout.sourceFile === focusLayoutActiveFile,
-            sourceFile: focus.layout?.sourceFile ?? focus.file,
-            sourceStart: focus.layout?.sourceRange?.start ?? focus.token?.start,
-            sourceEnd: focus.layout?.sourceRange?.end ?? focus.token?.end,
-            currentPosition: position,
-            focusId: focus.id,
-        };
-
-        const editable = focus.layout?.editable === true && focus.layout.sourceFile === focusLayoutActiveFile;
-        focus.offset.forEach((offset, index) => {
-            if (!offset.editKey || !isFocusOffsetActive(offset, exprs)) {
-                return;
-            }
-
-            result[offset.editKey] = {
-                key: offset.editKey,
-                kind: 'offset',
-                label: focus.offset.length > 1 ? `${focus.id} offset ${index + 1}` : `${focus.id} offset`,
-                editable,
-                sourceFile: focus.layout?.sourceFile ?? focus.file,
-                sourceStart: focus.layout?.sourceRange?.start ?? focus.token?.start,
-                sourceEnd: focus.layout?.sourceRange?.end ?? focus.token?.end,
-                currentPosition: {
-                    x: offset.x,
-                    y: offset.y,
-                },
-                focusId: focus.id,
-            };
-        });
-    }
-
-    if (focusTree.continuousFocusLayout && focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
-        result[focusTree.continuousFocusLayout.editKey] = {
-            key: focusTree.continuousFocusLayout.editKey,
-            kind: 'continuous',
-            label: focusTree.continuousFocusLayout.label,
-            editable: focusTree.continuousFocusLayout.editable && focusTree.continuousFocusLayout.sourceFile === focusLayoutActiveFile,
-            sourceFile: focusTree.continuousFocusLayout.sourceFile,
-            sourceStart: focusTree.continuousFocusLayout.sourceRange?.start,
-            sourceEnd: focusTree.continuousFocusLayout.sourceRange?.end,
-            currentPosition: {
-                x: focusTree.continuousFocusPositionX,
-                y: focusTree.continuousFocusPositionY,
-            },
-        };
-    }
-
-    for (const inlay of focusTree.inlayWindows) {
-        if (!inlay.layout) {
-            continue;
-        }
-
-        result[inlay.layout.editKey] = {
-            key: inlay.layout.editKey,
-            kind: 'inlayRef',
-            label: inlay.layout.label,
-            editable: inlay.layout.editable && inlay.layout.sourceFile === focusLayoutActiveFile,
-            sourceFile: inlay.layout.sourceFile,
-            sourceStart: inlay.layout.sourceRange?.start,
-            sourceEnd: inlay.layout.sourceRange?.end,
-            currentPosition: {
-                x: inlay.position.x,
-                y: inlay.position.y,
-            },
-        };
-    }
-
-    return result;
-}
-
-function renderOffsetHandles() {
-    document.querySelectorAll('.focus-layout-offset-handles').forEach(element => element.remove());
-
-    if (!focusLayoutEditorEnabled || !focusLayoutEditMode) {
-        return;
-    }
-
-    const offsetTargetsByFocusId: Record<string, LayoutTargetDescriptor[]> = {};
-    for (const target of Object.values(currentLayoutTargets)) {
-        if (target.kind !== 'offset' || !target.focusId || !target.editable) {
-            continue;
-        }
-
-        if (!offsetTargetsByFocusId[target.focusId]) {
-            offsetTargetsByFocusId[target.focusId] = [];
-        }
-
-        offsetTargetsByFocusId[target.focusId].push(target);
-    }
-
-    for (const [focusId, offsetTargets] of Object.entries(offsetTargetsByFocusId)) {
-        const host = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
-        if (!host) {
-            continue;
-        }
-
-        const handles = document.createElement('div');
-        handles.className = 'focus-layout-offset-handles';
-        handles.style.position = 'absolute';
-        handles.style.top = '4px';
-        handles.style.right = '4px';
-        handles.style.display = 'flex';
-        handles.style.flexDirection = 'column';
-        handles.style.gap = '4px';
-        handles.style.pointerEvents = 'none';
-        handles.style.zIndex = '25';
-
-        offsetTargets.forEach((target, index) => {
-            const handle = document.createElement('div');
-            handle.className = 'focus-layout-offset-handle';
-            handle.textContent = offsetTargets.length > 1 ? `O${index + 1}` : 'O';
-            handle.title = `${target.label} (${target.currentPosition.x}, ${target.currentPosition.y})`;
-            handle.setAttribute('data-layout-kind', 'offset');
-            handle.setAttribute('data-layout-key', target.key);
-            handle.setAttribute('data-layout-editable', 'true');
-            handle.setAttribute('data-layout-source-file', target.sourceFile);
-            handle.setAttribute('data-layout-source-start', `${target.sourceStart ?? ''}`);
-            handle.setAttribute('data-layout-source-end', `${target.sourceEnd ?? ''}`);
-            handle.style.pointerEvents = 'auto';
-            handle.style.minWidth = '20px';
-            handle.style.height = '20px';
-            handle.style.padding = '0 4px';
-            handle.style.display = 'flex';
-            handle.style.alignItems = 'center';
-            handle.style.justifyContent = 'center';
-            handle.style.borderRadius = '10px';
-            handle.style.background = 'rgba(32, 124, 229, 0.9)';
-            handle.style.border = '1px solid rgba(255, 255, 255, 0.35)';
-            handle.style.color = '#fff';
-            handle.style.fontSize = '10px';
-            handle.style.fontWeight = '700';
-            handle.style.lineHeight = '1';
-            handle.style.boxShadow = '0 1px 4px rgba(0, 0, 0, 0.35)';
-            handle.style.userSelect = 'none';
-            handles.appendChild(handle);
-        });
-
-        host.appendChild(handles);
-    }
-}
-
-function syncContinuousLayoutTarget(focusTree: FocusTree) {
-    const continuous = document.getElementById('continuousFocuses') as HTMLDivElement | null;
-    if (!continuous) {
-        return;
-    }
-
-    const layout = focusTree.continuousFocusLayout;
-    if (!layout || focusTree.continuousFocusPositionX === undefined || focusTree.continuousFocusPositionY === undefined || continuous.style.display === 'none') {
-        continuous.removeAttribute('data-layout-kind');
-        continuous.removeAttribute('data-layout-key');
-        continuous.removeAttribute('data-layout-editable');
-        continuous.removeAttribute('data-layout-source-file');
-        continuous.removeAttribute('data-layout-source-start');
-        continuous.removeAttribute('data-layout-source-end');
-        continuous.classList.remove('focus-layout-target');
-        continuous.style.pointerEvents = 'none';
-        return;
-    }
-
-    continuous.setAttribute('data-layout-kind', 'continuous');
-    continuous.setAttribute('data-layout-key', layout.editKey);
-    continuous.setAttribute('data-layout-editable', layout.editable && layout.sourceFile === focusLayoutActiveFile ? 'true' : 'false');
-    continuous.setAttribute('data-layout-source-file', layout.sourceFile);
-    continuous.setAttribute('data-layout-source-start', `${layout.sourceRange?.start ?? ''}`);
-    continuous.setAttribute('data-layout-source-end', `${layout.sourceRange?.end ?? ''}`);
-    continuous.classList.add('focus-layout-target');
-    continuous.style.pointerEvents = focusLayoutEditMode ? 'auto' : 'none';
-}
-
-function renderLayoutSelection() {
-    document.querySelectorAll<HTMLElement>('[data-layout-key]').forEach(element => {
-        element.style.boxShadow = '';
-        element.style.outline = '';
-    });
-
-    if (!focusLayoutEditMode || !focusLayoutSelectedKey) {
-        return;
-    }
-
-    const selected = document.querySelector<HTMLElement>(`[data-layout-key="${cssEscape(focusLayoutSelectedKey)}"]`);
-    if (!selected) {
-        return;
-    }
-
-    selected.style.boxShadow = '0 0 0 2px var(--vscode-focusBorder), 0 0 0 5px rgba(87, 148, 242, 0.2)';
-    selected.style.outline = '1px solid rgba(87, 148, 242, 0.4)';
-}
-
-function updateLayoutToolbar() {
-    if (!focusLayoutEditorEnabled) {
-        return;
-    }
-
-    const editButton = document.getElementById('focus-layout-edit') as HTMLButtonElement | null;
-    if (!editButton) {
-        return;
-    }
-
-    editButton.textContent = feLocalize('TODO', 'Edit');
-    editButton.setAttribute('aria-pressed', focusLayoutEditMode ? 'true' : 'false');
-    editButton.disabled = focusLayoutApplying;
-    editButton.title = focusLayoutEditMode
-        ? feLocalize('TODO', 'Disable layout editing')
-        : feLocalize('TODO', 'Enable layout editing');
-    editButton.style.background = focusLayoutEditMode ? 'var(--vscode-button-secondaryBackground)' : 'transparent';
-    editButton.style.color = focusLayoutEditMode ? 'var(--vscode-button-secondaryForeground)' : '';
-    editButton.style.border = focusLayoutEditMode ? '1px solid var(--vscode-focusBorder)' : '1px solid transparent';
-    editButton.style.borderRadius = '4px';
-    editButton.style.padding = '0 8px';
-    editButton.style.minWidth = '48px';
-    editButton.style.opacity = focusLayoutApplying ? '0.7' : '1';
-}
-
-function updateLayoutPointerInterlocks() {
-    setPreviewPanDisabled(focusLayoutEditMode || focusLayoutApplying);
-
-    document.querySelectorAll<HTMLElement>('[data-layout-key]').forEach(element => {
-        const editable = element.dataset.layoutEditable === 'true';
-        if (focusLayoutEditMode && editable) {
-            element.style.cursor = 'grab';
-        } else if (focusLayoutEditMode) {
-            element.style.cursor = 'not-allowed';
-        } else {
-            element.style.cursor = '';
-        }
-    });
-}
-
-function getLayoutTargetElementAtPoint(clientX: number, clientY: number): HTMLElement | null {
-    const dragger = document.getElementById('dragger') as HTMLDivElement | null;
-    const previousPointerEvents = dragger?.style.pointerEvents ?? '';
-    if (dragger) {
-        dragger.style.pointerEvents = 'none';
-    }
-
-    const target = (document.elementFromPoint(clientX, clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]') ?? null;
-
-    if (dragger) {
-        dragger.style.pointerEvents = previousPointerEvents;
-    }
-
-    return target;
-}
-
-function getLayoutTargetElementFromMouseEvent(event: MouseEvent): HTMLElement | null {
-    return (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]')
-        ?? getLayoutTargetElementAtPoint(event.clientX, event.clientY);
-}
-
-function cssEscape(value: string): string {
-    return value.replace(/["\\]/g, '\\$&');
 }
 
 function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Record<string, boolean>) {
@@ -629,7 +181,7 @@ function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Re
 }
 
 function updateSelectedFocusTree(clearCondition: boolean) {
-    const focusTree = getRenderedFocusTree(focusTrees[selectedFocusTreeIndex]);
+    const focusTree = focusTrees[selectedFocusTreeIndex];
     const continuousFocuses = document.getElementById('continuousFocuses') as HTMLDivElement;
 
     if (focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
@@ -705,7 +257,7 @@ function updateSelectedFocusTree(clearCondition: boolean) {
 
     const warnings = document.getElementById('warnings') as HTMLTextAreaElement | null;
     if (warnings) {
-        warnings.value = focusTree.warnings.length === 0 ? feLocalize('worldmap.warnings.nowarnings', 'No warnings.') :
+        warnings.value = focusTree.warnings.length === 0 ? 'No warnings.' :
             focusTree.warnings.map(w => `[${w.source}] ${w.text}`).join('\n');
     }
 }
@@ -912,146 +464,7 @@ function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | und
 
 let retriggerSearch: () => void = () => {};
 
-function setupLayoutInteractionHandlers() {
-    if (!focusLayoutEditorEnabled) {
-        return;
-    }
-
-    document.addEventListener('click', event => {
-        if (!focusLayoutEditMode) {
-            return;
-        }
-
-        const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-layout-key]');
-        if (!target) {
-            return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        focusLayoutSelectedKey = target.dataset.layoutKey;
-        persistLayoutState();
-        renderLayoutSelection();
-        updateLayoutToolbar();
-    }, true);
-
-    document.addEventListener('mousedown', event => {
-        if (!focusLayoutEditMode || focusLayoutApplying || event.button !== 0) {
-            return;
-        }
-
-        if ((event.target as HTMLElement | null)?.closest('input, select, button, textarea, option')) {
-            return;
-        }
-
-        const target = getLayoutTargetElementFromMouseEvent(event);
-        const key = target?.dataset.layoutKey;
-        if (!target || !key) {
-            return;
-        }
-
-        const descriptor = currentLayoutTargets[key];
-        if (!descriptor) {
-            return;
-        }
-
-        focusLayoutSelectedKey = key;
-        persistLayoutState();
-        renderLayoutSelection();
-        updateLayoutToolbar();
-
-        if (!descriptor.editable) {
-            return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        beginLayoutDrag(descriptor, target, event.pageX, event.pageY);
-    }, true);
-}
-
-function beginLayoutDrag(target: LayoutTargetDescriptor, dragElement: HTMLElement | null, startPageX: number, startPageY: number) {
-    const draft = ensureLayoutDraft();
-    let draftChanged = false;
-
-    if (dragElement) {
-        dragElement.style.willChange = 'transform';
-        dragElement.style.zIndex = '20';
-        dragElement.style.cursor = 'grabbing';
-    }
-
-    const mouseMoveHandler = (moveEvent: MouseEvent) => {
-        const deltaX = moveEvent.pageX - startPageX;
-        const deltaY = moveEvent.pageY - startPageY;
-
-        if (dragElement) {
-            dragElement.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-        }
-
-        const nextPosition = calculateDraggedLayoutPosition(target, deltaX, deltaY, {
-            scale: getState().scale || 1,
-            xGridSize,
-            yGridSize,
-        });
-        applyDraggedLayoutPosition(draft, target, nextPosition);
-        draftChanged = nextPosition.x !== target.currentPosition.x || nextPosition.y !== target.currentPosition.y;
-    };
-
-    const mouseUpHandler = () => {
-        document.removeEventListener('mousemove', mouseMoveHandler);
-        document.removeEventListener('mouseup', mouseUpHandler);
-        if (dragElement) {
-            dragElement.style.transform = '';
-            dragElement.style.willChange = '';
-            dragElement.style.zIndex = '';
-            dragElement.style.cursor = '';
-        }
-
-        if (!draftChanged) {
-            focusLayoutDraft = undefined;
-            persistLayoutState();
-            updateLayoutToolbar();
-            updateLayoutPointerInterlocks();
-            return;
-        }
-
-        applyCurrentLayoutDraft();
-    };
-
-    document.addEventListener('mousemove', mouseMoveHandler);
-    document.addEventListener('mouseup', mouseUpHandler);
-}
-
-function applyCurrentLayoutDraft() {
-    if (!focusLayoutDraft || focusLayoutApplying) {
-        return;
-    }
-
-    focusLayoutApplying = true;
-    persistLayoutState();
-    updateLayoutToolbar();
-    updateLayoutPointerInterlocks();
-    void buildContent();
-    vscode.postMessage({
-        command: 'focusLayoutApply',
-        draft: focusLayoutDraft,
-    });
-}
-
-function setFocusLayoutEditMode(enabled: boolean) {
-    focusLayoutEditMode = enabled;
-    if (!enabled) {
-        focusLayoutDraft = undefined;
-        focusLayoutSelectedKey = undefined;
-        focusLayoutApplying = false;
-    }
-    persistLayoutState();
-    updateLayoutPointerInterlocks();
-}
-
 window.addEventListener('load', tryRun(async function() {
-    setupLayoutInteractionHandlers();
-
     const showInlayWindowsElement = document.getElementById('show-inlay-windows') as HTMLInputElement | null;
     if (showInlayWindowsElement) {
         (window as any).__showInlayWindows = !!getState().showInlayWindows;
@@ -1071,7 +484,6 @@ window.addEventListener('load', tryRun(async function() {
         focusesElement.addEventListener('change', async () => {
             selectedFocusTreeIndex = parseInt(focusesElement.value);
             setState({ selectedFocusTreeIndex });
-            focusLayoutSelectedKey = undefined;
             updateSelectedFocusTree(true);
             await buildContent();
             retriggerSearch();
@@ -1083,7 +495,6 @@ window.addEventListener('load', tryRun(async function() {
         inlayWindowsElement.addEventListener('change', async () => {
             const focusTree = focusTrees[selectedFocusTreeIndex];
             setSelectedInlayWindowId(focusTree, inlayWindowsElement.value);
-            focusLayoutSelectedKey = undefined;
             await buildContent();
             retriggerSearch();
         });
@@ -1212,7 +623,6 @@ window.addEventListener('load', tryRun(async function() {
 
     const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
     enableZoom(contentElement, 0, 40);
-    updateLayoutPointerInterlocks();
 
     const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
     if (showWarnings) {
@@ -1221,34 +631,6 @@ window.addEventListener('load', tryRun(async function() {
             const visible = warnings.style.display === 'block';
             document.body.style.overflow = visible ? '' : 'hidden';
             warnings.style.display = visible ? 'none' : 'block';
-        });
-    }
-
-    if (focusLayoutEditorEnabled) {
-        const editButton = document.getElementById('focus-layout-edit') as HTMLButtonElement | null;
-        editButton?.addEventListener('click', async () => {
-            setFocusLayoutEditMode(!focusLayoutEditMode);
-            await buildContent();
-        });
-
-        window.addEventListener('message', event => {
-            const message = event.data as FocusLayoutMessage | undefined;
-            if (!message || message.command !== 'focusLayoutApplyResult') {
-                return;
-            }
-
-            focusLayoutApplying = false;
-            if (message.ok) {
-                focusLayoutDraft = undefined;
-            } else {
-                focusLayoutDraft = undefined;
-                vscode.postMessage({ command: 'reload' });
-            }
-
-            persistLayoutState();
-            updateLayoutToolbar();
-            updateLayoutPointerInterlocks();
-            void buildContent();
         });
     }
 

@@ -11,7 +11,7 @@ import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { isFocusLayoutEditorEnabled, useConditionInFocus } from '../../util/featureflags';
+import { useConditionInFocus } from '../../util/featureflags';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
 import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
@@ -23,7 +23,6 @@ const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 
 export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
-    const focusLayoutEditorEnabled = isFocusLayoutEditorEnabled();
 
     try {
         const session = new LoaderSession(false);
@@ -41,7 +40,7 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file, documentVersion, focusLayoutEditorEnabled);
+        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file);
         jsCodes.push(i18nTableAsScript());
 
         return html(
@@ -83,8 +82,6 @@ async function renderFocusTrees(
     jsCodes: string[],
     styleNonce: string,
     file: string,
-    documentVersion: number,
-    focusLayoutEditorEnabled: boolean,
 ): Promise<string> {
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
@@ -112,9 +109,6 @@ async function renderFocusTrees(
     jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
     jsCodes.push('window.xGridSize = ' + xGridSize);
     jsCodes.push('window.yGridSize = ' + yGridSize);
-    jsCodes.push('window.focusLayoutEditorEnabled = ' + JSON.stringify(focusLayoutEditorEnabled));
-    jsCodes.push('window.focusLayoutDocumentVersion = ' + JSON.stringify(documentVersion));
-    jsCodes.push('window.focusLayoutActiveFile = ' + JSON.stringify(file));
 
     const continuousFocusContent =
         `<div id="continuousFocuses" class="${styleTable.oneTimeStyle('continuousFocuses', () => `
@@ -141,7 +135,7 @@ async function renderFocusTrees(
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
-        renderToolBar(focusTrees, styleTable, focusLayoutEditorEnabled)
+        renderToolBar(focusTrees, styleTable)
     );
 }
 
@@ -174,7 +168,7 @@ function renderWarningContainer(styleTable: StyleTable) {
     </div>`;
 }
 
-function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable, focusLayoutEditorEnabled: boolean): string {
+function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string {
     const focuses = focusTrees.length <= 1 ? '' : `
         <label for="focuses" class="${styleTable.style('focusesLabel', () => `margin-right:5px`)}">${localize('focustree.focustree', 'Focus tree: ')}</label>
         <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
@@ -243,15 +237,9 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable, focusLay
             <i class="codicon codicon-warning"></i>
         </button>`;
 
-    const layoutButtons = !focusLayoutEditorEnabled ? '' : `
-        <div id="focus-layout-toolbar" class="${styleTable.style('focusLayoutToolbar', () => `display:flex; align-items:center; gap:6px; margin-right:10px;`)}">
-            <button id="focus-layout-edit" title="${localize('TODO', 'Toggle layout edit mode')}">${localize('TODO', 'Edit')}</button>
-        </div>`;
-
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
         <div class="toolbar">
             ${focuses}
-            ${layoutButtons}
             ${searchbox}
             ${inlayWindowsToggle}
             ${inlayWindows}
@@ -349,13 +337,7 @@ async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], style
     `)}"
         start="${inlay.token?.start}"
         end="${inlay.token?.end}"
-        file="${inlay.file}"
-        data-layout-kind="inlayRef"
-        data-layout-key="${attributeEscape(inlay.layout?.editKey ?? '')}"
-        data-layout-editable="${inlay.layout?.editable === true ? 'true' : 'false'}"
-        data-layout-source-file="${attributeEscape(inlay.layout?.sourceFile ?? inlay.file)}"
-        data-layout-source-start="${inlay.layout?.sourceRange?.start ?? inlay.token?.start ?? ''}"
-        data-layout-source-end="${inlay.layout?.sourceRange?.end ?? inlay.token?.end ?? ''}">${content}</div>`;
+        file="${inlay.file}">${content}</div>`;
 }
 
 async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
@@ -451,7 +433,6 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     return `<div
     class="
         navigator
-        focus-layout-target
         {{iconClass}}
         ${styleTable.style('focus-common', () => `
             background-position-x: center;
@@ -466,12 +447,6 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     start="${focus.token?.start}"
     end="${focus.token?.end}"
     ${file === focus.file ? '' : `file="${focus.file}"`}
-    data-layout-kind="focus"
-    data-layout-key="${attributeEscape(focus.layoutEditKey)}"
-    data-layout-editable="${focus.layout?.editable === true ? 'true' : 'false'}"
-    data-layout-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
-    data-layout-source-start="${focus.layout?.sourceRange?.start ?? focus.token?.start ?? ''}"
-    data-layout-source-end="${focus.layout?.sourceRange?.end ?? focus.token?.end ?? ''}"
     title="${focus.id}\n({{position}})">
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>

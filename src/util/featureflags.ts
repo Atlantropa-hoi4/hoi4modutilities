@@ -1,12 +1,7 @@
 import { getConfiguration } from "./vsccommon";
-import { resolveFocusLayoutEditorEnabled } from "./featureflagscommon";
 
 function getFeatureFlags() {
     return getConfiguration().featureFlags ?? [];
-}
-
-export function isFocusLayoutEditorEnabled(): boolean {
-    return resolveFocusLayoutEditorEnabled(getConfiguration());
 }
 
 const featureFlags = getFeatureFlags();

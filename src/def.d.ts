@@ -5,7 +5,6 @@ declare module 'vscode' {
             readonly loadDlcContents: boolean;
             readonly modFile: string;
             readonly featureFlags: string[];
-            readonly focusLayoutEditor: boolean;
             readonly enableSupplyArea: boolean;
             readonly previewLocalisation: 'Brazilian Portuguese' | 'English' | 'French' | 'German' | 'Japanese' | 'Korean' | 'Polish' | 'Russian' | 'Simplified Chinese' | 'Spanish';
         };

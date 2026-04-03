@@ -1,20 +1,18 @@
-# HOI4 Mod Utilities Focus Preview Offset Drag Expansion Todo
+# HOI4 Mod Utilities Focus Preview Edit Removal Todo
 
 ## Plan
-- [x] Inspect the current focus layout edit pipeline and identify the minimum schema and webview changes needed for offset drag targets
-- [x] Implement visible offset drag handles and route drag updates to the matching offset draft without regressing base focus drag or preview pan
-- [x] Add or extend unit tests for offset-target editing behavior and text patch generation
-- [x] Run compile, lint, tests, and package, then record the review notes and any remaining manual verification gaps
+- [x] Identify all focus preview edit-related code paths, settings, migrations, tests, and release notes that must be removed while preserving normal preview behavior
+- [x] Remove the focus preview edit UI, edit message flow, and layout-edit data plumbing from the focus preview implementation
+- [x] Delete edit-only support files and update manifest, changelog, and tests so no focus edit surface remains
+- [x] Run compile, lint, tests, and package, then record review notes including any manual verification limits
 
 ## Notes
-- This pass extends the existing focus layout editor instead of redesigning it.
-- Base focus drag, continuous focus drag, and inlay drag should keep their current semantics.
-- Offset editing is limited to currently visible active offsets and should still apply immediately on drag end.
+- Scope is limited to Focus Preview edit functionality and its residue.
+- Normal focus preview rendering, pan, search, conditions, inlay display, and navigation should remain intact.
+- The result should behave like the pre-edit preview rather than leaving edit controls hidden behind settings.
 
 ## Review
-- Active focus `offset` blocks now receive their own layout target keys and inline `O` drag handles in edit mode, so offset dragging stays separate from base focus dragging while reusing the existing mouse-up apply flow.
-- Offset drag state now goes through a shared helper that resolves the matching offset draft by edit key and applies the same grid-based drag math as base focus positions.
-- Focus-tree schema metadata now propagates offset edit keys onto rendered offsets so the webview can target the exact visible offset block that the text edit service patches.
-- Added unit coverage for offset-draft lookup and drag math, plus an offset-only text patch test to ensure unrelated focus, continuous-focus, and inlay fields stay unchanged.
-- Verified with `npm test` and `npm run package`; the packaged VSIX is `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.8.vsix`.
-- A true manual VS Code smoke pass for pan/edit interaction was not run in this environment.
+- Removed the Focus Preview `Edit` toggle, webview drag/apply message flow, layout-edit metadata plumbing, edit-only support modules, legacy setting migration, and manifest configuration so focus preview returns to non-editable behavior.
+- Deleted edit-specific tests and updated manifest coverage to reflect the reverted preview surface.
+- Verification passed with `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
+- Manual VS Code smoke verification was not run in this terminal session, so preview interaction was validated through automated build/test/package checks only.

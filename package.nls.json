@@ -6,8 +6,6 @@
     "hoi4modutilities.displayName": "HOI4 Mod Utilities (Server)",
     "hoi4modutilities.featureFlags.title": "Feature Flags",
     "hoi4modutilities.featureFlags.desc": "Feature flags are used to disable or enable features. Reloading is required after changing this. Please refer to Wiki on Github for details.",
-    "hoi4modutilities.focusLayoutEditor.title": "Enable Focus Layout Editor",
-    "hoi4modutilities.focusLayoutEditor.desc": "Enable the experimental focus tree layout editor inside the focus preview.",
     "hoi4modutilities.installPath.title": "Install Path",
     "hoi4modutilities.installPath.desc": "Hearts of Iron IV install path used by previews and dependency loading.",
     "hoi4modutilities.loadDlcContents.title": "Load DLC Contents",

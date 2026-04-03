@@ -17,14 +17,4 @@ describe('extension manifest', () => {
         assert.ok(editorTitlePreviewEntries[0].when.includes('!server.shouldShowHoi4Preview'));
         assert.match(editorTitlePreviewEntries[0].when, /resourceScheme != webview-panel/);
     });
-
-    it('exposes the focus layout editor as a dedicated settings UI toggle', () => {
-        const properties = manifest.contributes.configuration[0].properties;
-        const setting = properties['hoi4ModUtilities.focusLayoutEditor'];
-
-        assert.ok(setting);
-        assert.strictEqual(setting.type, 'boolean');
-        assert.strictEqual(setting.default, false);
-        assert.match(setting.title, /focusLayoutEditor/i);
-    });
 });
