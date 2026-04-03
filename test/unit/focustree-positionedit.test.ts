@@ -309,7 +309,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\n\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\n\s*\}\n\}\n\njoint_focus = \{/);
+        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\r?\n\r?\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\r?\n\s*\}\r?\n\}\r?\n\r?\njoint_focus = \{/);
     });
 
     it('returns a placeholder range that still points at the generated tag-based focus id in BOM files', () => {
