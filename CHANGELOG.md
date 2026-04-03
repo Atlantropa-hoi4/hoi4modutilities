@@ -4,10 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.19] - 2026/04/04 - Latest
+## [0.13.20] - 2026/04/04 - Latest
+
+### Added
+* Add a native VS Code RGB color picker for `common/countries/colors.txt`, `common/countries/color.txt`, `common/countries/cosmetic.txt`, and `common/ideologies/*.txt`, so definition color values can be chosen directly from the editor instead of typed by hand.
+
+## [0.13.19] - 2026/04/04
 
 ### Added
 * Add edit-mode focus linking: double-click an existing focus to start a parent link line, then click another focus to write the child focus's `prerequisite` and `relative_position_id` back into the current document.
+* Add an edit-mode focus context menu so right-clicking an editable focus can delete it directly from the preview.
 
 ### Fixed
 * Snap blank-space create coordinates to the grid cell that contains the click, preventing focus templates from appearing one column or row to the side when clicking near slot edges.
@@ -18,6 +24,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Split the crowded focus preview toolbar into two explicit rows and move the canvas offset down with it so the controls stay aligned instead of fighting for one compressed line.
 * Keep the `Conditions` label inline with its dropdown by preserving flex layout during toolbar visibility updates, and place the `Edit` button inside the same grouped rhythm as the other controls.
 * Leave extra blank canvas below the lowest rendered focus so edit-mode double-click creation can continue downward even when the current tree already reaches the bottom of the viewport.
+* Add a blank-canvas pan fallback in the focus preview so dragging empty space still scrolls reliably even when the visible canvas sits above the generic `#dragger` overlay.
+* Remove local `prerequisite` and `relative_position_id` references automatically when deleting a focus from the preview, so linked child focuses do not keep stale dependencies on the deleted node.
+* Reuse the same preview-pan session for blank-canvas fallback drags as the original `#dragger` path, restoring smoother empty-space panning while keeping the missed-drag fix.
+* Restyle the focus preview `Edit` toggle as an icon button and anchor it immediately to the right of the `Search` box on the first toolbar row.
 
 ## [0.13.18] - 2026/04/04
 

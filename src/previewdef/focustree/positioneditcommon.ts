@@ -67,10 +67,25 @@ export interface ApplyFocusLinkEditMessage {
     documentVersion: number;
 }
 
+export interface ApplyFocusExclusiveLinkEditMessage {
+    command: 'applyFocusExclusiveLinkEdit';
+    sourceFocusId: string;
+    targetFocusId: string;
+    documentVersion: number;
+}
+
+export interface DeleteFocusMessage {
+    command: 'deleteFocus';
+    focusId: string;
+    documentVersion: number;
+}
+
 export type FocusPositionEditMessage =
     | ApplyFocusPositionEditMessage
     | CreateFocusTemplateAtPositionMessage
-    | ApplyFocusLinkEditMessage;
+    | ApplyFocusLinkEditMessage
+    | ApplyFocusExclusiveLinkEditMessage
+    | DeleteFocusMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;

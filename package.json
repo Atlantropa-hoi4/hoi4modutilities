@@ -2,7 +2,7 @@
   "name": "hoi4modutilities",
   "displayName": "%hoi4modutilities.displayName%",
   "description": "Utilities for Heart of Iron IV mods developers",
-  "version": "0.13.19",
+  "version": "0.13.20",
   "author": "server (forked from Chaofan Yang)",
   "publisher": "server",
   "icon": "icon.png",
@@ -215,7 +215,7 @@
     "lint": "eslint src webviewsrc test --ext .ts",
     "test:unit": "mocha --exit --recursive \"out/test/unit/**/*.test.js\"",
     "test": "npm run compile-ts && npm run lint && npm run test:unit",
-    "test-ui": "npm run compile-ts && vscode-test --config .vscode-test.mjs",
+    "test-ui": "npm run compile-ts && npm run webpack && vscode-test --config .vscode-test.mjs",
     "package": "vsce package --no-dependencies",
     "verify": "npm run test && npm run test-ui && npm run package",
     "geni18n": "npm run compile-ts && node scripts/genzhi18n.js"

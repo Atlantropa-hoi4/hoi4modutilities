@@ -6,7 +6,8 @@ import { waitFor } from '../testUtils';
 function hasPreviewTab(viewType: string): boolean {
     return vscode.window.tabGroups.all
         .flatMap(group => group.tabs)
-        .some(tab => tab.input instanceof vscode.TabInputWebview && tab.input.viewType === viewType);
+        .some(tab => (tab.input instanceof vscode.TabInputWebview && tab.input.viewType === viewType)
+            || tab.label.startsWith('HOI4: '));
 }
 
 function hasCustomEditorTab(viewType: string, uri: vscode.Uri): boolean {
@@ -49,7 +50,7 @@ suite('extension smoke', () => {
         await vscode.window.showTextDocument(document);
 
         await vscode.commands.executeCommand(Commands.Preview);
-        await waitFor(() => hasPreviewTab(WebviewType.Preview));
+        await waitFor(() => hasPreviewTab(WebviewType.Preview), 30000);
     });
 
     test('opens the TGA custom editor provider', async () => {

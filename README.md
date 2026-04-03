@@ -4,8 +4,6 @@ This extension add tools for Heart of Iron IV modding. Some of the tools may wor
 
 This repository is the `server.hoi4modutilities` fork of the original `chaofan.hoi4modutilities` extension. The extension ID is intentionally different so it can be installed and maintained independently from the upstream release.
 
-> I'm disappointed by Paradox because of the Silk Road thing. I'll pause this project until they fix it.
-
 ## Features
 
 * World map preview
@@ -85,6 +83,17 @@ npm run verify
 ```
 
 `npm run verify` runs the local build, lint, unit tests, VS Code integration tests, and VSIX packaging flow from the repository root.
+
+## Release Automation
+
+This repository now publishes release assets from GitHub Actions when you push a semantic version tag that matches `package.json`.
+
+```bash
+git tag v0.13.20
+git push origin v0.13.20
+```
+
+The release workflow rebuilds the extension on `windows-latest`, validates that the tag matches the extension version, runs compile/lint/test/test-ui/package verification, and attaches the generated `.vsix` plus a SHA-256 checksum file to the GitHub Release for that tag.
 
 ## Release Notes - [0.12.2]
 

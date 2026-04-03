@@ -13,6 +13,7 @@ import { registerGfxIndex } from './util/gfxindex';
 import { registerLocalisationIndex } from "./util/localisationIndex";
 import { registerLocalisationHighlighting } from './util/localisationHighlighting';
 import { registerSharedFocusIndex } from "./util/sharedFocusIndex";
+import { registerCountryColorProvider } from './util/countryColorProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     let locale = (context as any).extension?.packageJSON.locale;
@@ -39,12 +40,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(registerGfxIndex());
     context.subscriptions.push(registerLocalisationIndex());
     context.subscriptions.push(registerLocalisationHighlighting());
+    context.subscriptions.push(registerCountryColorProvider());
 
     if (process.env.NODE_ENV !== 'production') {
-        vscode.commands.registerCommand(Commands.Test, () => {
-            const debugModule = require('./util/debug.shouldignore');
-            debugModule.testCommand();
-        });
+        context.subscriptions.push(vscode.commands.registerCommand(Commands.Test, async () => {
+            await vscode.window.showInformationMessage('No developer test command is configured in this fork.');
+        }));
 
         setVscodeContext(ContextName.Hoi4MUInDev, true);
     }
