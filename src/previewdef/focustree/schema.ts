@@ -107,6 +107,7 @@ export interface FocusTreeInlayButtonMeta {
 }
 
 interface Offset {
+    editKey?: string;
     x: number;
     y: number;
     trigger: ConditionComplexExpr | undefined;
@@ -376,6 +377,10 @@ export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath
             if (!focus.layout && focus.file === filePath) {
                 focus.layout = metadata.focuses[focus.layoutEditKey];
             }
+
+            focus.offset.forEach((offset, index) => {
+                offset.editKey = focus.layout?.offsets[index]?.editKey;
+            });
         }
 
         if (tree.kind === 'focus') {

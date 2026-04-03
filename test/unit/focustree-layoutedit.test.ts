@@ -135,4 +135,50 @@ describe('focus layout edit service', () => {
         assert.match(updated, /continuous_focus_position = \{[\s\S]*?x = 600[\s\S]*?y = 700/);
         assert.match(updated, /inlay_window = \{[\s\S]*?position = \{[\s\S]*?x = 123[\s\S]*?y = 456/);
     });
+
+    it('patches only the targeted offset block for an offset-only draft change', () => {
+        const filePath = 'common/national_focus/layout-edit.txt';
+        const content = readFixture('focus', 'layout-edit.txt');
+        const trees = getFocusTree(parseHoi4File(content), [], filePath);
+        const tree = trees.find(tree => tree.kind === 'focus');
+        const root = tree?.focuses.ROOT;
+
+        assert.ok(root?.layout);
+        assert.ok(root.layout.offsets[0]);
+
+        const draft = {
+            baseVersion: 1,
+            focuses: {
+                [root.layout.editKey]: {
+                    kind: 'focus' as const,
+                    editKey: root.layout.editKey,
+                    focusId: root.id,
+                    editable: true,
+                    sourceFile: filePath,
+                    sourceRange: root.layout.sourceRange,
+                    x: root.layout.basePosition.x,
+                    y: root.layout.basePosition.y,
+                    relativePositionId: root.layout.relativePositionId ?? null,
+                    offsets: [
+                        {
+                            editKey: root.layout.offsets[0].editKey,
+                            x: 13,
+                            y: 14,
+                            hasTrigger: true,
+                        },
+                    ],
+                },
+            },
+            continuous: {},
+            inlayRefs: {},
+        };
+
+        const updated = applyTextChanges(content, buildFocusLayoutTextChanges(content, filePath, draft));
+        const rootBlock = /focus = \{\r?\n\s*id = ROOT[\s\S]*?\r?\n\s*\}/.exec(updated)?.[0] ?? '';
+
+        assert.match(rootBlock, /id = ROOT[\s\S]*?x = 1[\s\S]*?y = 2/);
+        assert.match(rootBlock, /offset = \{[\s\S]*?x = 13[\s\S]*?y = 14[\s\S]*?trigger = \{/);
+        assert.doesNotMatch(updated, /continuous_focus_position = \{[\s\S]*?x = 600/);
+        assert.doesNotMatch(updated, /inlay_window = \{[\s\S]*?position = \{[\s\S]*?x = 123/);
+    });
 });

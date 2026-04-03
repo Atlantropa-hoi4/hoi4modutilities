@@ -16,6 +16,11 @@ import {
     FocusLayoutMessage,
     FocusLayoutOffsetDraft,
 } from "../src/previewdef/focustree/layouteditcommon";
+import {
+    LayoutTargetDescriptor,
+    applyDraggedLayoutPosition,
+    calculateDraggedLayoutPosition,
+} from "../src/previewdef/focustree/layouteditdrag";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -71,18 +76,6 @@ const focusLayoutEditorEnabled: boolean = !!(window as any).focusLayoutEditorEna
 const focusLayoutActiveFile: string = (window as any).focusLayoutActiveFile ?? '';
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
-
-interface LayoutTargetDescriptor {
-    key: string;
-    kind: 'focus' | 'continuous' | 'inlayRef';
-    label: string;
-    editable: boolean;
-    sourceFile: string;
-    sourceStart?: number;
-    sourceEnd?: number;
-    currentPosition: NumberPosition;
-    focusId?: string;
-}
 
 let focusLayoutEditMode = focusLayoutEditorEnabled && !!getState().focusLayoutEditMode;
 let focusLayoutDraft: FocusLayoutDraft | undefined = undefined;
@@ -211,12 +204,13 @@ function getRenderedFocusTree(focusTree: FocusTree): FocusTree {
         const layoutOffsets = focus.layout?.offsets ?? [];
         const nextOffsets = focusDraft.offsets.map(offsetDraft => {
             if (offsetDraft.isNew) {
-                return { x: offsetDraft.x, y: offsetDraft.y, trigger: undefined };
+                return { editKey: offsetDraft.editKey, x: offsetDraft.x, y: offsetDraft.y, trigger: undefined };
             }
 
             const offsetIndex = layoutOffsets.findIndex(offset => offset.editKey === offsetDraft.editKey);
             const originalOffset = offsetIndex >= 0 ? focus.offset[offsetIndex] : undefined;
             return {
+                editKey: offsetDraft.editKey,
                 x: offsetDraft.x,
                 y: offsetDraft.y,
                 trigger: originalOffset?.trigger,
@@ -310,8 +304,9 @@ async function buildContent() {
 
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
-    currentLayoutTargets = createLayoutTargetIndex(focusTree, focusPosition);
+    currentLayoutTargets = createLayoutTargetIndex(focusTree, focusPosition, exprs);
     syncContinuousLayoutTarget(focusTree);
+    renderOffsetHandles();
     if (focusLayoutSelectedKey && !currentLayoutTargets[focusLayoutSelectedKey]) {
         focusLayoutSelectedKey = undefined;
     }
@@ -321,7 +316,15 @@ async function buildContent() {
     persistLayoutState();
 }
 
-function createLayoutTargetIndex(focusTree: FocusTree, focusPosition: Record<string, NumberPosition>): Record<string, LayoutTargetDescriptor> {
+function isFocusOffsetActive(offset: Focus['offset'][number], exprs: ConditionItem[]): boolean {
+    return offset.trigger !== undefined && applyCondition(offset.trigger, exprs);
+}
+
+function createLayoutTargetIndex(
+    focusTree: FocusTree,
+    focusPosition: Record<string, NumberPosition>,
+    exprs: ConditionItem[],
+): Record<string, LayoutTargetDescriptor> {
     const result: Record<string, LayoutTargetDescriptor> = {};
 
     for (const focus of Object.values(focusTree.focuses)) {
@@ -341,6 +344,28 @@ function createLayoutTargetIndex(focusTree: FocusTree, focusPosition: Record<str
             currentPosition: position,
             focusId: focus.id,
         };
+
+        const editable = focus.layout?.editable === true && focus.layout.sourceFile === focusLayoutActiveFile;
+        focus.offset.forEach((offset, index) => {
+            if (!offset.editKey || !isFocusOffsetActive(offset, exprs)) {
+                return;
+            }
+
+            result[offset.editKey] = {
+                key: offset.editKey,
+                kind: 'offset',
+                label: focus.offset.length > 1 ? `${focus.id} offset ${index + 1}` : `${focus.id} offset`,
+                editable,
+                sourceFile: focus.layout?.sourceFile ?? focus.file,
+                sourceStart: focus.layout?.sourceRange?.start ?? focus.token?.start,
+                sourceEnd: focus.layout?.sourceRange?.end ?? focus.token?.end,
+                currentPosition: {
+                    x: offset.x,
+                    y: offset.y,
+                },
+                focusId: focus.id,
+            };
+        });
     }
 
     if (focusTree.continuousFocusLayout && focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
@@ -380,6 +405,77 @@ function createLayoutTargetIndex(focusTree: FocusTree, focusPosition: Record<str
     }
 
     return result;
+}
+
+function renderOffsetHandles() {
+    document.querySelectorAll('.focus-layout-offset-handles').forEach(element => element.remove());
+
+    if (!focusLayoutEditorEnabled || !focusLayoutEditMode) {
+        return;
+    }
+
+    const offsetTargetsByFocusId: Record<string, LayoutTargetDescriptor[]> = {};
+    for (const target of Object.values(currentLayoutTargets)) {
+        if (target.kind !== 'offset' || !target.focusId || !target.editable) {
+            continue;
+        }
+
+        if (!offsetTargetsByFocusId[target.focusId]) {
+            offsetTargetsByFocusId[target.focusId] = [];
+        }
+
+        offsetTargetsByFocusId[target.focusId].push(target);
+    }
+
+    for (const [focusId, offsetTargets] of Object.entries(offsetTargetsByFocusId)) {
+        const host = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
+        if (!host) {
+            continue;
+        }
+
+        const handles = document.createElement('div');
+        handles.className = 'focus-layout-offset-handles';
+        handles.style.position = 'absolute';
+        handles.style.top = '4px';
+        handles.style.right = '4px';
+        handles.style.display = 'flex';
+        handles.style.flexDirection = 'column';
+        handles.style.gap = '4px';
+        handles.style.pointerEvents = 'none';
+        handles.style.zIndex = '25';
+
+        offsetTargets.forEach((target, index) => {
+            const handle = document.createElement('div');
+            handle.className = 'focus-layout-offset-handle';
+            handle.textContent = offsetTargets.length > 1 ? `O${index + 1}` : 'O';
+            handle.title = `${target.label} (${target.currentPosition.x}, ${target.currentPosition.y})`;
+            handle.setAttribute('data-layout-kind', 'offset');
+            handle.setAttribute('data-layout-key', target.key);
+            handle.setAttribute('data-layout-editable', 'true');
+            handle.setAttribute('data-layout-source-file', target.sourceFile);
+            handle.setAttribute('data-layout-source-start', `${target.sourceStart ?? ''}`);
+            handle.setAttribute('data-layout-source-end', `${target.sourceEnd ?? ''}`);
+            handle.style.pointerEvents = 'auto';
+            handle.style.minWidth = '20px';
+            handle.style.height = '20px';
+            handle.style.padding = '0 4px';
+            handle.style.display = 'flex';
+            handle.style.alignItems = 'center';
+            handle.style.justifyContent = 'center';
+            handle.style.borderRadius = '10px';
+            handle.style.background = 'rgba(32, 124, 229, 0.9)';
+            handle.style.border = '1px solid rgba(255, 255, 255, 0.35)';
+            handle.style.color = '#fff';
+            handle.style.fontSize = '10px';
+            handle.style.fontWeight = '700';
+            handle.style.lineHeight = '1';
+            handle.style.boxShadow = '0 1px 4px rgba(0, 0, 0, 0.35)';
+            handle.style.userSelect = 'none';
+            handles.appendChild(handle);
+        });
+
+        host.appendChild(handles);
+    }
 }
 
 function syncContinuousLayoutTarget(focusTree: FocusTree) {
@@ -876,18 +972,6 @@ function setupLayoutInteractionHandlers() {
 
 function beginLayoutDrag(target: LayoutTargetDescriptor, dragElement: HTMLElement | null, startPageX: number, startPageY: number) {
     const draft = ensureLayoutDraft();
-    const scale = getState().scale || 1;
-    const focusDraft = target.kind === 'focus' ? draft.focuses[target.key] : undefined;
-    const pointDraft = target.kind !== 'focus'
-        ? (target.kind === 'continuous' ? draft.continuous[target.key] : draft.inlayRefs[target.key])
-        : undefined;
-
-    if ((focusDraft && !focusDraft.editable) || (pointDraft && !pointDraft.editable)) {
-        return;
-    }
-
-    const baseX = focusDraft?.x ?? pointDraft?.x ?? 0;
-    const baseY = focusDraft?.y ?? pointDraft?.y ?? 0;
     let draftChanged = false;
 
     if (dragElement) {
@@ -897,26 +981,20 @@ function beginLayoutDrag(target: LayoutTargetDescriptor, dragElement: HTMLElemen
     }
 
     const mouseMoveHandler = (moveEvent: MouseEvent) => {
-        const deltaX = (moveEvent.pageX - startPageX) / scale;
-        const deltaY = (moveEvent.pageY - startPageY) / scale;
+        const deltaX = moveEvent.pageX - startPageX;
+        const deltaY = moveEvent.pageY - startPageY;
 
         if (dragElement) {
             dragElement.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
         }
 
-        if (target.kind === 'focus' && focusDraft) {
-            const nextX = Math.round(baseX + deltaX / xGridSize);
-            const nextY = Math.round(baseY + deltaY / yGridSize);
-            draftChanged = draftChanged || nextX !== baseX || nextY !== baseY;
-            focusDraft.x = nextX;
-            focusDraft.y = nextY;
-        } else if (pointDraft) {
-            const nextX = Math.round(baseX + deltaX);
-            const nextY = Math.round(baseY + deltaY);
-            draftChanged = draftChanged || nextX !== baseX || nextY !== baseY;
-            pointDraft.x = nextX;
-            pointDraft.y = nextY;
-        }
+        const nextPosition = calculateDraggedLayoutPosition(target, deltaX, deltaY, {
+            scale: getState().scale || 1,
+            xGridSize,
+            yGridSize,
+        });
+        applyDraggedLayoutPosition(draft, target, nextPosition);
+        draftChanged = nextPosition.x !== target.currentPosition.x || nextPosition.y !== target.currentPosition.y;
     };
 
     const mouseUpHandler = () => {
