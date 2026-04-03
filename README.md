@@ -4,8 +4,6 @@ This extension add tools for Heart of Iron IV modding. Some of the tools may wor
 
 This repository is the `server.hoi4modutilities` fork of the original `chaofan.hoi4modutilities` extension. The extension ID is intentionally different so it can be installed and maintained independently from the upstream release.
 
-> I'm disappointed by Paradox because of the Silk Road thing. I'll pause this project until they fix it.
-
 ## Features
 
 * World map preview
