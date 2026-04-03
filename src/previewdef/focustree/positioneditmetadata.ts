@@ -1,9 +1,10 @@
 import { Node } from "../../hoiformat/hoiparser";
-import { FocusPositionMeta, FocusTreeCreateMeta, ScalarFieldMeta, TextRange, createFocusPositionEditKey, createFocusTreeEditKey } from "./positioneditcommon";
+import { ContinuousFocusPositionMeta, FocusPositionMeta, FocusTreeCreateMeta, ScalarFieldMeta, TextRange, createFocusPositionEditKey, createFocusTreeEditKey } from "./positioneditcommon";
 
 export interface FocusPositionFileMetadata {
     focuses: Record<string, FocusPositionMeta | undefined>;
     focusTrees: FocusTreeCreateMeta[];
+    continuousTrees: Record<string, ContinuousFocusPositionMeta | undefined>;
     sharedTree?: FocusTreeCreateMeta;
     jointTree?: FocusTreeCreateMeta;
 }
@@ -12,6 +13,7 @@ export function collectFocusPositionFileMetadata(node: Node, filePath: string): 
     const result: FocusPositionFileMetadata = {
         focuses: {},
         focusTrees: [],
+        continuousTrees: {},
     };
 
     if (!Array.isArray(node.value)) {
@@ -30,7 +32,8 @@ export function collectFocusPositionFileMetadata(node: Node, filePath: string): 
         if (childName === 'focus_tree') {
             const treeMetadata = collectFocusTreeMetadata(child, filePath, result.focusTrees.length);
             if (treeMetadata) {
-                result.focusTrees.push(treeMetadata);
+                result.focusTrees.push(treeMetadata.createTemplate);
+                result.continuousTrees[treeMetadata.createTemplate.editKey] = treeMetadata.continuousPosition;
             }
             for (const focusNode of child.value.filter(isNamedBlock('focus'))) {
                 const metadata = collectFocusMetadata(focusNode, filePath);
@@ -78,18 +81,25 @@ export function collectFocusPositionFileMetadata(node: Node, filePath: string): 
     return result;
 }
 
-function collectFocusTreeMetadata(node: Node, filePath: string, index: number): FocusTreeCreateMeta | undefined {
+function collectFocusTreeMetadata(node: Node, filePath: string, index: number): {
+    createTemplate: FocusTreeCreateMeta;
+    continuousPosition: ContinuousFocusPositionMeta;
+} | undefined {
     if (!node.nameToken) {
         return undefined;
     }
 
+    const editKey = createFocusTreeEditKey(filePath, 'focus', index);
     return {
-        editKey: createFocusTreeEditKey(filePath, 'focus', index),
-        editable: true,
-        kind: 'focus',
-        sourceFile: filePath,
-        sourceRange: createNodeRange(node),
-        focusIdPrefix: readFocusTreeCountryTag(node),
+        createTemplate: {
+            editKey,
+            editable: true,
+            kind: 'focus',
+            sourceFile: filePath,
+            sourceRange: createNodeRange(node),
+            focusIdPrefix: readFocusTreeCountryTag(node),
+        },
+        continuousPosition: collectContinuousFocusPositionMetadata(node, filePath, editKey),
     };
 }
 
@@ -137,6 +147,23 @@ function collectFocusMetadata(node: Node, filePath: string): FocusPositionMeta |
         },
         relativePositionId: readStringChildValue(node, 'relative_position_id'),
         offsets: collectOffsetMetadata(node),
+    };
+}
+
+function collectContinuousFocusPositionMetadata(node: Node, filePath: string, editKey: string): ContinuousFocusPositionMeta {
+    const continuousNode = findNamedChild(node, 'continuous_focus_position');
+    return {
+        editKey,
+        editable: true,
+        sourceFile: filePath,
+        focusTreeRange: createNodeRange(node),
+        sourceRange: continuousNode ? createNodeRange(continuousNode) : undefined,
+        x: continuousNode ? collectScalarField(continuousNode, 'x') : undefined,
+        y: continuousNode ? collectScalarField(continuousNode, 'y') : undefined,
+        basePosition: {
+            x: continuousNode ? readNumberChildValue(continuousNode, 'x') ?? 50 : 50,
+            y: continuousNode ? readNumberChildValue(continuousNode, 'y') ?? 1000 : 1000,
+        },
     };
 }
 

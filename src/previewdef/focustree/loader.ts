@@ -7,6 +7,7 @@ import { getGfxContainerFiles } from "../../util/gfxindex";
 import { sharedFocusIndex } from "../../util/featureflags";
 import { findFileByFocusKey } from "../../util/sharedFocusIndex";
 import { addInlayGfxWarnings, loadFocusInlayWindows, resolveInlayGfxFiles, resolveInlayGuiWindows, resolveInlaysForTree } from "./inlay";
+import { sortFocusWarnings } from "./focuslint";
 import { FocusSpacingLoader } from "./focusspacing";
 import { NumberPosition } from "../../util/common";
 
@@ -75,17 +76,20 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusTree.warnings.push(...loadedInlays.warnings);
             }
             focusTree.warnings.push(...resolved.warnings);
+            focusTree.warnings = sortFocusWarnings(focusTree.warnings);
         }
 
         const allInlays = focusTrees.flatMap(ft => ft.inlayWindows);
         const guiResolution = await resolveInlayGuiWindows(allInlays);
         for (const focusTree of focusTrees) {
             focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
+            focusTree.warnings = sortFocusWarnings(focusTree.warnings);
         }
 
         const inlayGfxResolution = await resolveInlayGfxFiles(allInlays);
         for (const focusTree of focusTrees) {
             addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
+            focusTree.warnings = sortFocusWarnings(focusTree.warnings);
         }
 
         const focusIconNames = focusTrees

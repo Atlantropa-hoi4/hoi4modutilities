@@ -24,6 +24,25 @@ interface ParsedInlayFile {
 const focusInlayWindowsFolder = "common/focus_inlay_windows";
 const scriptedGuiFolder = "interface/scripted_gui";
 
+function createParseWarning(params: {
+    code: string;
+    text: string;
+    source: string;
+    relatedFocusIds?: string[];
+    navigations?: FocusWarning['navigations'];
+    severity?: FocusWarning['severity'];
+}): FocusWarning {
+    return {
+        code: params.code,
+        severity: params.severity ?? 'warning',
+        kind: 'parse',
+        text: params.text,
+        source: params.source,
+        relatedFocusIds: params.relatedFocusIds,
+        navigations: params.navigations,
+    };
+}
+
 export async function loadFocusInlayWindows(): Promise<ParsedInlayFile> {
     const files = await listFilesFromModOrHOI4(focusInlayWindowsFolder, { recursively: true });
     const inlays: FocusTreeInlay[] = [];
@@ -38,10 +57,11 @@ export async function loadFocusInlayWindows(): Promise<ParsedInlayFile> {
             inlays.push(...parsed.inlays);
             warnings.push(...parsed.warnings);
         } catch (e) {
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'inlay-file-parse-failed',
                 text: localize("TODO", "Failed to parse inlay window file {0}: {1}", relativePath, e instanceof Error ? e.message : String(e)),
                 source: relativePath,
-            });
+            }));
         }
     }
 
@@ -65,14 +85,16 @@ function parseInlayNode(node: Node, file: string): ParsedInlayFile {
         const inlay = parseSingleInlayNode(child, file);
         if (duplicateIds[inlay.id]) {
             const other = duplicateIds[inlay.id]!;
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'inlay-duplicate-id',
                 text: localize("TODO", "There're more than one inlay windows with ID {0} in files: {1}, {2}.", inlay.id, other.file, inlay.file),
                 source: inlay.id,
+                relatedFocusIds: [inlay.id],
                 navigations: [
                     { file: other.file, start: other.token?.start ?? 0, end: other.token?.end ?? 0 },
                     { file: inlay.file, start: inlay.token?.start ?? 0, end: inlay.token?.end ?? 0 },
                 ],
-            });
+            }));
         } else {
             duplicateIds[inlay.id] = inlay;
         }
@@ -190,11 +212,12 @@ export function resolveInlaysForTree(refs: FocusTreeInlayRef[], allInlays: Focus
     for (const ref of refs) {
         const matched = allInlays.find(inlay => inlay.id === ref.id);
         if (!matched) {
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'inlay-reference-missing',
                 text: localize("TODO", "Focus tree references missing inlay window: {0}.", ref.id),
                 source: ref.id,
                 navigations: ref.token ? [{ file: ref.file, start: ref.token.start, end: ref.token.end }] : undefined,
-            });
+            }));
             continue;
         }
 
@@ -237,11 +260,12 @@ export async function resolveInlayGuiWindows(inlays: FocusTreeInlay[]): Promise<
 
         const matched = parsedGuiFiles.find(gui => gui.windows[inlay.windowName!] !== undefined);
         if (!matched) {
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'inlay-gui-window-missing',
                 text: localize("TODO", "Can't resolve scripted GUI window {0} for inlay {1}.", inlay.windowName, inlay.id),
                 source: inlay.id,
                 navigations: inlay.token ? [{ file: inlay.file, start: inlay.token.start, end: inlay.token.end }] : undefined,
-            });
+            }));
             continue;
         }
 
@@ -360,11 +384,12 @@ export function addInlayGfxWarnings(inlays: FocusTreeInlay[], warnings: FocusWar
                     continue;
                 }
 
-                warnings.push({
+                warnings.push(createParseWarning({
+                    code: 'inlay-gfx-missing',
                     text: localize("TODO", "Can't resolve inlay GFX {0} for slot {1} in inlay {2}.", option.gfxName, slot.id, inlay.id),
                     source: inlay.id,
                     navigations: option.token ? [{ file: option.file, start: option.token.start, end: option.token.end }] : undefined,
-                });
+                }));
             }
         }
     }

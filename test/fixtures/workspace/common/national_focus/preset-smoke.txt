@@ -1,0 +1,26 @@
+focus_tree = {
+    id = preset_smoke_tree
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+        icon = {
+            trigger = {
+                has_government = democratic
+            }
+            value = GFX_goal_generic_construct_civilian
+        }
+        offset = {
+            x = 1
+            y = 0
+            trigger = {
+                has_stability > 0.5
+            }
+        }
+    }
+    focus = {
+        id = CHILD
+        x = 1
+        y = 1
+    }
+}

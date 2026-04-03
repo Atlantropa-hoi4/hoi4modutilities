@@ -94,14 +94,3 @@ git push origin v0.13.20
 ```
 
 The release workflow rebuilds the extension on `windows-latest`, validates that the tag matches the extension version, runs compile/lint/test/test-ui/package verification, and attaches the generated `.vsix` plus a SHA-256 checksum file to the GitHub Release for that tag.
-
-## Release Notes - [0.12.2]
-
-### Fixed
-* Allow `|` in symbol type (to support the case `localization_key = building_state_modifier|dam`) (#105) (Contributor: [IShiraiKurokoI(Shirai_Kuroko)](https://github.com/IShiraiKurokoI)).
-
-## Contribute
-* If you have any suggestion, feel free to create issue on this [Github repo](https://github.com/Atlantropa-hoi4/hoi4modutilities).
-* If you want to contribute translation, feel free to create pull request to this [Github repo](https://github.com/Atlantropa-hoi4/hoi4modutilities). All localization related files are under `i18n` folder.
-
-* Thanks to all contributors listed [here](https://github.com/Atlantropa-hoi4/hoi4modutilities/graphs/contributors).

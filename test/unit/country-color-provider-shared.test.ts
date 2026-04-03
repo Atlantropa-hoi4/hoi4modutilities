@@ -19,6 +19,7 @@ describe('country color provider shared helpers', () => {
             '    color = rgb { 10 20 30 }',
             '    color_ui = { 40 50 60 }',
             '    hsv_color = hsv { 0.5 0.2 0.1 }',
+            '    debug_text = "color = { 99 98 97 }"',
             '    ideology = { 1 2 3 }',
             '}',
         ].join('\n');
