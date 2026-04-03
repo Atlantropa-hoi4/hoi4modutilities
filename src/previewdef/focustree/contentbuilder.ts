@@ -21,51 +21,45 @@ import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
 
+export interface FocusTreeRenderPayload {
+    focusTrees: FocusTree[];
+    renderedFocus: Record<string, string>;
+    renderedInlayWindows: Record<string, string>;
+    gridBox: HOIPartial<GridBoxType>;
+    dynamicStyleCss: string;
+    styleNonce: string;
+    xGridSize: number;
+    yGridSize: number;
+    focusToolbarHeight: number;
+    focusPositionDocumentVersion: number;
+    focusPositionActiveFile: string;
+    hasFocusSelector: boolean;
+    hasWarningsButton: boolean;
+}
+
 export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
-        const session = new LoaderSession(false);
-        const loadResult = await loader.load(session);
-        const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
-        debug('Loader session focus tree', loadedLoaders);
-
-        const focustrees = loadResult.result.focusTrees;
-
-        if (focustrees.length === 0) {
+        const renderState = await buildFocusTreeRenderState(loader, documentVersion);
+        if (renderState.payload.focusTrees.length === 0) {
             const baseContent = localize('focustree.nofocustree', 'No focus tree.');
             return html(webview, baseContent, [setPreviewFileUriScript], []);
         }
 
-        const styleTable = new StyleTable();
-        const jsCodes: string[] = [];
-        const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(
-            focustrees,
-            styleTable,
-            loadResult.result.gfxFiles,
-            loadResult.result.focusSpacing,
-            jsCodes,
-            styleNonce,
-            loader.file,
-            documentVersion,
-        );
-        jsCodes.push(i18nTableAsScript());
-
         return html(
             webview,
-            baseContent,
+            renderState.body,
             [
                 setPreviewFileUriScript,
-                ...jsCodes.map(c => ({ content: c })),
+                ...renderState.scripts.map(c => ({ content: c })),
                 'common.js',
                 'focustree.js',
             ],
             [
                 'codicon.css',
                 'common.css',
-                styleTable,
-                { nonce: styleNonce },
+                { nonce: renderState.payload.styleNonce },
             ],
         );
 
@@ -84,18 +78,19 @@ function attributeEscape(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
-async function renderFocusTrees(
-    focusTrees: FocusTree[],
-    styleTable: StyleTable,
-    gfxFiles: string[],
-    focusSpacing: NumberPosition | undefined,
-    jsCodes: string[],
-    styleNonce: string,
-    file: string,
+export async function buildFocusTreeRenderPayload(
+    loader: FocusTreeLoader,
     documentVersion: number,
-): Promise<string> {
-    const xGridSize = normalizeFocusSpacingValue(focusSpacing?.x, defaultXGridSize);
-    const yGridSize = normalizeFocusSpacingValue(focusSpacing?.y, defaultYGridSize);
+): Promise<FocusTreeRenderPayload> {
+    const session = new LoaderSession(false);
+    const loadResult = await loader.load(session);
+    const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
+    debug('Loader session focus tree', loadedLoaders);
+
+    const focusTrees = loadResult.result.focusTrees;
+    const styleTable = new StyleTable();
+    const xGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.x, defaultXGridSize);
+    const yGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
         format: toStringAsSymbolIgnoreCase('up'),
@@ -112,27 +107,64 @@ async function renderFocusTrees(
 
     const renderedFocus: Record<string, string> = {};
     await Promise.all(allFocuses.map(async (focus) => {
-        renderedFocus[focus.id] = (await renderFocus(focus, styleTable, gfxFiles, file)).replace(/\s\s+/g, ' ');
+        renderedFocus[focus.id] = (await renderFocus(focus, styleTable, loadResult.result.gfxFiles, loader.file)).replace(/\s\s+/g, ' ');
     }));
 
     await prepareInlayGfxStyles(focusTrees, styleTable);
     const renderedInlayWindows: Record<string, string> = {};
     await Promise.all(allInlays.map(async (inlay) => {
-        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, gfxFiles)).replace(/\s\s+/g, ' ');
+        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, loadResult.result.gfxFiles)).replace(/\s\s+/g, ' ');
     }));
 
-    jsCodes.push('window.focusTrees = ' + JSON.stringify(focusTrees));
-    jsCodes.push('window.renderedFocus = ' + JSON.stringify(renderedFocus));
-    jsCodes.push('window.renderedInlayWindows = ' + JSON.stringify(renderedInlayWindows));
-    jsCodes.push('window.gridBox = ' + JSON.stringify(gridBox));
-    jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
-    jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
-    jsCodes.push('window.xGridSize = ' + xGridSize);
-    jsCodes.push('window.yGridSize = ' + yGridSize);
-    jsCodes.push('window.focusToolbarHeight = ' + focusToolbarHeight);
-    jsCodes.push('window.focusPositionDocumentVersion = ' + JSON.stringify(documentVersion));
-    jsCodes.push('window.focusPositionActiveFile = ' + JSON.stringify(file));
+    return {
+        focusTrees,
+        renderedFocus,
+        renderedInlayWindows,
+        gridBox,
+        dynamicStyleCss: styleTable.toStyleContent(),
+        styleNonce: Math.random().toString(36).slice(2),
+        xGridSize,
+        yGridSize,
+        focusToolbarHeight,
+        focusPositionDocumentVersion: documentVersion,
+        focusPositionActiveFile: loader.file,
+        hasFocusSelector: focusTrees.length > 1,
+        hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
+    };
+}
 
+async function buildFocusTreeRenderState(
+    loader: FocusTreeLoader,
+    documentVersion: number,
+): Promise<{ payload: FocusTreeRenderPayload; body: string; scripts: string[] }> {
+    const payload = await buildFocusTreeRenderPayload(loader, documentVersion);
+    const scripts = buildFocusTreeBootstrapScripts(payload);
+    scripts.push(i18nTableAsScript());
+    return {
+        payload,
+        body: renderFocusTreeBody(payload),
+        scripts,
+    };
+}
+
+function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string[] {
+    return [
+        'window.focusTrees = ' + JSON.stringify(payload.focusTrees),
+        'window.renderedFocus = ' + JSON.stringify(payload.renderedFocus),
+        'window.renderedInlayWindows = ' + JSON.stringify(payload.renderedInlayWindows),
+        'window.gridBox = ' + JSON.stringify(payload.gridBox),
+        'window.styleNonce = ' + JSON.stringify(payload.styleNonce),
+        'window.useConditionInFocus = ' + useConditionInFocus,
+        'window.xGridSize = ' + payload.xGridSize,
+        'window.yGridSize = ' + payload.yGridSize,
+        'window.focusToolbarHeight = ' + payload.focusToolbarHeight,
+        'window.focusPositionDocumentVersion = ' + JSON.stringify(payload.focusPositionDocumentVersion),
+        'window.focusPositionActiveFile = ' + JSON.stringify(payload.focusPositionActiveFile),
+    ];
+}
+
+function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
+    const styleTable = new StyleTable();
     const continuousFocusContent =
         `<div id="continuousFocuses" class="${styleTable.oneTimeStyle('continuousFocuses', () => `
             position: absolute;
@@ -145,7 +177,7 @@ async function renderFocusTrees(
             z-index: 0;
         `)}">Continuous focuses</div>`;
 
-    return (
+    const shellMarkup =
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
             width: 100vw;
             height: 100vh;
@@ -153,13 +185,19 @@ async function renderFocusTrees(
             left:0;
             top:0;
         `)}"></div>` +
-        `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:${focusToolbarHeight}px;left:-20px;position:relative`)}">
+        `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:${payload.focusToolbarHeight}px;left:-20px;position:relative`)}">
             <div id="focustreeplaceholder" class="${styleTable.oneTimeStyle('focustreeplaceholder', () => `position: relative; z-index: 2;`)}"></div>
             <div id="inlaywindowplaceholder" class="${styleTable.oneTimeStyle('inlaywindowplaceholder', () => `position: relative; z-index: 3;`)}"></div>
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
-        renderToolBar(focusTrees, styleTable)
+        renderToolBar(payload.focusTrees, styleTable);
+    const shellCss = styleTable.toStyleContent();
+
+    return (
+        `<style id="focus-tree-shell-style" nonce="${payload.styleNonce}">${shellCss}</style>` +
+        `<style id="focus-tree-dynamic-style" nonce="${payload.styleNonce}">${payload.dynamicStyleCss}</style>` +
+        shellMarkup
     );
 }
 

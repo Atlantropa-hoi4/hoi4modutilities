@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { renderFocusTreeFile } from './contentbuilder';
+import { buildFocusTreeRenderPayload, renderFocusTreeFile } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
 import { PreviewProviderDef } from '../previewmanager';
@@ -23,6 +23,8 @@ class FocusTreePreview extends PreviewBase {
     private focusTreeLoader: FocusTreeLoader;
     private content: string | undefined;
     private pendingLocalEditDocumentVersions = new Set<number>();
+    private webviewReady = false;
+    private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -46,10 +48,49 @@ class FocusTreePreview extends PreviewBase {
             return;
         }
 
-        await super.onDocumentChange(document);
+        if (!this.webviewReady) {
+            await super.onDocumentChange(document);
+            return;
+        }
+
+        try {
+            this.content = document.getText();
+            const payload = await buildFocusTreeRenderPayload(this.focusTreeLoader, document.version);
+            this.content = undefined;
+
+            const nextStructure = {
+                hasFocusSelector: payload.hasFocusSelector,
+                hasWarningsButton: payload.hasWarningsButton,
+            };
+            const structureChanged = !this.lastRenderStructure
+                || this.lastRenderStructure.hasFocusSelector !== nextStructure.hasFocusSelector
+                || this.lastRenderStructure.hasWarningsButton !== nextStructure.hasWarningsButton
+                || payload.focusTrees.length === 0;
+            if (structureChanged) {
+                this.lastRenderStructure = nextStructure;
+                this.webviewReady = false;
+                await super.onDocumentChange(document);
+                return;
+            }
+
+            this.lastRenderStructure = nextStructure;
+            await this.panel.webview.postMessage({
+                command: 'focusTreeContentUpdated',
+                ...payload,
+            });
+        } catch {
+            this.content = undefined;
+            this.webviewReady = false;
+            await super.onDocumentChange(document);
+        }
     }
 
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
+        if ((msg as any).command === 'focusTreeWebviewReady') {
+            this.webviewReady = true;
+            return true;
+        }
+
         if (msg.command !== 'applyFocusPositionEdit'
             && msg.command !== 'createFocusTemplateAtPosition'
             && msg.command !== 'applyFocusLinkEdit'

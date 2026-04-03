@@ -1,4 +1,4 @@
-# HOI4 Mod Utilities Focus Preview Responsiveness Optimization Todo
+# HOI4 Mod Utilities Focus Preview Structural Performance Optimization Todo
 
 ## Plan
 - [x] Confirm where current-document focus preview refresh latency is introduced
@@ -9,11 +9,13 @@
 
 ## Notes
 - User report: even after the previous performance pass, the preview still reacts too slowly when focus content changes.
-- Current suspicion: the preview manager's document-change debounce is dominating the user's perceived latency.
+- This pass goes beyond debounce tuning and reduces the amount of work done on each same-document preview refresh.
 - Keep the current consolidated `0.13.19` release line unless the user asks for a separate release number.
 
 ## Review
-- `src/previewdef/previewmanager.ts` no longer forces the current document preview path through a hardcoded 1000ms debounce. It now schedules per-preview timers and reads each preview's preferred debounce window.
-- `src/previewdef/previewbase.ts` now exposes `getDocumentChangeDebounceMs()`, and `src/previewdef/focustree/index.ts` overrides it to `150ms`, so active focus-tree document edits reach the preview much sooner while dependency-driven updates remain on the older conservative path.
+- `src/previewdef/focustree/contentbuilder.ts` now separates the focus-tree payload from the shell HTML, so the host can reuse the existing webview for same-document updates instead of rebuilding the whole page every time.
+- `src/previewdef/focustree/index.ts` now sends `focusTreeContentUpdated` messages for same-structure focus-tree refreshes and falls back to a full HTML reload only when the toolbar structure changes or the webview is not ready yet.
+- `webviewsrc/focustree.ts` now applies refreshed focus-tree data, rendered templates, grid settings, and dynamic CSS in place, then reruns `buildContent()` inside the already-loaded webview.
+- The earlier debounce improvement remains in place: `src/previewdef/previewmanager.ts` uses per-preview refresh timers, and `src/previewdef/focustree/index.ts` keeps focus-tree current-document edits on a shorter `150ms` debounce.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
 - Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.

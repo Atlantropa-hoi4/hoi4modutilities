@@ -53,7 +53,7 @@ function search(searchContent: string, navigate: boolean = true) {
 }
 
 const useConditionInFocus: boolean = (window as any).useConditionInFocus;
-const focusTrees: FocusTree[] = (window as any).focusTrees;
+let focusTrees: FocusTree[] = (window as any).focusTrees;
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
 let selectedFocusTreeIndex: number = Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0);
@@ -74,8 +74,8 @@ let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
 let focusNavigateTimer: number | undefined = undefined;
 let focusContextMenuTargetId: string | undefined = undefined;
-const xGridSize: number = (window as any).xGridSize;
-const yGridSize: number = (window as any).yGridSize ?? 130;
+let xGridSize: number = (window as any).xGridSize;
+let yGridSize: number = (window as any).yGridSize ?? 130;
 const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
 const focusCreateBottomPaddingRows = 4;
 const focusCreateMinimumRows = 6;
@@ -1207,6 +1207,66 @@ function renderInlayWindows(focusTree: FocusTree, exprs: ConditionItem[]): strin
     }, template);
 }
 
+function replaceFocusTreeDynamicStyles(dynamicStyleCss: string | undefined) {
+    if (dynamicStyleCss === undefined) {
+        return;
+    }
+
+    const styleElement = document.getElementById('focus-tree-dynamic-style') as HTMLStyleElement | null;
+    if (styleElement) {
+        styleElement.textContent = dynamicStyleCss;
+    }
+}
+
+function refreshFocusTreeSelectorOptions() {
+    const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
+    if (!focusesElement) {
+        selectedFocusTreeIndex = Math.min(focusTrees.length - 1, Math.max(0, selectedFocusTreeIndex));
+        return;
+    }
+
+    focusesElement.innerHTML = focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('');
+    selectedFocusTreeIndex = Math.min(focusTrees.length - 1, Math.max(0, selectedFocusTreeIndex));
+    focusesElement.value = selectedFocusTreeIndex.toString();
+}
+
+function applyFocusTreeContentUpdate(message: {
+    focusTrees?: FocusTree[];
+    renderedFocus?: Record<string, string>;
+    renderedInlayWindows?: Record<string, string>;
+    gridBox?: any;
+    dynamicStyleCss?: string;
+    xGridSize?: number;
+    yGridSize?: number;
+    documentVersion?: number;
+}) {
+    if (message.focusTrees) {
+        focusTrees = message.focusTrees;
+        (window as any).focusTrees = message.focusTrees;
+        refreshFocusTreeSelectorOptions();
+    }
+    if (message.renderedFocus) {
+        (window as any).renderedFocus = message.renderedFocus;
+    }
+    if (message.renderedInlayWindows) {
+        (window as any).renderedInlayWindows = message.renderedInlayWindows;
+    }
+    if (message.gridBox) {
+        (window as any).gridBox = message.gridBox;
+    }
+    if (message.xGridSize !== undefined) {
+        xGridSize = message.xGridSize;
+        (window as any).xGridSize = message.xGridSize;
+    }
+    if (message.yGridSize !== undefined) {
+        yGridSize = message.yGridSize;
+        (window as any).yGridSize = message.yGridSize;
+    }
+
+    replaceFocusTreeDynamicStyles(message.dynamicStyleCss);
+    focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+}
+
 function getActiveInlayOption<T extends { condition: any }>(options: T[], exprs: ConditionItem[]): T | undefined {
     for (const option of options) {
         if (applyCondition(option.condition, exprs)) {
@@ -1233,7 +1293,23 @@ window.addEventListener('load', tryRun(async function() {
             targetLocalY?: number;
             parentFocusId?: string;
             childFocusId?: string;
+            focusTrees?: FocusTree[];
+            renderedFocus?: Record<string, string>;
+            renderedInlayWindows?: Record<string, string>;
+            gridBox?: any;
+            dynamicStyleCss?: string;
+            xGridSize?: number;
+            yGridSize?: number;
         };
+        if (message.command === 'focusTreeContentUpdated') {
+            applyFocusTreeContentUpdate(message);
+            updateSelectedFocusTree(false);
+            void buildContent().then(() => {
+                retriggerSearch();
+            });
+            return;
+        }
+
         if (message.command !== 'focusPositionEditApplied' && message.command !== 'focusLinkEditApplied') {
             return;
         }
@@ -1413,4 +1489,5 @@ window.addEventListener('load', tryRun(async function() {
     updateSelectedFocusTree(false);
     await buildContent();
     scrollToState();
+    vscode.postMessage({ command: 'focusTreeWebviewReady' });
 }));

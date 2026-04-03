@@ -32,10 +32,16 @@ export class StyleTable {
         return this.style(name + '-' + sid, callback as any, fakeClass);
     }
 
-    public toStyleElement(nonce: string): string {
-        return `<style nonce="${nonce}">
+    public toStyleContent(): string {
+        return `
             ${Object.entries(this.records).map(([k, v]) => `.${k} { ${v.replace(/^\s+/gm, '')} }\n`).join('')}
             ${Object.entries(this.rawRecords).map(([k, v]) => `${k} { ${v.replace(/^\s+/gm, '')} }\n`).join('')}
+        `;
+    }
+
+    public toStyleElement(nonce: string): string {
+        return `<style nonce="${nonce}">
+            ${this.toStyleContent()}
             </style>`;
     }
 
