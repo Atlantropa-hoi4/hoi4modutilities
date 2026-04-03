@@ -68,8 +68,10 @@ let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedExprs: ConditionItem[] = [];
 let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
+let suppressEditableFocusClickUntil = 0;
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
+const focusPositionDragThresholdPx = 4;
 
 function showInlayWindows() {
     return !!(window as any).__showInlayWindows;
@@ -157,6 +159,11 @@ function setupFocusPositionDragHandlers() {
             return;
         }
 
+        if (Date.now() > suppressEditableFocusClickUntil) {
+            return;
+        }
+
+        suppressEditableFocusClickUntil = 0;
         event.preventDefault();
         event.stopPropagation();
     }, true);
@@ -199,7 +206,7 @@ function bindFocusPositionDragHandlers() {
 
             const startingPosition = { ...currentPosition };
             let nextAbsolutePosition = { ...startingPosition };
-            let didMove = false;
+            let dragGestureStarted = false;
 
             focusElement.style.cursor = 'grabbing';
             focusElement.style.zIndex = '20';
@@ -209,13 +216,17 @@ function bindFocusPositionDragHandlers() {
                 const scale = getState().scale || 1;
                 const deltaPageX = moveEvent.pageX - event.pageX;
                 const deltaPageY = moveEvent.pageY - event.pageY;
+                if (!dragGestureStarted && Math.max(Math.abs(deltaPageX), Math.abs(deltaPageY)) < focusPositionDragThresholdPx) {
+                    return;
+                }
+
+                dragGestureStarted = true;
                 const deltaGridX = Math.round(deltaPageX / scale / xGridSize);
                 const deltaGridY = Math.round(deltaPageY / scale / yGridSize);
                 nextAbsolutePosition = {
                     x: startingPosition.x + deltaGridX,
                     y: startingPosition.y + deltaGridY,
                 };
-                didMove = didMove || deltaGridX !== 0 || deltaGridY !== 0;
                 focusElement.style.transform = `translate(${deltaPageX / scale}px, ${deltaPageY / scale}px)`;
             };
 
@@ -227,7 +238,17 @@ function bindFocusPositionDragHandlers() {
                 focusElement.style.zIndex = '';
                 focusElement.style.willChange = '';
 
-                if (!didMove || !currentRenderedFocusTree) {
+                if (!dragGestureStarted) {
+                    return;
+                }
+
+                suppressEditableFocusClickUntil = Date.now() + 250;
+
+                if (!currentRenderedFocusTree) {
+                    return;
+                }
+
+                if (nextAbsolutePosition.x === startingPosition.x && nextAbsolutePosition.y === startingPosition.y) {
                     return;
                 }
 
