@@ -20,6 +20,16 @@ const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
 
 export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
+    public createSnapshotLoader(contentProvider: () => Promise<string>): FocusTreeLoader {
+        const loader = new FocusTreeLoader(this.file, contentProvider);
+        this.copyDependencyLoadersTo(loader);
+        return loader;
+    }
+
+    public adoptDependencyLoadersFrom(source: FocusTreeLoader): void {
+        this.replaceDependencyLoadersFrom(source);
+    }
+
     protected async postLoad(content: string | undefined, dependencies: Dependency[], error: any, session: LoaderSession): Promise<LoadResultOD<FocusTreeLoaderResult>> {
         if (error || (content === undefined)) {
             throw error;

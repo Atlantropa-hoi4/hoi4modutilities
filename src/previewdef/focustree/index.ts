@@ -21,21 +21,22 @@ function canPreviewFocusTree(document: vscode.TextDocument) {
 
 class FocusTreePreview extends PreviewBase {
     private focusTreeLoader: FocusTreeLoader;
-    private content: string | undefined;
+    private relativeFilePath: string;
     private pendingLocalEditDocumentVersions = new Set<number>();
     private webviewReady = false;
     private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
+    private latestRefreshRequestId = 0;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
-        this.focusTreeLoader = new FocusTreeLoader(getRelativePathInWorkspace(this.uri), () => Promise.resolve(this.content ?? ''));
-        this.focusTreeLoader.onLoadDone(r => this.updateDependencies(r.dependencies));
+        this.relativeFilePath = getRelativePathInWorkspace(this.uri);
+        this.focusTreeLoader = new FocusTreeLoader(this.relativeFilePath);
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
-        this.content = document.getText();
-        const result = await renderFocusTreeFile(this.focusTreeLoader, document.uri, this.panel.webview, document.version);
-        this.content = undefined;
+        const loader = this.createSnapshotLoader(document.getText());
+        const result = await renderFocusTreeFile(loader, document.uri, this.panel.webview, document.version);
+        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
         return result;
     }
 
@@ -48,15 +49,20 @@ class FocusTreePreview extends PreviewBase {
             return;
         }
 
+        const requestId = this.startRefreshRequest();
+        const requestDocumentVersion = document.version;
         if (!this.webviewReady) {
-            await super.onDocumentChange(document);
+            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
             return;
         }
 
         try {
-            this.content = document.getText();
-            const payload = await buildFocusTreeRenderPayload(this.focusTreeLoader, document.version);
-            this.content = undefined;
+            const loader = this.createSnapshotLoader(document.getText());
+            const payload = await buildFocusTreeRenderPayload(loader, document.version);
+            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+            if (!this.isRefreshRequestCurrent(requestId)) {
+                return;
+            }
 
             const nextStructure = {
                 hasFocusSelector: payload.hasFocusSelector,
@@ -69,7 +75,7 @@ class FocusTreePreview extends PreviewBase {
             if (structureChanged) {
                 this.lastRenderStructure = nextStructure;
                 this.webviewReady = false;
-                await super.onDocumentChange(document);
+                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
                 return;
             }
 
@@ -79,10 +85,37 @@ class FocusTreePreview extends PreviewBase {
                 ...payload,
             });
         } catch {
-            this.content = undefined;
             this.webviewReady = false;
-            await super.onDocumentChange(document);
+            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
         }
+    }
+
+    private createSnapshotLoader(content: string): FocusTreeLoader {
+        const loader = this.focusTreeLoader.createSnapshotLoader(() => Promise.resolve(content));
+        loader.onLoadDone(r => this.updateDependencies(r.dependencies));
+        return loader;
+    }
+
+    private startRefreshRequest(): number {
+        this.latestRefreshRequestId += 1;
+        return this.latestRefreshRequestId;
+    }
+
+    private isRefreshRequestCurrent(requestId: number): boolean {
+        return requestId === this.latestRefreshRequestId;
+    }
+
+    private async applyFullRefresh(
+        document: vscode.TextDocument,
+        requestId: number,
+        requestDocumentVersion: number,
+    ): Promise<void> {
+        const content = await this.getContent(document);
+        if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
+            return;
+        }
+
+        this.panel.webview.html = content;
     }
 
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
@@ -209,10 +242,9 @@ class FocusTreePreview extends PreviewBase {
             return true;
         }
 
-        const relativeFilePath = getRelativePathInWorkspace(this.uri);
         const { edit, error, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
             document,
-            relativeFilePath,
+            this.relativeFilePath,
             msg.treeEditKey,
             msg.targetAbsoluteX,
             msg.targetAbsoluteY,

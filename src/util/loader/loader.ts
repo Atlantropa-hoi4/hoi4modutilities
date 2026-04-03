@@ -288,6 +288,14 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
     }
 
     protected abstract postLoad(content: string | undefined, dependencies: Dependency[], error: any, session: LoaderSession): Promise<LoadResultOD<T, E>>;
+
+    protected copyDependencyLoadersTo(target: ContentLoader<T, E>): void {
+        target.loaderDependencies.replaceCurrent(this.loaderDependencies.snapshotCurrent());
+    }
+
+    protected replaceDependencyLoadersFrom(source: ContentLoader<T, E>): void {
+        this.loaderDependencies.replaceCurrent(source.loaderDependencies.snapshotCurrent());
+    }
 }
 
 type PromiseValue<P> = P extends Promise<infer K> ? K : P;
@@ -345,6 +353,15 @@ class LoaderDependencies {
 
     public flip() {
         this.current = this.newValues;
+        this.newValues = {};
+    }
+
+    public snapshotCurrent(): Record<string, Loader<unknown, unknown>> {
+        return { ...this.current };
+    }
+
+    public replaceCurrent(current: Record<string, Loader<unknown, unknown>>) {
+        this.current = { ...current };
         this.newValues = {};
     }
 }

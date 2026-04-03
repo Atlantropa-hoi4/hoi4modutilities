@@ -1240,6 +1240,10 @@ function applyFocusTreeContentUpdate(message: {
     yGridSize?: number;
     documentVersion?: number;
 }) {
+    if (message.documentVersion !== undefined && message.documentVersion < focusPositionDocumentVersion) {
+        return false;
+    }
+
     if (message.focusTrees) {
         focusTrees = message.focusTrees;
         (window as any).focusTrees = message.focusTrees;
@@ -1265,6 +1269,7 @@ function applyFocusTreeContentUpdate(message: {
 
     replaceFocusTreeDynamicStyles(message.dynamicStyleCss);
     focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+    return true;
 }
 
 function getActiveInlayOption<T extends { condition: any }>(options: T[], exprs: ConditionItem[]): T | undefined {
@@ -1302,7 +1307,9 @@ window.addEventListener('load', tryRun(async function() {
             yGridSize?: number;
         };
         if (message.command === 'focusTreeContentUpdated') {
-            applyFocusTreeContentUpdate(message);
+            if (!applyFocusTreeContentUpdate(message)) {
+                return;
+            }
             updateSelectedFocusTree(false);
             void buildContent().then(() => {
                 retriggerSearch();
