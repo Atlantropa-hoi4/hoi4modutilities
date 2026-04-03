@@ -1,21 +1,20 @@
-# HOI4 Definition RGB Picker Todo
+# HOI4 Mod Utilities Release Automation Todo
 
 ## Plan
-- [x] Inspect the current text-editing flow, parser token model, and country color file coverage
-- [x] Extend the same RGB picker support to ideology definition files without broadening to unrelated files
-- [x] Update focused unit tests to cover ideology file targeting while keeping country behavior intact
-- [x] Run targeted verification again and refresh the review notes
+- [x] Inspect the current GitHub Actions, packaging scripts, and repository release conventions
+- [x] Add a tag-driven GitHub release workflow that rebuilds and verifies the extension before publishing assets
+- [x] Document the intended release trigger and asset outcome so the repository workflow is discoverable
+- [x] Run local validation for workflow/package commands and capture the results
 
 ## Notes
-- Scope is limited to text-editor color picking for RGB values in country color files and ideology definition files.
-- Prefer the native VS Code color picker via `DocumentColorProvider` instead of building a custom UI.
-- Keep changes minimal and avoid touching unrelated preview or world map behavior.
+- Assume the release contract is: push a semantic version tag like `v0.13.20`, then GitHub Actions builds the VSIX and creates or updates a GitHub Release with the packaged asset attached.
+- Keep the existing `verify.yml` repository verification path intact unless a release-flow dependency requires a small adjustment.
+- Verification should stay rooted at the repository root and favor the established sequence around compile, lint, tests, and VSIX packaging.
 
 ## Review
-- `src/util/countryColorProvider.ts` now registers a VS Code `DocumentColorProvider` during activation, so opening `common/countries/color.txt`, `common/countries/colors.txt`, `common/countries/cosmetic.txt`, or `common/ideologies/*.txt` exposes native RGB color picking directly in the text editor.
-- `src/util/countryColorProviderShared.ts` centralizes file-path matching for both country and ideology definitions, plus shared `color`/`color_ui` RGB block detection, comment skipping, clipping, and format-preserving rewrite helpers.
-- `test/unit/country-color-provider-shared.test.ts` and `test/unit/country-color-provider.test.ts` now cover ideology file targeting alongside the original country paths, while keeping RGB block discovery, comment filtering, formatting preservation, and picker-value clipping checks in place.
-- Release metadata was bumped to `0.13.20` in `package.json`, `package-lock.json`, and `CHANGELOG.md`.
-- Verification passed: `npm test` and `npm run package`.
-- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.20.vsix`.
-- Manual in-editor smoke testing of the color picker UI was not run in this terminal session.
+- Added `.github/workflows/release.yml` so pushing a tag like `v0.13.20` now rebuilds the extension on `windows-latest`, checks that the tag matches `package.json`, runs compile/lint/unit/UI/package verification, generates a `.sha256` checksum, and uploads both release assets to the GitHub Release for that tag.
+- Updated `.github/workflows/verify.yml` to split `lint` and `test:unit` into explicit steps, so CI and release logs show the failing stage directly instead of hiding both inside `npm test`.
+- Documented the tag-based release contract in `README.md` with the exact `git tag` and `git push origin` trigger flow.
+- Workflow YAML parsing passed for both `.github/workflows/verify.yml` and `.github/workflows/release.yml`.
+- Local verification passed: `npm run compile-ts`, `npm run lint`, `npm run test:unit`, and `npm run package`.
+- Local `npm run test-ui` did not complete in this terminal environment because `@vscode/test-electron` failed with `spawn EPERM` right after downloading VS Code. The workflow still keeps that gate enabled, but this session could not prove it locally due the host execution restriction.
