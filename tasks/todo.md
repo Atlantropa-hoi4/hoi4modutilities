@@ -1,20 +1,18 @@
-# HOI4 Mod Utilities Focus Preview Link Position Preservation Todo
+# HOI4 Mod Utilities Focus Preview Bottom Create Buffer Todo
 
 ## Plan
-- [ ] Trace the current focus-link edit flow and confirm why `relative_position_id` changes are moving the child focus on screen
-- [ ] Preserve the child focus's current rendered absolute position when applying a new parent link by recalculating local `x` and `y`
-- [ ] Add regression tests for link edits that should keep the child's visible position stable after changing `relative_position_id`
-- [ ] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
-- [ ] Record review results and remaining live-editor smoke gaps
+- [x] Add persistent bottom canvas space so blank-space create can continue below the current lowest focus
+- [x] Keep the change scoped to focus preview sizing and blank-space editing without altering focus positioning rules
+- [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
+- [x] Record review results and the final packaged VSIX name
 
 ## Notes
-- User report: linking an existing focus to a new parent can make the child focus jump because the new `relative_position_id` is written without compensating the child focus's local `x` and `y`.
-- The fix should preserve the current rendered position seen in the preview and only rewrite the child focus's local coordinates so they stay correct relative to the new parent.
+- User request: when the lowest focus sits near the viewport bottom, the preview should still leave enough blank canvas to create more focuses underneath it.
+- Best fix is to grow the rendered focus preview height with an explicit bottom creation buffer instead of changing focus-coordinate math.
+- This should stay within the existing consolidated `0.13.19` release line unless a separate release is explicitly requested.
 
 ## Review
-- Link edits now preserve the child's visible position by computing the child focus's new local `x` and `y` against the selected parent before writing the new `relative_position_id`.
-- The webview sends corrected local coordinates together with the parent-child link message, and the host writes `x`, `y`, `prerequisite`, and `relative_position_id` in one edit path.
-- Regression tests now cover link edits that rewrite local coordinates together with the new parent link.
+- `webviewsrc/focustree.ts` now keeps a fixed edit buffer below the lowest rendered focus by applying a computed minimum canvas height after each rebuild, using the current grid padding and several extra HOI4 rows.
+- The fix stays in preview sizing only; focus coordinate math, drag editing, and blank-space click-to-grid conversion were left unchanged.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
-- Packaging produced `hoi4modutilities-0.13.21.vsix`.
-- Manual VS Code smoke is still pending in a live editor session: confirm that linking no longer makes the child jump, especially when the child already had a different `relative_position_id` or when the preview is zoomed.
+- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.

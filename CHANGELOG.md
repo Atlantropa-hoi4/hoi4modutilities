@@ -4,20 +4,20 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.21] - 2026/04/04 - Latest
-
-### Fixed
-* Preserve a child's rendered position when applying a new focus link by recalculating and saving local `x` and `y` together with the new `relative_position_id`.
-
-## [0.13.20] - 2026/04/04
+## [0.13.19] - 2026/04/04 - Latest
 
 ### Added
 * Add edit-mode focus linking: double-click an existing focus to start a parent link line, then click another focus to write the child focus's `prerequisite` and `relative_position_id` back into the current document.
 
-## [0.13.19] - 2026/04/04
-
 ### Fixed
 * Snap blank-space create coordinates to the grid cell that contains the click, preventing focus templates from appearing one column or row to the side when clicking near slot edges.
+* Preserve a child's rendered position when applying a new focus link by recalculating and saving local `x` and `y` together with the new `relative_position_id`.
+* Align the focus preview toolbar's `Edit` button and `Search` controls on the same centered row instead of leaving them on slightly mismatched baselines.
+* Reorder the focus preview toolbar so the main controls now read `Focus tree`, `Edit`, `Search`, `Conditions`, and `Inlay window` from left to right while keeping them aligned.
+* Replace the native `Inlay window` selector with the same dropdown styling used by `Conditions`, remove the separate `Inlay conditions` control, and make inlay-window visibility follow the main condition selection.
+* Split the crowded focus preview toolbar into two explicit rows and move the canvas offset down with it so the controls stay aligned instead of fighting for one compressed line.
+* Keep the `Conditions` label inline with its dropdown by preserving flex layout during toolbar visibility updates, and place the `Edit` button inside the same grouped rhythm as the other controls.
+* Leave extra blank canvas below the lowest rendered focus so edit-mode double-click creation can continue downward even when the current tree already reaches the bottom of the viewport.
 
 ## [0.13.18] - 2026/04/04
 
