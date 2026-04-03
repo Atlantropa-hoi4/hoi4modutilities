@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom, setPreviewPanDisabled } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom, setPreviewPanDisabled, startPreviewPan } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference, minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
@@ -114,7 +114,9 @@ function updateFocusPositionEditUi() {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
         editButton.setAttribute('aria-pressed', focusPositionEditMode ? 'true' : 'false');
-        editButton.style.fontWeight = focusPositionEditMode ? '700' : '';
+        editButton.style.color = focusPositionEditMode ? 'var(--vscode-focusBorder)' : '';
+        editButton.style.background = focusPositionEditMode ? 'rgba(32, 124, 229, 0.14)' : '';
+        editButton.style.borderRadius = focusPositionEditMode ? '3px' : '';
     }
 
     document.querySelectorAll<HTMLElement>('[data-focus-id]').forEach(element => {
@@ -636,26 +638,7 @@ function setupBlankCanvasPanFallback() {
 
         event.preventDefault();
         event.stopPropagation();
-
-        const startingPageX = event.pageX;
-        const startingPageY = event.pageY;
-        const startingScrollX = window.pageXOffset;
-        const startingScrollY = window.pageYOffset;
-
-        const mouseMoveHandler = (moveEvent: MouseEvent) => {
-            window.scroll(
-                startingScrollX - (moveEvent.pageX - startingPageX),
-                startingScrollY - (moveEvent.pageY - startingPageY),
-            );
-        };
-
-        const mouseUpHandler = () => {
-            document.removeEventListener('mousemove', mouseMoveHandler, true);
-            document.removeEventListener('mouseup', mouseUpHandler, true);
-        };
-
-        document.addEventListener('mousemove', mouseMoveHandler, true);
-        document.addEventListener('mouseup', mouseUpHandler, true);
+        startPreviewPan(event.pageX, event.pageY);
     }, true);
 }
 

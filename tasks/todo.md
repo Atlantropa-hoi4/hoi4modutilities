@@ -1,19 +1,18 @@
-# HOI4 Mod Utilities Focus Preview Focus Delete Todo
+# HOI4 Mod Utilities Focus Preview Edit Icon Toolbar Todo
 
 ## Plan
-- [x] Add a right-click delete menu for editable focuses in the focus preview
-- [x] Delete the chosen focus from the current document and remove dependent `prerequisite` and `relative_position_id` references from linked local focuses
+- [x] Convert the `Edit` toggle into a warning-style icon button
+- [x] Move the icon to the far right of the first toolbar row without disturbing the remaining control order
 - [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
 - [x] Record review results and the final packaged VSIX name
 
 ## Notes
-- User request: right-clicking a focus should open a context menu with delete, and deleting a focus should also remove dependent links from connected focuses.
-- Scope assumption: delete is available for editable focuses in preview edit mode and only rewrites the current file; dependency cleanup covers local `prerequisite` and `relative_position_id` references.
+- User request: make `Edit` an icon button like warnings and place it at the far right of the first row.
+- This is a toolbar-only presentation change; edit-mode behavior itself should remain unchanged.
 - This should stay within the existing consolidated `0.13.19` release line unless a separate release is explicitly requested.
 
 ## Review
-- `webviewsrc/focustree.ts` now opens a custom `Delete focus` context menu on right-click for editable focuses in preview edit mode and posts a dedicated delete message back to the host.
-- `src/previewdef/focustree/positioneditservice.ts` now deletes the chosen focus block and cleans local child `prerequisite` and `relative_position_id` references in the same writeback pass, including multi-focus prerequisite blocks.
-- `src/previewdef/focustree/index.ts` now applies delete edits through the host and immediately reloads the preview from the updated document, matching the existing create flow.
+- `src/previewdef/focustree/contentbuilder.ts` now renders `Edit` as a codicon button, removes its text label, and pushes it to the far right of the first toolbar row with an auto-margin icon group.
+- `webviewsrc/focustree.ts` now styles the active edit state with icon-button color and background highlighting instead of relying on text weight, which no longer applies once the label is gone.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
 - Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.

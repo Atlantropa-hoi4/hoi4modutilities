@@ -215,12 +215,12 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
         </div>`;
 
     const editToggle = `
-        <div class="${toolbarGroupStyle()}">
+        <div class="${styleTable.style('toolbarIconGroup', () => `display:flex; align-items:center; margin-left:auto;`) }">
             <button
                 id="focus-position-edit"
                 title="${localize('TODO', 'Toggle focus position editing')}"
-                class="${styleTable.style('focusPositionEditButton', () => `display:flex; align-items:center; justify-content:center; height:22px; width:auto; min-width:46px; padding:0 8px;`)}"
-            >${localize('TODO', 'Edit')}</button>
+                class="${styleTable.style('focusPositionEditButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0;`)}"
+            ><i class="codicon codicon-edit"></i></button>
         </div>`;
 
     const inlayWindows = `
@@ -260,10 +260,10 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
 
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; min-height:${focusToolbarHeight}px; padding: 4px 6px;`)}">
         <div class="toolbar ${styleTable.style('toolbarAlign', () => `display:flex; flex-direction:column; align-items:stretch; gap:4px;`) }">
-            <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
+            <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; gap:10px;`) }">
                 ${focuses}
-                ${editToggle}
                 ${searchbox}
+                ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
                 ${useConditionInFocus ? conditions : allowbranch}

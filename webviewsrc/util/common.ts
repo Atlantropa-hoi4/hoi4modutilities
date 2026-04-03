@@ -26,6 +26,10 @@ function isPreviewPanDisabled(): boolean {
     return document.body?.dataset.disablePreviewPan === 'true';
 }
 
+let previewPanStartX = -1;
+let previewPanStartY = -1;
+let previewPanPressed = false;
+
 export function setPreviewPanDisabled(disabled: boolean): void {
     if (!document.body) {
         return;
@@ -38,6 +42,17 @@ export function setPreviewPanDisabled(disabled: boolean): void {
         dragger.style.pointerEvents = disabled ? 'none' : '';
         dragger.style.cursor = disabled ? 'default' : '';
     }
+}
+
+export function startPreviewPan(pageX: number, pageY: number): void {
+    if (isPreviewPanDisabled()) {
+        previewPanPressed = false;
+        return;
+    }
+
+    previewPanStartX = pageX;
+    previewPanStartY = pageY;
+    previewPanPressed = true;
 }
 
 export function copyArray<T>(src: T[], dst: T[], offsetSrc: number, offsetDst: number, length: number): void {
@@ -165,38 +180,28 @@ window.addEventListener('load', function() {
 
         dragger.addEventListener('contextmenu', event => event.preventDefault());
 
-        let mdx = -1;
-        let mdy = -1;
-        let pressed = false;
         dragger.addEventListener('mousedown', function(e) {
-            if (isPreviewPanDisabled()) {
-                pressed = false;
-                return;
-            }
-
-            mdx = e.pageX;
-            mdy = e.pageY;
-            pressed = true;
+            startPreviewPan(e.pageX, e.pageY);
         });
 
         document.body.addEventListener('mousemove', function(e) {
             if (isPreviewPanDisabled()) {
-                pressed = false;
+                previewPanPressed = false;
                 return;
             }
 
-            if (pressed) {
-                window.scroll(window.pageXOffset - e.pageX + mdx, window.pageYOffset - e.pageY + mdy);
+            if (previewPanPressed) {
+                window.scroll(window.pageXOffset - e.pageX + previewPanStartX, window.pageYOffset - e.pageY + previewPanStartY);
             }
         });
 
         document.body.addEventListener('mouseup', function() {
-            pressed = false;
+            previewPanPressed = false;
         });
 
         document.body.addEventListener('mouseenter', function(e) {
-            if (pressed && (e.buttons & 1) !== 1) {
-                pressed = false;
+            if (previewPanPressed && (e.buttons & 1) !== 1) {
+                previewPanPressed = false;
             }
         });
     })();
