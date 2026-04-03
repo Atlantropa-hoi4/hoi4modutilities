@@ -70,6 +70,7 @@ let focusPositionDocumentVersion: number = (window as any).focusPositionDocument
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
 let focusNavigateTimer: number | undefined = undefined;
+let focusContextMenuTargetId: string | undefined = undefined;
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
 const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
@@ -179,6 +180,83 @@ function clearPendingFocusNavigate() {
     }
 }
 
+function ensureFocusContextMenu(): HTMLDivElement {
+    let menu = document.getElementById('focus-context-menu') as HTMLDivElement | null;
+    if (menu) {
+        return menu;
+    }
+
+    menu = document.createElement('div');
+    menu.id = 'focus-context-menu';
+    menu.style.position = 'fixed';
+    menu.style.display = 'none';
+    menu.style.minWidth = '140px';
+    menu.style.padding = '4px 0';
+    menu.style.background = 'var(--vscode-menu-background)';
+    menu.style.color = 'var(--vscode-menu-foreground)';
+    menu.style.border = '1px solid var(--vscode-menu-border, var(--vscode-panel-border))';
+    menu.style.boxShadow = '0 4px 18px rgba(0, 0, 0, 0.35)';
+    menu.style.zIndex = '1100';
+
+    const deleteItem = document.createElement('button');
+    deleteItem.type = 'button';
+    deleteItem.textContent = 'Delete focus';
+    deleteItem.style.display = 'block';
+    deleteItem.style.width = '100%';
+    deleteItem.style.height = '28px';
+    deleteItem.style.padding = '0 12px';
+    deleteItem.style.textAlign = 'left';
+    deleteItem.style.background = 'transparent';
+    deleteItem.style.color = 'inherit';
+    deleteItem.style.border = 'none';
+    deleteItem.style.cursor = 'pointer';
+    deleteItem.addEventListener('mouseenter', () => {
+        deleteItem.style.background = 'var(--vscode-list-hoverBackground)';
+    });
+    deleteItem.addEventListener('mouseleave', () => {
+        deleteItem.style.background = 'transparent';
+    });
+    deleteItem.addEventListener('click', () => {
+        const focusId = focusContextMenuTargetId;
+        hideFocusContextMenu();
+        if (!focusId) {
+            return;
+        }
+
+        vscode.postMessage({
+            command: 'deleteFocus',
+            focusId,
+            documentVersion: focusPositionDocumentVersion,
+        });
+    });
+
+    menu.appendChild(deleteItem);
+    document.body.appendChild(menu);
+    return menu;
+}
+
+function hideFocusContextMenu() {
+    focusContextMenuTargetId = undefined;
+    const menu = document.getElementById('focus-context-menu') as HTMLDivElement | null;
+    if (menu) {
+        menu.style.display = 'none';
+    }
+}
+
+function showFocusContextMenu(focusId: string, clientX: number, clientY: number) {
+    const menu = ensureFocusContextMenu();
+    focusContextMenuTargetId = focusId;
+    menu.style.left = '0';
+    menu.style.top = '0';
+    menu.style.display = 'block';
+
+    const rect = menu.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width - 4);
+    const maxTop = Math.max(0, window.innerHeight - rect.height - 4);
+    menu.style.left = `${Math.min(clientX, maxLeft)}px`;
+    menu.style.top = `${Math.min(clientY, maxTop)}px`;
+}
+
 function navigateToFocusDefinition(focusElement: HTMLElement) {
     const startStr = focusElement.getAttribute('start');
     const endStr = focusElement.getAttribute('end');
@@ -206,7 +284,34 @@ function scheduleFocusNavigate(focusElement: HTMLElement) {
 }
 
 function setupFocusPositionDragHandlers() {
+    document.addEventListener('contextmenu', event => {
+        if (!focusPositionEditMode) {
+            hideFocusContextMenu();
+            return;
+        }
+
+        const focusElement = getEditableFocusElementFromMouseEvent(event);
+        if (!focusElement) {
+            hideFocusContextMenu();
+            return;
+        }
+
+        const focusId = focusElement.dataset.focusId;
+        if (!focusId) {
+            hideFocusContextMenu();
+            return;
+        }
+
+        clearPendingFocusNavigate();
+        clearPendingFocusLink();
+        event.preventDefault();
+        event.stopPropagation();
+        showFocusContextMenu(focusId, event.clientX, event.clientY);
+    }, true);
+
     document.addEventListener('click', event => {
+        hideFocusContextMenu();
+
         if (!focusPositionEditMode) {
             return;
         }
@@ -316,9 +421,16 @@ function setupFocusPositionDragHandlers() {
     }, true);
 
     document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && pendingFocusLinkParentId !== undefined) {
-            clearPendingFocusLink();
+        if (event.key === 'Escape') {
+            hideFocusContextMenu();
+            if (pendingFocusLinkParentId !== undefined) {
+                clearPendingFocusLink();
+            }
         }
+    }, true);
+
+    window.addEventListener('scroll', () => {
+        hideFocusContextMenu();
     }, true);
 }
 

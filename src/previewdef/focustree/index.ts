@@ -6,7 +6,7 @@ import { PreviewProviderDef } from '../previewmanager';
 import { FocusTreeLoader } from './loader';
 import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { FocusPositionEditMessage } from './positioneditcommon';
-import { buildCreateFocusTemplateWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
@@ -48,7 +48,8 @@ class FocusTreePreview extends PreviewBase {
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
         if (msg.command !== 'applyFocusPositionEdit'
             && msg.command !== 'createFocusTemplateAtPosition'
-            && msg.command !== 'applyFocusLinkEdit') {
+            && msg.command !== 'applyFocusLinkEdit'
+            && msg.command !== 'deleteFocus') {
             return false;
         }
 
@@ -133,6 +134,32 @@ class FocusTreePreview extends PreviewBase {
                 targetLocalY: msg.targetLocalY,
                 documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
             });
+
+            return true;
+        }
+
+        if (msg.command === 'deleteFocus') {
+            const { edit, error } = buildDeleteFocusWorkspaceEdit(document, msg.focusId);
+            if (error) {
+                await vscode.window.showErrorMessage(error);
+                return true;
+            }
+
+            if (!edit) {
+                return true;
+            }
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus delete edit.'));
+                return true;
+            }
+
+            const updatedDocument = getDocumentByUri(this.uri);
+            if (updatedDocument) {
+                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+                await super.onDocumentChange(updatedDocument);
+            }
 
             return true;
         }

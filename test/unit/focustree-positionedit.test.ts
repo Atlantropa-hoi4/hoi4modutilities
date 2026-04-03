@@ -20,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
-const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildCreateFocusTemplateTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
+const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildCreateFocusTemplateTextChanges, buildDeleteFocusTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
 const { getFocusPosition, getLocalPositionFromRenderedAbsolute } = require('../../src/previewdef/focustree/positioning') as typeof import('../../src/previewdef/focustree/positioning');
 
 describe('focus tree position edit helpers', () => {
@@ -317,6 +317,80 @@ describe('focus tree position edit helpers', () => {
             1,
             1,
         );
+
+        assert.match(result.error ?? '', /not editable/);
+    });
+
+    it('deletes a focus block and removes dependent prerequisite and relative_position_id references from local children', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+
+    focus = {
+        id = CHILD
+        prerequisite = { focus = ROOT }
+        relative_position_id = ROOT
+        x = 2
+        y = 3
+    }
+}`;
+        const result = buildDeleteFocusTextChanges(content, 'ROOT');
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /id = ROOT/);
+        assert.doesNotMatch(updated, /focus = ROOT/);
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 2[\s\S]*?y = 3/);
+    });
+
+    it('removes deleted focus ids from multi-focus prerequisite blocks while preserving the remaining dependency structure', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+
+    focus = {
+        id = CHILD
+        prerequisite = {
+            OR = {
+                focus = ROOT
+                focus = OTHER
+            }
+        }
+        prerequisite = {
+            focus = ROOT
+            focus = SECOND
+        }
+        x = 2
+        y = 3
+    }
+}`;
+        const result = buildDeleteFocusTextChanges(content, 'ROOT');
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /focus = ROOT/);
+        assert.match(updated, /prerequisite = \{[\s\S]*?OR = \{[\s\S]*?focus = OTHER[\s\S]*?\}/);
+        assert.match(updated, /prerequisite = \{[\s\S]*?focus = SECOND[\s\S]*?\}/);
+    });
+
+    it('rejects deleting imported or unknown focuses', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+}`;
+        const result = buildDeleteFocusTextChanges(content, 'IMPORTED_CHILD');
 
         assert.match(result.error ?? '', /not editable/);
     });
