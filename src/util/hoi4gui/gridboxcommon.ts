@@ -12,6 +12,11 @@ export interface GridBoxConnection {
     targetType: GridBoxConnectionType;
     style?: string;
     classNames?: string;
+    relationKind?: 'prerequisite' | 'exclusive';
+    sourceFocusId?: string;
+    targetFocusId?: string;
+    prerequisiteGroupIndex?: number;
+    isGroupedPrerequisite?: boolean;
 }
 
 export interface GridBoxItem {
@@ -44,6 +49,36 @@ export interface RenderGridBoxCommonOptions extends RenderCommonOptions {
     onRenderLineBox?(item: GridBoxConnectionItem, parentInfo: ParentInfo): Promise<string>;
     lineRenderMode?: 'line' | 'control';
     cornerPosition?: number;
+}
+
+function attributeEscape(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+function getConnectionPresentation(connection: GridBoxConnection | undefined): { classNames: string; dataAttrs: string } {
+    const classNames = [connection?.classNames];
+    const dataAttrs: string[] = [];
+    if (connection?.relationKind) {
+        classNames.push('focus-relation-line', `focus-relation-${connection.relationKind}`);
+        dataAttrs.push(`data-relation-kind="${attributeEscape(connection.relationKind)}"`);
+    }
+    if (connection?.sourceFocusId) {
+        dataAttrs.push(`data-source-focus-id="${attributeEscape(connection.sourceFocusId)}"`);
+    }
+    if (connection?.targetFocusId) {
+        dataAttrs.push(`data-target-focus-id="${attributeEscape(connection.targetFocusId)}"`);
+    }
+    if (connection?.prerequisiteGroupIndex !== undefined) {
+        dataAttrs.push(`data-prerequisite-group-index="${connection.prerequisiteGroupIndex}"`);
+    }
+    if (connection?.isGroupedPrerequisite !== undefined) {
+        dataAttrs.push(`data-is-grouped-prerequisite="${connection.isGroupedPrerequisite ? 'true' : 'false'}"`);
+    }
+
+    return {
+        classNames: classNames.filter(Boolean).join(' '),
+        dataAttrs: dataAttrs.join(' '),
+    };
 }
 
 const offsetMap: Record<Format['_name'], { x: number, y: number }> = {
@@ -153,16 +188,18 @@ export function renderLineConnections(items: Record<string, GridBoxItem>, format
 
             const itemPosition = getCenterPosition(item.gridX, item.gridY, format, slotSize, size);
             const targetPosition = getCenterPosition(target.gridX, target.gridY, format, slotSize, size);
-            return renderGridBoxConnection(itemPosition, targetPosition, conn.style ?? '', conn.targetType, format, slotSize, conn.classNames, styleTable, cornerPosition);
+            return renderGridBoxConnection(itemPosition, targetPosition, conn.style ?? '', conn.targetType, format, slotSize, conn, styleTable, cornerPosition);
         }).join('')
     ).join('');
 }
 
-export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, style: string, type: GridBoxConnectionType, format: Format['_name'], gridSize: NumberSize, classNames: string | undefined, styleTable: StyleTable, cornerPosition: number = 1.5): string {
+export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, style: string, type: GridBoxConnectionType, format: Format['_name'], gridSize: NumberSize, connection: GridBoxConnection | undefined, styleTable: StyleTable, cornerPosition: number = 1.5): string {
+    const presentation = getConnectionPresentation(connection);
     if (a.y === b.y) {
         return `<div
+            ${presentation.dataAttrs}
             class="
-                ${classNames ? classNames : ''}
+                ${presentation.classNames}
                 ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                 ${styleTable.oneTimeStyle('gridbox-connection', () => `
                     left: ${Math.min(a.x, b.x)}px;
@@ -176,8 +213,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
     }
     if (a.x === b.x) {
         return `<div
+            ${presentation.dataAttrs}
             class="
-                ${classNames ? classNames : ''}
+                ${presentation.classNames}
                 ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                 ${styleTable.oneTimeStyle('gridbox-connection', () => `
                     left: ${a.x}px;
@@ -203,8 +241,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
         const cornerWidth = gridSize.width * cornerPosition;
         if (Math.abs(bx) < cornerWidth) {
             return `<div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(a.x, b.x)}px;
@@ -218,8 +257,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
                 "></div>`;
         } else {
             return `<div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(a.x, a.x + cornerWidth * Math.sign(bx))}px;
@@ -232,8 +272,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
                     ${styleTable.style('pointerEventsNone', () => `pointer-events: none;`)}
                 "></div>
                 <div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(b.x, a.x + cornerWidth * Math.sign(bx))}px;
@@ -251,8 +292,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
         const cornerHeight = gridSize.height * cornerPosition;
         if (Math.abs(by) < cornerHeight) {
             return `<div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(a.x, b.x)}px;
@@ -266,8 +308,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
                 "></div>`;
         } else {
             return `<div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(a.x, b.x)}px;
@@ -280,8 +323,9 @@ export function renderGridBoxConnection(a: NumberPosition, b: NumberPosition, st
                     ${styleTable.style('pointerEventsNone', () => `pointer-events: none;`)}
                 "></div>
                 <div
+                ${presentation.dataAttrs}
                 class="
-                    ${classNames ? classNames : ''}
+                    ${presentation.classNames}
                     ${styleTable.style('positionAbsolute', () => `position: absolute;`)}
                     ${styleTable.oneTimeStyle('gridbox-connection', () => `
                         left: ${Math.min(a.x, b.x)}px;
