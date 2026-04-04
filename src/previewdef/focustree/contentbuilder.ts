@@ -534,50 +534,7 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
-function ensureFocusStatusStyles(styleTable: StyleTable) {
-    styleTable.raw('.focus-lint-badges', `
-        position: absolute;
-        top: 2px;
-        left: 22px;
-        display: flex;
-        gap: 3px;
-        flex-wrap: wrap;
-        max-width: 96px;
-        z-index: 1;
-        pointer-events: none;
-    `);
-    styleTable.raw('.focus-lint-badge', `
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 13px;
-        min-width: 13px;
-        padding: 0 4px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        background: rgba(48, 48, 48, 0.82);
-        color: var(--vscode-editor-foreground);
-        font-size: 9px;
-        line-height: 1;
-        white-space: nowrap;
-        box-sizing: border-box;
-        pointer-events: none;
-    `);
-    styleTable.raw('.focus-lint-badge-warning', `
-        background: rgba(198, 120, 28, 0.88);
-        border-color: rgba(198, 120, 28, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-lint-badge-info', `
-        background: rgba(78, 98, 120, 0.84);
-        border-color: rgba(108, 128, 150, 1);
-        color: #ffffff;
-    `);
-}
-
 async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
-    ensureFocusStatusStyles(styleTable);
-
     for (const focusIcon of focus.icon) {
         const iconName = focusIcon.icon;
         const iconObject = iconName ? await getFocusIcon(iconName, gfxFiles) : null;
@@ -626,7 +583,6 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     data-focus-id="${attributeEscape(focus.id)}"
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
     data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}">
-        {{lintBadges}}
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>

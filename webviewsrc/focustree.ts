@@ -14,6 +14,7 @@ import { vscode } from "./util/vscode";
 import { FocusConditionPreset, filterConditionPresetExprKeys, findMatchingConditionPreset, normalizeConditionExprKeys } from "../src/previewdef/focustree/conditionpresets";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
+import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
 import { clampFocusTreeIndex as clampFocusTreeIndexValue } from "../src/previewdef/focustree/selectionstate";
 
 function showBranch(visibility: boolean, optionClass: string) {
@@ -86,6 +87,7 @@ let hoveredRelationFocusId: string | undefined = undefined;
 let focusNavigateTimer: number | undefined = undefined;
 let focusContextMenuTargetId: string | undefined = undefined;
 let suppressConditionSelectionChange = false;
+let suppressConditionPresetSelectionChange = false;
 let pendingConditionPresetTargetTreeId: string | undefined = undefined;
 let pendingConditionPresetExprKeys: string[] = [];
 let xGridSize: number = (window as any).xGridSize;
@@ -193,18 +195,15 @@ function escapeHtml(value: string): string {
         .replace(/"/g, '&quot;');
 }
 
-function setSelectedExprsForFocusTree(focusTree: FocusTree, exprKeys: readonly string[], clearCondition: boolean = false) {
-    const nextExprKeys = clearCondition
-        ? []
-        : filterConditionPresetExprKeys(exprKeys, getTreeConditionExprKeys(focusTree));
-    selectedExprs = nextExprKeys.map(exprKeyToConditionItem);
+function setSelectedExprsFromExprKeys(exprKeys: readonly string[]) {
+    selectedExprs = exprKeys.map(exprKeyToConditionItem);
     setState({ selectedExprs });
+}
 
-    if (conditions) {
-        suppressConditionSelectionChange = true;
-        conditions.selectedValues$.next(nextExprKeys);
-        suppressConditionSelectionChange = false;
-    }
+function getSelectedExprKeysForFocusTree(focusTree: FocusTree, clearCondition = false): string[] {
+    return clearCondition
+        ? []
+        : filterConditionPresetExprKeys(selectedExprs.map(conditionItemToExprKey), getTreeConditionExprKeys(focusTree));
 }
 
 function getConditionPresetsForTree(treeId: string): FocusConditionPreset[] {
@@ -246,7 +245,9 @@ function refreshConditionPresetUi(focusTree: FocusTree) {
         <div class="option" value="__custom__">${feLocalize('TODO', '(Custom)')}</div>
         ${presets.map(preset => `<div class="option" value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</div>`).join('')}`;
     const selectedPreset = getSelectedConditionPreset(focusTree);
+    suppressConditionPresetSelectionChange = true;
     conditionPresetsDropdown.selectedValues$.next([selectedPreset?.id ?? '__custom__']);
+    suppressConditionPresetSelectionChange = false;
 
     const deleteButton = document.getElementById('delete-condition-preset') as HTMLButtonElement | null;
     if (deleteButton) {
@@ -446,103 +447,6 @@ function setHoveredRelationFocusId(focusId: string | undefined) {
     updateFocusPositionEditUi();
 }
 
-function ensureFocusRelationSummaryOverlay(): HTMLDivElement {
-    let overlay = document.getElementById('focus-relation-summary-overlay') as HTMLDivElement | null;
-    if (overlay) {
-        return overlay;
-    }
-
-    overlay = document.createElement('div');
-    overlay.id = 'focus-relation-summary-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.display = 'none';
-    overlay.style.minWidth = '190px';
-    overlay.style.maxWidth = '260px';
-    overlay.style.padding = '8px 10px';
-    overlay.style.border = '1px solid var(--vscode-panel-border)';
-    overlay.style.background = 'var(--vscode-editorHoverWidget-background, var(--vscode-editor-background))';
-    overlay.style.color = 'var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground))';
-    overlay.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.32)';
-    overlay.style.whiteSpace = 'pre-line';
-    overlay.style.lineHeight = '1.35';
-    overlay.style.pointerEvents = 'none';
-    overlay.style.zIndex = '1040';
-    document.body.appendChild(overlay);
-    return overlay;
-}
-
-function hideFocusRelationSummaryOverlay() {
-    const overlay = document.getElementById('focus-relation-summary-overlay') as HTMLDivElement | null;
-    if (overlay) {
-        overlay.style.display = 'none';
-    }
-}
-
-function getRelationLintSummaryLine(focus: Focus): string | undefined {
-    const lintMessages = Array.from(new Set(focus.lintMessages ?? []));
-
-    if (lintMessages.length === 0) {
-        return undefined;
-    }
-
-    const summary = lintMessages.slice(0, 2).join('; ');
-    const suffix = lintMessages.length > 2
-        ? feLocalize('TODO', ' (+{0} more)', lintMessages.length - 2)
-        : '';
-    return feLocalize('TODO', 'Lint: {0}{1}', summary, suffix);
-}
-
-function updateFocusRelationSummaryOverlay() {
-    if (!currentRenderedFocusTree || !hoveredRelationFocusId) {
-        hideFocusRelationSummaryOverlay();
-        return;
-    }
-
-    const focus = currentRenderedFocusTree.focuses[hoveredRelationFocusId];
-    if (!focus) {
-        hideFocusRelationSummaryOverlay();
-        return;
-    }
-
-    const anchorElement = currentRenderedFocusElements[hoveredRelationFocusId];
-    if (!anchorElement) {
-        hideFocusRelationSummaryOverlay();
-        return;
-    }
-
-    const prerequisiteParentIds = Array.from(new Set(focus.prerequisite.flat()));
-    const prerequisiteGroupCount = focus.prerequisite.filter(group => group.length > 0).length;
-    const hasGroupedPrerequisite = focus.prerequisite.some(group => group.length > 1);
-    const overlay = ensureFocusRelationSummaryOverlay();
-    const lines = [
-        feLocalize('TODO', 'Relations for {0}', hoveredRelationFocusId),
-        feLocalize('TODO', 'Prerequisites: {0} focus(es) across {1} group(s)', prerequisiteParentIds.length, prerequisiteGroupCount),
-        feLocalize('TODO', 'Mutually exclusive: {0} focus(es)', focus.exclusive.length),
-    ];
-    if (hasGroupedPrerequisite) {
-        lines.push(feLocalize('TODO', 'Dashed lines indicate grouped prerequisites.'));
-    }
-    const lintLine = getRelationLintSummaryLine(focus);
-    if (lintLine) {
-        lines.push(lintLine);
-    }
-
-    overlay.textContent = lines.join('\n');
-    overlay.style.display = 'block';
-    const anchorRect = anchorElement.getBoundingClientRect();
-    const overlayRect = overlay.getBoundingClientRect();
-    const preferredLeft = Math.min(
-        anchorRect.right + 12,
-        Math.max(8, window.innerWidth - overlayRect.width - 8),
-    );
-    const fallbackLeft = Math.max(8, anchorRect.left - overlayRect.width - 12);
-    overlay.style.left = `${preferredLeft >= anchorRect.left ? preferredLeft : fallbackLeft}px`;
-    overlay.style.top = `${Math.min(
-        Math.max(8, anchorRect.bottom + 8),
-        Math.max(8, window.innerHeight - overlayRect.height - 8),
-    )}px`;
-}
-
 function updateFocusPositionEditUi() {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
@@ -552,10 +456,18 @@ function updateFocusPositionEditUi() {
         editButton.style.borderRadius = focusPositionEditMode ? '3px' : '';
     }
 
+    const hoveredRelatedFocusIds = new Set(
+        currentRenderedFocusTree
+            ? getDirectlyRelatedFocusIds(currentRenderedFocusTree.focuses, hoveredRelationFocusId)
+            : [],
+    );
+
     currentRenderedFocusElementsList.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
         const isPendingParent = hasPendingFocusLink() && !!element.dataset.focusId && pendingFocusLinkParentIds.includes(element.dataset.focusId);
         const isSelected = isFocusSelected(element.dataset.focusId);
+        const isHovered = !!element.dataset.focusId && element.dataset.focusId === hoveredRelationFocusId;
+        const isHoverRelated = !!element.dataset.focusId && hoveredRelatedFocusIds.has(element.dataset.focusId);
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
         element.style.boxShadow = isPendingParent
             ? pendingFocusLinkType === 'exclusive'
@@ -563,6 +475,10 @@ function updateFocusPositionEditUi() {
                 : '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
             : isSelected
                 ? '0 0 0 2px rgba(96, 196, 255, 0.95) inset'
+            : isHovered
+                ? '0 0 0 2px rgba(255, 208, 96, 0.95) inset'
+            : isHoverRelated
+                ? '0 0 0 2px rgba(255, 208, 96, 0.52) inset'
             : focusPositionEditMode && editable
                 ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
                 : '';
@@ -576,7 +492,6 @@ function updateFocusPositionEditUi() {
             ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
             : '';
     }
-    updateFocusRelationSummaryOverlay();
 }
 
 function getSelectionRect(startClientX: number, startClientY: number, currentClientX: number, currentClientY: number): FocusSelectionRect {
@@ -1044,12 +959,7 @@ function setupFocusPositionDragHandlers() {
 
     window.addEventListener('scroll', () => {
         hideFocusContextMenu();
-        updateFocusRelationSummaryOverlay();
     }, true);
-
-    window.addEventListener('resize', () => {
-        updateFocusRelationSummaryOverlay();
-    });
 }
 
 function setupFocusSelectionMarqueeHandler() {
@@ -1712,8 +1622,7 @@ async function buildContent() {
     let renderExprs = exprs;
     let focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
     if (useConditionInFocus && focusGridBoxItems.length === 0 && focuses.length > 0 && selectedExprs.length > 0) {
-        selectedExprs = [];
-        setState({ selectedExprs });
+        setSelectedExprsFromExprKeys([]);
         if (conditions) {
             suppressConditionSelectionChange = true;
             conditions.selectedValues$.next([]);
@@ -1768,7 +1677,6 @@ async function buildContent() {
             renderedFocus[item.id]
                 .replace('{{position}}', item.gridX + ', ' + item.gridY)
                 .replace('{{iconClass}}', getFocusIcon(focusTree.focuses[item.id], renderExprs, styleTable))
-                .replace('{{lintBadges}}', renderFocusLintBadges(focusTree.focuses[item.id]))
             ),
         cornerPosition: 0.5,
     });
@@ -1838,6 +1746,8 @@ function updateSelectedFocusTree(clearCondition: boolean) {
 
     if (useConditionInFocus) {
         const conditionExprs = getTreeConditionExprKeys(focusTree).map(exprKeyToConditionItem);
+        const nextSelectedExprKeys = getSelectedExprKeysForFocusTree(focusTree, clearCondition);
+        setSelectedExprsFromExprKeys(nextSelectedExprKeys);
 
         const conditionContainerElement = document.getElementById('condition-container') as HTMLDivElement | null;
         if (conditionContainerElement) {
@@ -1847,9 +1757,10 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         if (conditions) {
             conditions.select.innerHTML = `<span class="value"></span>
                 ${conditionExprs.map(option => `<div class="option" value='${conditionItemToExprKey(option)}'>${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}</div>`).join('')}`;
+            suppressConditionSelectionChange = true;
+            conditions.selectedValues$.next(nextSelectedExprKeys);
+            suppressConditionSelectionChange = false;
         }
-
-        setSelectedExprsForFocusTree(focusTree, selectedExprs.map(conditionItemToExprKey), clearCondition);
         refreshConditionPresetUi(focusTree);
 
     } else {
@@ -1952,32 +1863,6 @@ function renderWarningsPanel(focusTree: FocusTree) {
             });
         });
     });
-}
-
-function renderFocusLintBadge(kind: 'warning' | 'info', label: string, title: string): string {
-    return `<span class="focus-lint-badge focus-lint-badge-${kind}" aria-label="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
-}
-
-function renderFocusLintBadges(focus: Focus): string {
-    const badges: string[] = [];
-    if (focus.lintWarningCount > 0) {
-        badges.push(renderFocusLintBadge(
-            'warning',
-            `!${focus.lintWarningCount}`,
-            feLocalize('TODO', 'Structural warnings: {0}', focus.lintWarningCount),
-        ));
-    }
-    if (focus.lintInfoCount > 0) {
-        badges.push(renderFocusLintBadge(
-            'info',
-            `i${focus.lintInfoCount}`,
-            feLocalize('TODO', 'Structural info findings: {0}', focus.lintInfoCount),
-        ));
-    }
-
-    return badges.length > 0
-        ? `<div class="focus-lint-badges" aria-hidden="true">${badges.join('')}</div>`
-        : '';
 }
 
 function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTable): string {
@@ -2423,15 +2308,16 @@ window.addEventListener('load', tryRun(async function() {
         const conditionPresetsElement = document.getElementById('condition-presets') as HTMLDivElement | null;
         if (conditionPresetsElement) {
             conditionPresetsDropdown = new DivDropdown(conditionPresetsElement);
-            let previousPresetSelection = conditionPresetsDropdown.selectedValues$.value[0];
             conditionPresetsDropdown.selectedValues$.subscribe(async selection => {
-                const focusTree = getCurrentFocusTree();
-                const nextSelection = selection[0];
-                if (!focusTree || previousPresetSelection === nextSelection) {
+                if (suppressConditionPresetSelectionChange) {
                     return;
                 }
 
-                previousPresetSelection = nextSelection;
+                const focusTree = getCurrentFocusTree();
+                const nextSelection = selection[0];
+                if (!focusTree) {
+                    return;
+                }
                 if (!nextSelection || nextSelection === '__custom__') {
                     refreshConditionPresetUi(focusTree);
                     return;
@@ -2443,7 +2329,13 @@ window.addEventListener('load', tryRun(async function() {
                     return;
                 }
 
-                setSelectedExprsForFocusTree(focusTree, preset.exprKeys, false);
+                const filteredExprKeys = filterConditionPresetExprKeys(preset.exprKeys, getTreeConditionExprKeys(focusTree));
+                setSelectedExprsFromExprKeys(filteredExprKeys);
+                if (conditions) {
+                    suppressConditionSelectionChange = true;
+                    conditions.selectedValues$.next(filteredExprKeys);
+                    suppressConditionSelectionChange = false;
+                }
                 refreshConditionPresetUi(focusTree);
                 await buildContent();
                 retriggerSearch();
@@ -2495,7 +2387,7 @@ window.addEventListener('load', tryRun(async function() {
                     return;
                 }
 
-                setSelectedExprsForFocusTree(focusTree, selection, false);
+                setSelectedExprsFromExprKeys(selection);
                 refreshConditionPresetUi(focusTree);
 
                 await buildContent();

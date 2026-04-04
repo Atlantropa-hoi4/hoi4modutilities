@@ -502,16 +502,16 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
     const prerequisite = hoiFocus.prerequisite
         .map(p => p.focus.concat(p.OR).filter((s): s is string => s !== undefined));
     const available = hoiFocus.available
-        ? extractConditionValue(hoiFocus.available._raw.value, countryScope, conditionExprs).condition
+        ? extractConditionValue(hoiFocus.available._raw.value, countryScope, []).condition
         : undefined;
-    const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants, conditionExprs);
+    const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants);
     const hasAllowBranch = hoiFocus.allow_branch.length > 0;
     const allowBranchCondition = extractConditionValues(hoiFocus.allow_branch.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition;
     const offset: Offset[] = hoiFocus.offset.map(o => ({
         x: o.x ?? 0,
         y: o.y ?? 0,
         trigger: o.trigger && o.trigger.length > 0
-            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition
+            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, []).condition
             : undefined,
     }));
 
@@ -630,16 +630,6 @@ function updateConditionExprsByFocus(focus: Focus, conditionExprs: ConditionItem
     if (focus.allowBranch) {
         extractConditionalExprs(focus.allowBranch, conditionExprs);
     }
-
-    for (const offset of focus.offset) {
-        if (offset.trigger) {
-            extractConditionalExprs(offset.trigger, conditionExprs);
-        }
-    }
-
-    for (const icon of focus.icon) {
-        extractConditionalExprs(icon.condition, conditionExprs);
-    }
 }
 
 function getAllowBranchOptions(focuses: Record<string, Focus>): string[] {
@@ -710,11 +700,11 @@ function validateRelativePositionId(focuses: Record<string, Focus>, warnings: Fo
     }
 }
 
-function parseFocusIcon(nodes: Node[], constants: {}, conditionExprs: ConditionItem[]): FocusIconWithCondition[] {
-    return nodes.map(n => parseSingleFocusIcon(n, constants, conditionExprs)).filter((v): v is FocusIconWithCondition => v !== undefined);
+function parseFocusIcon(nodes: Node[], constants: {}): FocusIconWithCondition[] {
+    return nodes.map(n => parseSingleFocusIcon(n, constants)).filter((v): v is FocusIconWithCondition => v !== undefined);
 }
 
-function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: ConditionItem[]): FocusIconWithCondition {
+function parseSingleFocusIcon(node: Node, constants: {}): FocusIconWithCondition {
     const stringResult = convertNodeToJson<string>(node, 'string', constants);
     if (stringResult) {
         return { icon: stringResult, condition: true };
@@ -723,6 +713,6 @@ function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: Conditi
     const iconWithCondition = convertNodeToJson<FocusIconDef>(node, focusIconSchema, constants);
     return {
         icon: iconWithCondition.value,
-        condition: iconWithCondition.trigger ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, conditionExprs).condition : true,
+        condition: iconWithCondition.trigger ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, []).condition : true,
     };
 }
