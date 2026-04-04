@@ -13,6 +13,14 @@ import { feLocalize } from "./util/i18n";
 import { vscode } from "./util/vscode";
 import { evaluateFocusBadgeState } from "../src/previewdef/focustree/focusbadges";
 import { collectFocusRelationVisualizationState } from "../src/previewdef/focustree/focusrelations";
+import {
+    buildFocusMinimapModel,
+    createFocusMinimapTransform,
+    getFocusMinimapViewportRect,
+    getScrollTargetForCanvasPoint,
+    projectCanvasPointToMinimap,
+    projectMinimapPointToCanvas,
+} from "../src/previewdef/focustree/focusminimap";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import {
     conditionItemToExprKey,
@@ -53,6 +61,7 @@ function search(searchContent: string, navigate: boolean = true) {
             focus.style.background = 'rgba(255, 0, 0, 0.5)';
             if (navigate && !navigated) {
                 focus.scrollIntoView({ block: "center", inline: "center" });
+                setLastNavigatedFocusId(focus.dataset.focusId ?? focus.id.replace(/^focus_/, ''));
                 navigated = true;
             }
             searchedFocus.push(focus);
@@ -61,6 +70,9 @@ function search(searchContent: string, navigate: boolean = true) {
             focus.style.background = 'transparent';
         }
     }
+
+    currentSearchedFocusIds = new Set(searchedFocus.map(focus => focus.dataset.focusId ?? focus.id.replace(/^focus_/, '')).filter(Boolean));
+    updateFocusMinimapUi();
 
     return searchedFocus;
 }
@@ -115,6 +127,7 @@ let currentRenderedRelationElementsList: HTMLElement[] = [];
 let currentOccupiedFocusPositionKeys = new Set<string>();
 let currentSelectedFocusIds = new Set<string>();
 let persistedRelationFocusIds = new Set<string>();
+let currentSearchedFocusIds = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
 let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
@@ -128,6 +141,8 @@ let focusContextMenuTargetId: string | undefined = undefined;
 let pendingConditionPresetSaveRequest = false;
 let suppressConditionSelectionChange = false;
 let suppressConditionPresetSelectionChange = false;
+let focusMinimapCollapsed: boolean = !!getState().focusMinimapCollapsed;
+let lastNavigatedFocusIdByTree: Record<string, string | undefined> = getState().lastNavigatedFocusIdByTree ?? {};
 let xGridSize: number = (window as any).xGridSize;
 let yGridSize: number = (window as any).yGridSize ?? 130;
 const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
@@ -141,6 +156,8 @@ const focusPositionDragThresholdPx = 4;
 const focusNavigateDelayMs = 220;
 let currentGridLeftPadding = 0;
 let currentGridTopPadding = 0;
+let currentCanvasWidth = 1;
+let currentCanvasHeight = 1;
 type FocusSelectionRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type ActiveFocusSelectionMarquee = {
     startClientX: number;
@@ -148,6 +165,7 @@ type ActiveFocusSelectionMarquee = {
     dragGestureStarted: boolean;
 };
 let activeFocusSelectionMarquee: ActiveFocusSelectionMarquee | undefined = undefined;
+let activeFocusMinimapDrag = false;
 
 function getFocusPositionKey(position: NumberPosition): string {
     return `${position.x},${position.y}`;
@@ -563,6 +581,86 @@ function isFocusSelected(focusId: string | undefined): boolean {
     return !!focusId && currentSelectedFocusIds.has(focusId);
 }
 
+function getCurrentScale(): number {
+    return getState().scale || 1;
+}
+
+function getCurrentLastNavigatedFocusId(): string | undefined {
+    const treeId = getCurrentSelectionTreeId();
+    return treeId ? lastNavigatedFocusIdByTree[treeId] : undefined;
+}
+
+function setLastNavigatedFocusId(focusId: string | undefined) {
+    const treeId = getCurrentSelectionTreeId();
+    if (!treeId) {
+        return;
+    }
+
+    const nextLastNavigatedFocusIdByTree = { ...lastNavigatedFocusIdByTree };
+    if (!focusId) {
+        delete nextLastNavigatedFocusIdByTree[treeId];
+    } else {
+        nextLastNavigatedFocusIdByTree[treeId] = focusId;
+    }
+
+    lastNavigatedFocusIdByTree = nextLastNavigatedFocusIdByTree;
+    setState({ lastNavigatedFocusIdByTree });
+    updateFocusMinimapUi();
+}
+
+function getContentPageOrigin(): NumberPosition {
+    const contentElement = document.getElementById('focustreecontent') as HTMLDivElement | null;
+    const rect = contentElement?.getBoundingClientRect();
+    return {
+        x: (rect?.left ?? 0) + window.scrollX,
+        y: (rect?.top ?? 0) + window.scrollY,
+    };
+}
+
+function scrollCanvasPointIntoView(canvasPoint: NumberPosition) {
+    const origin = getContentPageOrigin();
+    const target = getScrollTargetForCanvasPoint({
+        canvasPoint,
+        contentPageLeft: origin.x,
+        contentPageTop: origin.y,
+        scale: getCurrentScale(),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+    });
+    window.scrollTo(Math.max(0, target.x), Math.max(0, target.y));
+}
+
+function navigatePreviewToFocusId(focusId: string, options?: { updateLastNavigated?: boolean }) {
+    const focusPosition = currentFocusPositions[focusId];
+    if (!focusPosition) {
+        return;
+    }
+
+    const center = projectFocusPositionToCanvas(focusPosition);
+    scrollCanvasPointIntoView(center);
+    if (options?.updateLastNavigated !== false) {
+        setLastNavigatedFocusId(focusId);
+    }
+}
+
+function navigatePreviewToContinuousFocus() {
+    const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+    if (!continuousFocusElement || continuousFocusElement.style.display === 'none') {
+        return;
+    }
+
+    const left = parseFloat(continuousFocusElement.style.left || '0') + 385;
+    const top = parseFloat(continuousFocusElement.style.top || '0') + 190;
+    scrollCanvasPointIntoView({ x: left, y: top });
+}
+
+function projectFocusPositionToCanvas(position: NumberPosition): NumberPosition {
+    return {
+        x: currentGridLeftPadding + position.x * xGridSize + xGridSize / 2,
+        y: currentGridTopPadding + position.y * yGridSize + yGridSize / 2,
+    };
+}
+
 function getSelectedInlayWindowIds() {
     return getState().selectedInlayWindowIds ?? {} as Record<string, string | undefined>;
 }
@@ -771,6 +869,156 @@ function updateFocusRelationVisualizationUi() {
     updateFocusRelationSummaryOverlay(activeFocusIds);
 }
 
+function updateFocusMinimapCollapsedUi() {
+    const minimap = document.getElementById('focus-minimap') as HTMLDivElement | null;
+    const minimapBody = document.getElementById('focus-minimap-body') as HTMLDivElement | null;
+    const toggleButton = document.getElementById('toggle-focus-minimap') as HTMLButtonElement | null;
+    if (!minimap || !minimapBody || !toggleButton) {
+        return;
+    }
+
+    minimapBody.style.display = focusMinimapCollapsed ? 'none' : 'flex';
+    minimap.style.width = focusMinimapCollapsed ? 'auto' : '188px';
+    toggleButton.innerHTML = `<i class="codicon ${focusMinimapCollapsed ? 'codicon-chevron-left' : 'codicon-chevron-down'}"></i>`;
+    toggleButton.setAttribute('aria-pressed', focusMinimapCollapsed ? 'true' : 'false');
+}
+
+function getFocusMinimapElements() {
+    return {
+        minimap: document.getElementById('focus-minimap') as HTMLDivElement | null,
+        canvas: document.getElementById('focus-minimap-canvas') as HTMLDivElement | null,
+        points: document.getElementById('focus-minimap-points') as HTMLDivElement | null,
+        viewport: document.getElementById('focus-minimap-viewport') as HTMLDivElement | null,
+        tooltip: document.getElementById('focus-minimap-tooltip') as HTMLDivElement | null,
+        jumpToSelected: document.getElementById('jump-to-selected') as HTMLButtonElement | null,
+        jumpToContinuous: document.getElementById('jump-to-continuous') as HTMLButtonElement | null,
+    };
+}
+
+function updateFocusMinimapTooltip(canvas: HTMLDivElement, tooltip: HTMLDivElement, clientX: number, clientY: number) {
+    if (!currentRenderedFocusTree) {
+        tooltip.style.display = 'none';
+        return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const transform = createFocusMinimapTransform(currentCanvasWidth, currentCanvasHeight, rect.width, rect.height, 8);
+    const point = { x: clientX - rect.left, y: clientY - rect.top };
+    const model = buildFocusMinimapModel({
+        positions: currentFocusPositions,
+        xGridSize,
+        yGridSize,
+        leftPadding: currentGridLeftPadding,
+        topPadding: currentGridTopPadding,
+        canvasWidth: currentCanvasWidth,
+        canvasHeight: currentCanvasHeight,
+        selectedFocusIds: currentSelectedFocusIds,
+        searchedFocusIds: currentSearchedFocusIds,
+        lastNavigatedFocusId: getCurrentLastNavigatedFocusId(),
+    });
+
+    let nearestFocusId: string | undefined;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const focusPoint of model.points) {
+        const minimapPoint = projectCanvasPointToMinimap({ x: focusPoint.canvasX, y: focusPoint.canvasY }, transform);
+        const dx = minimapPoint.x - point.x;
+        const dy = minimapPoint.y - point.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestFocusId = focusPoint.focusId;
+        }
+    }
+
+    if (!nearestFocusId || nearestDistance > 14) {
+        tooltip.style.display = 'none';
+        return;
+    }
+
+    tooltip.textContent = nearestFocusId;
+    tooltip.style.display = 'block';
+    tooltip.style.left = `${Math.min(point.x + 10, rect.width - tooltip.offsetWidth - 4)}px`;
+    tooltip.style.top = `${Math.min(point.y + 10, rect.height - tooltip.offsetHeight - 4)}px`;
+}
+
+function updateFocusMinimapUi() {
+    const { minimap, canvas, points, viewport, tooltip, jumpToSelected, jumpToContinuous } = getFocusMinimapElements();
+    if (!minimap || !canvas || !points || !viewport || !tooltip) {
+        return;
+    }
+
+    updateFocusMinimapCollapsedUi();
+    if (focusMinimapCollapsed) {
+        return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const transform = createFocusMinimapTransform(currentCanvasWidth, currentCanvasHeight, canvasRect.width, canvasRect.height, 8);
+    const minimapModel = buildFocusMinimapModel({
+        positions: currentFocusPositions,
+        xGridSize,
+        yGridSize,
+        leftPadding: currentGridLeftPadding,
+        topPadding: currentGridTopPadding,
+        canvasWidth: currentCanvasWidth,
+        canvasHeight: currentCanvasHeight,
+        selectedFocusIds: currentSelectedFocusIds,
+        searchedFocusIds: currentSearchedFocusIds,
+        lastNavigatedFocusId: getCurrentLastNavigatedFocusId(),
+    });
+
+    points.innerHTML = minimapModel.points.map(point => {
+        const projected = projectCanvasPointToMinimap({ x: point.canvasX, y: point.canvasY }, transform);
+        const size = point.isSelected ? 6 : point.isSearched ? 5 : 4;
+        const background = point.isSelected
+            ? 'rgba(96, 196, 255, 1)'
+            : point.isSearched
+                ? 'rgba(255, 96, 96, 1)'
+                : point.isLastNavigated
+                    ? 'rgba(255, 196, 64, 1)'
+                    : 'rgba(180, 180, 180, 0.9)';
+        const border = point.isLastNavigated ? '1px solid rgba(255, 196, 64, 1)' : '1px solid rgba(0, 0, 0, 0.35)';
+        return `<div data-focus-id="${escapeHtml(point.focusId)}" style="
+            position:absolute;
+            left:${projected.x - size / 2}px;
+            top:${projected.y - size / 2}px;
+            width:${size}px;
+            height:${size}px;
+            border-radius:999px;
+            background:${background};
+            border:${border};
+            box-sizing:border-box;
+        "></div>`;
+    }).join('');
+
+    const viewportRect = getFocusMinimapViewportRect({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        contentPageLeft: getContentPageOrigin().x,
+        contentPageTop: getContentPageOrigin().y,
+        scale: getCurrentScale(),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        transform,
+        canvasWidth: currentCanvasWidth,
+        canvasHeight: currentCanvasHeight,
+    });
+    viewport.style.display = minimapModel.points.length > 0 ? 'block' : 'none';
+    viewport.style.left = `${viewportRect.left}px`;
+    viewport.style.top = `${viewportRect.top}px`;
+    viewport.style.width = `${viewportRect.width}px`;
+    viewport.style.height = `${viewportRect.height}px`;
+    tooltip.style.display = 'none';
+
+    if (jumpToSelected) {
+        jumpToSelected.disabled = currentSelectedFocusIds.size === 0;
+    }
+    if (jumpToContinuous) {
+        const continuous = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+        jumpToContinuous.disabled = !continuous || continuous.style.display === 'none';
+    }
+}
+
 function updateFocusPositionEditUi() {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
@@ -796,6 +1044,7 @@ function updateFocusPositionEditUi() {
                 : '';
     });
     updateFocusRelationVisualizationUi();
+    updateFocusMinimapUi();
 }
 
 function getSelectionRect(startClientX: number, startClientY: number, currentClientX: number, currentClientY: number): FocusSelectionRect {
@@ -1039,6 +1288,9 @@ function showFocusContextMenu(focusId: string, clientX: number, clientY: number)
 }
 
 function navigateToFocusDefinition(focusElement: HTMLElement) {
+    if (focusElement.dataset.focusId) {
+        setLastNavigatedFocusId(focusElement.dataset.focusId);
+    }
     const startStr = focusElement.getAttribute('start');
     const endStr = focusElement.getAttribute('end');
     const file = focusElement.getAttribute('file') ?? undefined;
@@ -1257,10 +1509,12 @@ function setupFocusPositionDragHandlers() {
     window.addEventListener('scroll', () => {
         hideFocusContextMenu();
         updateFocusRelationVisualizationUi();
+        updateFocusMinimapUi();
     }, true);
 
     window.addEventListener('resize', () => {
         updateFocusRelationVisualizationUi();
+        updateFocusMinimapUi();
     });
 }
 
@@ -1436,6 +1690,103 @@ function clearPendingFocusLink() {
     updateFocusPositionEditUi();
 }
 
+function navigatePreviewFromMinimapClientPoint(clientX: number, clientY: number) {
+    const { canvas } = getFocusMinimapElements();
+    if (!canvas) {
+        return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const transform = createFocusMinimapTransform(currentCanvasWidth, currentCanvasHeight, rect.width, rect.height, 8);
+    const canvasPoint = projectMinimapPointToCanvas({
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+    }, transform);
+    scrollCanvasPointIntoView(canvasPoint);
+}
+
+function setupFocusMinimapHandlers() {
+    const { minimap, canvas, jumpToSelected, jumpToContinuous } = getFocusMinimapElements();
+    if (!minimap || !canvas) {
+        return;
+    }
+
+    minimap.addEventListener('mousedown', event => {
+        event.stopPropagation();
+    }, true);
+    minimap.addEventListener('click', event => {
+        event.stopPropagation();
+    }, true);
+    minimap.addEventListener('dblclick', event => {
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+    minimap.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+
+    const toggleButton = document.getElementById('toggle-focus-minimap') as HTMLButtonElement | null;
+    toggleButton?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        focusMinimapCollapsed = !focusMinimapCollapsed;
+        setState({ focusMinimapCollapsed });
+        updateFocusMinimapUi();
+    });
+
+    jumpToSelected?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const focusId = Array.from(currentSelectedFocusIds)[0];
+        if (focusId) {
+            navigatePreviewToFocusId(focusId);
+        }
+    });
+
+    jumpToContinuous?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        navigatePreviewToContinuousFocus();
+    });
+
+    canvas.addEventListener('mousedown', event => {
+        if (focusMinimapCollapsed || event.button !== 0) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        activeFocusMinimapDrag = true;
+        navigatePreviewFromMinimapClientPoint(event.clientX, event.clientY);
+    });
+
+    canvas.addEventListener('mousemove', event => {
+        const { tooltip } = getFocusMinimapElements();
+        if (!tooltip) {
+            return;
+        }
+
+        updateFocusMinimapTooltip(canvas, tooltip, event.clientX, event.clientY);
+        if (activeFocusMinimapDrag) {
+            event.preventDefault();
+            event.stopPropagation();
+            navigatePreviewFromMinimapClientPoint(event.clientX, event.clientY);
+        }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        const { tooltip } = getFocusMinimapElements();
+        if (tooltip) {
+            tooltip.style.display = 'none';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        activeFocusMinimapDrag = false;
+    }, true);
+}
+
 function isBlankCreateTarget(event: MouseEvent): boolean {
     const element = getElementAtPointIgnoringDragger(event.clientX, event.clientY)
         ?? ((event.target as Node | null) instanceof HTMLElement ? event.target as HTMLElement : null);
@@ -1443,7 +1794,7 @@ function isBlankCreateTarget(event: MouseEvent): boolean {
         return false;
     }
 
-    if (element.closest('[data-focus-id], #inlaywindowplaceholder, #continuousFocuses, .toolbar-outer, #warnings-container, input, select, button, textarea, option')) {
+    if (element.closest('[data-focus-id], #inlaywindowplaceholder, #continuousFocuses, #focus-minimap, .toolbar-outer, #warnings-container, input, select, button, textarea, option')) {
         return false;
     }
 
@@ -1469,7 +1820,7 @@ function getBlankCanvasPanTarget(event: MouseEvent): HTMLElement | null {
         return null;
     }
 
-    if (element.closest('[data-focus-id], .navigator, .toolbar-outer, #warnings-container, input, select, button, textarea, option, ul.select-dropdown, li')) {
+    if (element.closest('[data-focus-id], .navigator, #focus-minimap, .toolbar-outer, #warnings-container, input, select, button, textarea, option, ul.select-dropdown, li')) {
         return null;
     }
 
@@ -1830,6 +2181,8 @@ async function buildContent() {
     }
     const minimumCanvasWidth = currentGridLeftPadding + Math.max(maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
+    currentCanvasWidth = minimumCanvasWidth;
+    currentCanvasHeight = minimumCanvasHeight;
     focustreeplaceholder.style.minWidth = `${minimumCanvasWidth}px`;
     contentElement.style.minWidth = `${minimumCanvasWidth}px`;
     focustreeplaceholder.style.minHeight = `${minimumCanvasHeight}px`;
@@ -1843,6 +2196,7 @@ async function buildContent() {
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
     updateFocusPositionEditUi();
+    updateFocusMinimapUi();
 }
 
 function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Record<string, boolean>) {
@@ -2360,6 +2714,7 @@ window.addEventListener('load', tryRun(async function() {
     setupFocusSelectionMarqueeHandler();
     setupFocusTemplateCreateHandler();
     setupBlankCanvasPanFallback();
+    setupFocusMinimapHandlers();
 
     const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
     if (focusesElement) {
@@ -2481,6 +2836,7 @@ window.addEventListener('load', tryRun(async function() {
             if (visibleSearchedFocus.length > 0) {
                 currentNavigatedIndex = (currentNavigatedIndex + (e.shiftKey ? visibleSearchedFocus.length - 1 : 1)) % visibleSearchedFocus.length;
                 visibleSearchedFocus[currentNavigatedIndex].scrollIntoView({ block: "center", inline: "center" });
+                setLastNavigatedFocusId(visibleSearchedFocus[currentNavigatedIndex].dataset.focusId ?? visibleSearchedFocus[currentNavigatedIndex].id.replace(/^focus_/, ''));
             }
         } else {
             searchboxChangeFunc.apply(this);
@@ -2542,6 +2898,8 @@ window.addEventListener('load', tryRun(async function() {
 
     updateSelectedFocusTree(false);
     await buildContent();
+    updateFocusMinimapUi();
     scrollToState();
+    updateFocusMinimapUi();
     vscode.postMessage({ command: 'focusTreeWebviewReady' });
 }));

@@ -200,6 +200,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             `)}">${localize('TODO', 'No focuses match the current conditions.')}</div>
             ${continuousFocusContent}
         </div>` +
+        renderFocusMinimapShell(styleTable, payload.focusToolbarHeight) +
         renderWarningContainer(styleTable) +
         renderToolBar(payload.focusTrees, styleTable);
     const shellCss = styleTable.toStyleContent();
@@ -209,6 +210,91 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<style id="focus-tree-dynamic-style" nonce="${payload.styleNonce}">${payload.dynamicStyleCss}</style>` +
         shellMarkup
     );
+}
+
+function renderFocusMinimapShell(styleTable: StyleTable, toolbarHeight: number): string {
+    return `<div id="focus-minimap" class="${styleTable.oneTimeStyle('focusMinimap', () => `
+        position: fixed;
+        right: 12px;
+        top: ${toolbarHeight + 12}px;
+        width: 188px;
+        max-height: calc(100vh - ${toolbarHeight + 24}px);
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--vscode-panel-border);
+        background: color-mix(in srgb, var(--vscode-editor-background) 94%, transparent);
+        backdrop-filter: blur(4px);
+        z-index: 40;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
+    `)}">
+        <div class="${styleTable.oneTimeStyle('focusMinimapHeader', () => `
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 28px;
+            padding: 4px 6px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            gap: 6px;
+        `)}">
+            <span>${localize('TODO', 'Minimap')}</span>
+            <button id="toggle-focus-minimap" title="${localize('TODO', 'Collapse minimap')}">
+                <i class="codicon codicon-chevron-down"></i>
+            </button>
+        </div>
+        <div id="focus-minimap-body" class="${styleTable.oneTimeStyle('focusMinimapBody', () => `
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 6px;
+        `)}">
+            <div class="${styleTable.oneTimeStyle('focusMinimapActions', () => `
+                display: flex;
+                gap: 6px;
+            `)}">
+                <button id="jump-to-selected" class="${styleTable.oneTimeStyle('focusMinimapActionButton', () => `
+                    flex: 1 1 0;
+                    min-height: 24px;
+                `)}">${localize('TODO', 'Jump to selected')}</button>
+                <button id="jump-to-continuous" class="${styleTable.oneTimeStyle('focusMinimapActionButton', () => `
+                    flex: 1 1 0;
+                    min-height: 24px;
+                `)}">${localize('TODO', 'Jump to continuous')}</button>
+            </div>
+            <div id="focus-minimap-canvas" class="${styleTable.oneTimeStyle('focusMinimapCanvas', () => `
+                position: relative;
+                width: 100%;
+                height: 220px;
+                overflow: hidden;
+                border: 1px solid var(--vscode-panel-border);
+                background: rgba(127, 127, 127, 0.08);
+                cursor: pointer;
+            `)}">
+                <div id="focus-minimap-points" class="${styleTable.oneTimeStyle('focusMinimapPoints', () => `
+                    position: absolute;
+                    inset: 0;
+                `)}"></div>
+                <div id="focus-minimap-viewport" class="${styleTable.oneTimeStyle('focusMinimapViewport', () => `
+                    position: absolute;
+                    display: none;
+                    border: 1px solid rgba(96, 196, 255, 0.95);
+                    background: rgba(96, 196, 255, 0.15);
+                    box-sizing: border-box;
+                    pointer-events: none;
+                `)}"></div>
+                <div id="focus-minimap-tooltip" class="${styleTable.oneTimeStyle('focusMinimapTooltip', () => `
+                    position: absolute;
+                    display: none;
+                    padding: 3px 6px;
+                    border: 1px solid var(--vscode-panel-border);
+                    background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+                    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground));
+                    pointer-events: none;
+                    white-space: nowrap;
+                    z-index: 1;
+                `)}"></div>
+            </div>
+        </div>
+    </div>`;
 }
 
 function normalizeFocusSpacingValue(value: number | undefined, fallback: number): number {
