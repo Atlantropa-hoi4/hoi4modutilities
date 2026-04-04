@@ -79,7 +79,11 @@ let focusContextMenuTargetId: string | undefined = undefined;
 let xGridSize: number = (window as any).xGridSize;
 let yGridSize: number = (window as any).yGridSize ?? 130;
 const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
+const focusCreateSidePaddingColumns = 4;
+const focusCreateTopPaddingRows = 4;
+const focusCreateRightPaddingColumns = 4;
 const focusCreateBottomPaddingRows = 4;
+const focusCreateMinimumColumns = 6;
 const focusCreateMinimumRows = 6;
 const focusPositionDragThresholdPx = 4;
 const focusNavigateDelayMs = 220;
@@ -1000,12 +1004,25 @@ async function buildContent() {
     currentRenderedExprs = renderExprs;
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
+    const minY = minBy(Object.values(focusPosition), 'y')?.y ?? 0;
+    const maxX = Math.max(...Object.values(focusPosition).map(position => position.x), 0);
     const maxY = Math.max(...Object.values(focusPosition).map(position => position.y), 0);
-    const leftPadding = gridbox.position.x._value - Math.min(minX * xGridSize, 0);
+    const leftPadding = (gridbox.position.x._value ?? 0)
+        + (focusCreateSidePaddingColumns * xGridSize)
+        - Math.min(minX * xGridSize, 0);
     currentGridLeftPadding = leftPadding;
-    currentGridTopPadding = gridbox.position.y._value ?? 0;
+    currentGridTopPadding = (gridbox.position.y._value ?? 0)
+        + (focusCreateTopPaddingRows * yGridSize)
+        - Math.min(minY * yGridSize, 0);
 
-    const focusTreeContent = await renderGridBoxCommon({ ...gridbox, position: { ...gridbox.position, x: toNumberLike(leftPadding) } }, {
+    const focusTreeContent = await renderGridBoxCommon({
+        ...gridbox,
+        position: {
+            ...gridbox.position,
+            x: toNumberLike(leftPadding),
+            y: toNumberLike(currentGridTopPadding),
+        }
+    }, {
         size: { width: 0, height: 0 },
         orientation: 'upper_left'
     }, {
@@ -1021,7 +1038,10 @@ async function buildContent() {
     });
 
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement((window as any).styleNonce);
+    const minimumCanvasWidth = currentGridLeftPadding + Math.max(maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
+    focustreeplaceholder.style.minWidth = `${minimumCanvasWidth}px`;
+    contentElement.style.minWidth = `${minimumCanvasWidth}px`;
     focustreeplaceholder.style.minHeight = `${minimumCanvasHeight}px`;
     contentElement.style.minHeight = `${minimumCanvasHeight}px`;
     rebuildRenderedFocusElementCache();
