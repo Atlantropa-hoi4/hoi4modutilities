@@ -259,13 +259,24 @@ function convertOption(optionRaw: Raw | undefined, scope: Scope): HOIEventOption
     const childEvents = childEventItems
         .map(effectItemToChildEvent)
         .filter((e): e is ChildEvent => e !== undefined);
-    const uniqueChildEvents = uniqBy(childEvents, e => e.eventName + '@' + e.scopeName);
+    const uniqueChildEvents = uniqBy(childEvents, getChildEventRenderKey);
 
     return {
         name,
         childEvents: uniqueChildEvents,
         token: optionDef._token,
     };
+}
+
+function getChildEventRenderKey(event: ChildEvent): string {
+    return [
+        event.eventName,
+        event.scopeName,
+        event.days,
+        event.hours,
+        event.randomDays,
+        event.randomHours,
+    ].join('@');
 }
 
 const eventTypes = ['country_event', 'news_event', 'state_event', 'unit_leader_event', 'operative_leader_event'];

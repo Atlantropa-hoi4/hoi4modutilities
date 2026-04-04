@@ -205,7 +205,8 @@
     }
   },
   "scripts": {
-    "clean": "rimraf dist out static .vscode-test",
+    "clean": "rimraf dist out static",
+    "clean:test-ui": "rimraf .vscode-test",
     "compile-ts": "tsc -p ./ --pretty false",
     "watch": "tsc -w -p ./",
     "webpack": "webpack --mode development",
