@@ -188,6 +188,16 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:${payload.focusToolbarHeight}px;left:-20px;position:relative`)}">
             <div id="focustreeplaceholder" class="${styleTable.oneTimeStyle('focustreeplaceholder', () => `position: relative; z-index: 2;`)}"></div>
             <div id="inlaywindowplaceholder" class="${styleTable.oneTimeStyle('inlaywindowplaceholder', () => `position: relative; z-index: 3;`)}"></div>
+            <div id="focus-empty-state" class="${styleTable.oneTimeStyle('focusEmptyState', () => `
+                position: absolute;
+                top: 24px;
+                left: 24px;
+                display: none;
+                padding: 10px 12px;
+                background: rgba(127, 127, 127, 0.12);
+                border: 1px dashed var(--vscode-panel-border);
+                z-index: 4;
+            `)}">${localize('TODO', 'No focuses match the current conditions.')}</div>
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
@@ -297,6 +307,26 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             </div>
         </div>`;
 
+    const conditionPresets = `
+        <div id="condition-preset-container" class="${toolbarGroupStyle()}">
+            <label for="condition-presets" class="${toolbarLabelStyle()}">${localize('TODO', 'Preset: ')}</label>
+            <div class="select-container">
+                <div id="condition-presets" class="select multiple-select ${styleTable.style('conditionPresetLabel', () => `max-width:220px`)}" tabindex="0" role="combobox">
+                    <span class="value"></span>
+                </div>
+            </div>
+            <button
+                id="save-condition-preset"
+                title="${localize('TODO', 'Save current preset')}"
+                class="${styleTable.style('conditionPresetIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:6px;`)}"
+            ><i class="codicon codicon-save"></i></button>
+            <button
+                id="delete-condition-preset"
+                title="${localize('TODO', 'Delete current preset')}"
+                class="${styleTable.style('conditionPresetIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
+            ><i class="codicon codicon-trash"></i></button>
+        </div>`;
+
     const warningsButton = focusTrees.every(ft => ft.warnings.length === 0) ? '' : `
         <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}">
             <i class="codicon codicon-warning"></i>
@@ -310,6 +340,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
                 ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
+                ${useConditionInFocus ? conditionPresets : ''}
                 ${useConditionInFocus ? conditions : allowbranch}
                 ${inlayWindows}
                 ${warningsButton}
