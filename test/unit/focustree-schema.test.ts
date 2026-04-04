@@ -100,4 +100,60 @@ describe('focus tree schema fixtures', () => {
         assert.ok(focusTree?.continuousLayout?.x);
         assert.ok(focusTree?.continuousLayout?.y);
     });
+
+    it('keeps continuous focus coordinates undefined when the tree does not define continuous_focus_position', () => {
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = no_continuous_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/no-continuous-tree.txt',
+        );
+
+        assert.ok(tree);
+        assert.strictEqual(tree.continuousFocusPositionX, undefined);
+        assert.strictEqual(tree.continuousFocusPositionY, undefined);
+    });
+
+    it('collects Conditions options from allow_branch triggers only', () => {
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = condition_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                        allow_branch = { has_global_flag = BRANCH_FLAG }
+                        icon = {
+                            trigger = { has_war = no }
+                            value = GFX_focus_generic_construct_civ_factory
+                        }
+                        offset = {
+                            x = 1
+                            y = 0
+                            trigger = { owns_state = 977 }
+                        }
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/condition-tree.txt',
+        );
+
+        assert.ok(tree);
+        assert.deepStrictEqual(tree.conditionExprs, [
+            {
+                scopeName: '',
+                nodeContent: 'has_global_flag = BRANCH_FLAG',
+            },
+        ]);
+    });
 });

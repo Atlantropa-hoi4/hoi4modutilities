@@ -1,69 +1,90 @@
-import { ConditionItem } from '../../hoiformat/condition';
-
 export interface FocusConditionPreset {
     id: string;
     name: string;
     exprKeys: string[];
 }
 
-export const customConditionPresetId = '__custom__';
+export type FocusConditionPresetsByTree = Record<string, FocusConditionPreset[]>;
 
-export function conditionItemToExprKey(condition: ConditionItem): string {
-    return `${condition.scopeName}!|${condition.nodeContent}`;
+export function normalizeConditionExprKeys(exprKeys: readonly string[]): string[] {
+    return Array.from(new Set(exprKeys.filter(Boolean))).sort((left, right) => left.localeCompare(right));
 }
 
-export function exprKeyToConditionItem(exprKey: string): ConditionItem {
-    const index = exprKey.indexOf('!|');
-    if (index === -1) {
-        return {
-            scopeName: '',
-            nodeContent: exprKey,
-        };
+export function filterConditionPresetExprKeys(
+    exprKeys: readonly string[],
+    availableExprKeys: Iterable<string>,
+): string[] {
+    const availableExprKeySet = new Set(availableExprKeys);
+    return normalizeConditionExprKeys(Array.from(exprKeys).filter(exprKey => availableExprKeySet.has(exprKey)));
+}
+
+export function findMatchingConditionPreset(
+    presets: readonly FocusConditionPreset[],
+    exprKeys: readonly string[],
+): FocusConditionPreset | undefined {
+    const normalizedExprKeys = normalizeConditionExprKeys(exprKeys);
+    return presets.find(preset => areConditionExprKeySetsEqual(preset.exprKeys, normalizedExprKeys));
+}
+
+export function areConditionExprKeySetsEqual(left: readonly string[], right: readonly string[]): boolean {
+    const normalizedLeft = normalizeConditionExprKeys(left);
+    const normalizedRight = normalizeConditionExprKeys(right);
+    if (normalizedLeft.length !== normalizedRight.length) {
+        return false;
+    }
+
+    return normalizedLeft.every((exprKey, index) => exprKey === normalizedRight[index]);
+}
+
+export function normalizeConditionPreset(preset: Partial<FocusConditionPreset> | undefined): FocusConditionPreset | undefined {
+    const id = preset?.id?.trim();
+    const name = preset?.name?.trim();
+    if (!id || !name) {
+        return undefined;
     }
 
     return {
-        scopeName: exprKey.substring(0, index),
-        nodeContent: exprKey.substring(index + 2),
+        id,
+        name,
+        exprKeys: normalizeConditionExprKeys(preset?.exprKeys ?? []),
     };
 }
 
-export function normalizeConditionExprKeys(exprKeys: Iterable<string>): string[] {
-    return Array.from(new Set(Array.from(exprKeys))).sort();
+export function normalizeConditionPresets(presets: readonly Partial<FocusConditionPreset>[] | undefined): FocusConditionPreset[] {
+    const normalized: FocusConditionPreset[] = [];
+    const seenIds = new Set<string>();
+    for (const preset of presets ?? []) {
+        const current = normalizeConditionPreset(preset);
+        if (!current || seenIds.has(current.id)) {
+            continue;
+        }
+
+        seenIds.add(current.id);
+        normalized.push(current);
+    }
+
+    return normalized;
 }
 
-export function normalizeConditionItems(conditions: Iterable<ConditionItem>): string[] {
-    return normalizeConditionExprKeys(Array.from(conditions, conditionItemToExprKey));
-}
+export function normalizeConditionPresetsByTree(
+    presetsByTree: Record<string, readonly Partial<FocusConditionPreset>[] | undefined> | undefined,
+): FocusConditionPresetsByTree {
+    const normalized: FocusConditionPresetsByTree = {};
+    if (!presetsByTree) {
+        return normalized;
+    }
 
-export function filterConditionExprKeys(exprKeys: Iterable<string>, availableExprKeys: Iterable<string>): string[] {
-    const available = new Set(availableExprKeys);
-    return normalizeConditionExprKeys(Array.from(exprKeys).filter(exprKey => available.has(exprKey)));
-}
+    for (const [treeId, presets] of Object.entries(presetsByTree)) {
+        const trimmedTreeId = treeId.trim();
+        if (!trimmedTreeId) {
+            continue;
+        }
 
-export function findMatchingConditionPresetId(
-    presets: Iterable<FocusConditionPreset>,
-    exprKeys: Iterable<string>,
-): string | undefined {
-    const normalizedExprKeys = normalizeConditionExprKeys(exprKeys);
-    for (const preset of presets) {
-        if (areConditionExprKeySetsEqual(preset.exprKeys, normalizedExprKeys)) {
-            return preset.id;
+        const normalizedPresets = normalizeConditionPresets(presets);
+        if (normalizedPresets.length > 0) {
+            normalized[trimmedTreeId] = normalizedPresets;
         }
     }
 
-    return undefined;
-}
-
-export function areConditionExprKeySetsEqual(left: Iterable<string>, right: Iterable<string>): boolean {
-    const normalizedLeft = normalizeConditionExprKeys(left);
-    const normalizedRight = normalizeConditionExprKeys(right);
-    return normalizedLeft.length === normalizedRight.length
-        && normalizedLeft.every((exprKey, index) => exprKey === normalizedRight[index]);
-}
-
-export function deleteConditionPreset(
-    presets: readonly FocusConditionPreset[],
-    presetId: string,
-): FocusConditionPreset[] {
-    return presets.filter(preset => preset.id !== presetId);
+    return normalized;
 }

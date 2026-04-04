@@ -260,6 +260,70 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /id = CHILD[\s\S]*?x = 11[\s\S]*?y = 13/);
     });
 
+    it('writes multi-selected parent links into a single prerequisite block while keeping one anchor relative_position_id', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OTHER
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = CHILD
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 9, 11, ['ROOT', 'OTHER']);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(
+            updated,
+            /id = CHILD[\s\S]*?prerequisite = \{\s*\n\s*focus = ROOT\s*\n\s*focus = OTHER\s*\n\s*\}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 9[\s\S]*?y = 11/,
+        );
+        assert.strictEqual((updated.match(/prerequisite = \{/g) ?? []).length, 1);
+    });
+
+    it('toggles an exact multi-parent prerequisite block off when the same grouped link is applied again', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OTHER
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = CHILD
+        prerequisite = {
+            focus = ROOT
+            focus = OTHER
+        }
+        relative_position_id = ROOT
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 12, 14, ['ROOT', 'OTHER']);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /focus = ROOT/);
+        assert.doesNotMatch(updated, /focus = OTHER/);
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 12[\s\S]*?y = 14/);
+    });
+
     it('rejects invalid link requests such as self-links or non-local child focuses', () => {
         const content = `focus_tree = {
     focus = {
@@ -520,6 +584,45 @@ describe('focus tree position edit helpers', () => {
         assert.doesNotMatch(updated, /focus = ROOT/);
         assert.match(updated, /prerequisite = \{[\s\S]*?OR = \{[\s\S]*?focus = OTHER[\s\S]*?\}/);
         assert.match(updated, /prerequisite = \{[\s\S]*?focus = SECOND[\s\S]*?\}/);
+    });
+
+    it('deletes a selected group of focuses in one operation and removes their references from remaining local focuses', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+
+    focus = {
+        id = OTHER
+        x = 1
+        y = 1
+    }
+
+    focus = {
+        id = CHILD
+        prerequisite = {
+            focus = ROOT
+            focus = OTHER
+        }
+        mutually_exclusive = { focus = ROOT }
+        relative_position_id = ROOT
+        x = 2
+        y = 3
+    }
+}`;
+        const result = buildDeleteFocusTextChanges(content, ['ROOT', 'OTHER']);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /id = ROOT/);
+        assert.doesNotMatch(updated, /id = OTHER/);
+        assert.doesNotMatch(updated, /focus = ROOT/);
+        assert.doesNotMatch(updated, /focus = OTHER/);
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 2[\s\S]*?y = 3/);
     });
 
     it('rejects deleting imported or unknown focuses', () => {

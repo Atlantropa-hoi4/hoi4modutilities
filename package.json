@@ -2,7 +2,7 @@
   "name": "hoi4modutilities",
   "displayName": "%hoi4modutilities.displayName%",
   "description": "Utilities for Heart of Iron IV mods developers",
-  "version": "0.13.20",
+  "version": "0.13.22",
   "author": "server (forked from Chaofan Yang)",
   "publisher": "server",
   "icon": "icon.png",
@@ -205,7 +205,8 @@
     }
   },
   "scripts": {
-    "clean": "rimraf dist out static .vscode-test",
+    "clean": "rimraf dist out static",
+    "clean:test-ui": "rimraf .vscode-test",
     "compile-ts": "tsc -p ./ --pretty false",
     "watch": "tsc -w -p ./",
     "webpack": "webpack --mode development",

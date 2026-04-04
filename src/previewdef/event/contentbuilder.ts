@@ -6,7 +6,7 @@ import { html, htmlEscape } from '../../util/html';
 import { localize } from '../../util/i18n';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { HOIEvent, HOIEventType } from './schema';
-import { flatten, repeat, max } from 'lodash';
+import { flatten, max } from 'lodash';
 import { arrayToMap, forceError } from '../../util/common';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
 import { GridBoxType } from '../../hoiformat/gui';
@@ -15,6 +15,7 @@ import { Token } from '../../hoiformat/hoiparser';
 import { getSpriteByGfxName } from '../../util/image/imagecache';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
 import { localisationIndex } from "../../util/featureflags";
+import { getSharedOptionChildGroups, nextScope, ScopeContext, SharedOptionChildGroup } from './sharedchildren';
 
 export async function renderEventFile(loader: EventsLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
@@ -271,7 +272,12 @@ async function eventNodeToGridBoxItems(
         ends: [],
     };
     const childIds: string[] = [];
+    const optionNodeToId = new Map<OptionNode, string>();
+    let sharedOptionChildGroups: SharedOptionChildGroup<OptionNode, EventEdge>[] = [];
     if (typeof node === 'object') {
+        if ('event' in node) {
+            sharedOptionChildGroups = getSharedOptionChildGroups<EventEdge, OptionNode>(node.children, scopeContext);
+        }
         for (const child of node.children) {
             let tree: GridBoxTree;
             if ('toNode' in child) {
@@ -279,10 +285,43 @@ async function eventNodeToGridBoxItems(
                 const nextScopeContext = nextScope(scopeContext, child.toScope);
                 tree = await eventNodeToGridBoxItems(toNode, child, idToContentMap, nextScopeContext, eventsLoaderResult, styleTable, idContainer);
             } else {
-                tree = await eventNodeToGridBoxItems(child, undefined, idToContentMap, scopeContext, eventsLoaderResult, styleTable, idContainer);
+                const filteredChild = sharedOptionChildGroups.length > 0
+                    ? removeSharedOptionChildEdges(child, sharedOptionChildGroups)
+                    : child;
+                tree = await eventNodeToGridBoxItems(filteredChild, undefined, idToContentMap, scopeContext, eventsLoaderResult, styleTable, idContainer);
+                optionNodeToId.set(child, tree.id);
             }
             childIds.push(tree.id);
             appendChildToTree(result, tree, 1, true);
+        }
+
+        for (const sharedGroup of sharedOptionChildGroups) {
+            const nextScopeContext = nextScope(scopeContext, sharedGroup.edge.toScope);
+            const sharedTree = await eventNodeToGridBoxItems(
+                sharedGroup.edge.toNode,
+                sharedGroup.edge,
+                idToContentMap,
+                nextScopeContext,
+                eventsLoaderResult,
+                styleTable,
+                idContainer,
+            );
+            appendChildToTree(result, sharedTree, 2, true);
+            for (const optionNode of sharedGroup.optionNodes) {
+                const optionId = optionNodeToId.get(optionNode);
+                if (!optionId) {
+                    continue;
+                }
+
+                const optionItem = result.items.find(item => item.id === optionId);
+                if (optionItem) {
+                    optionItem.connections.push({
+                        target: sharedTree.id,
+                        targetType: 'child',
+                        style: '1px solid #88aaff',
+                    });
+                }
+            }
         }
     }
 
@@ -324,29 +363,15 @@ async function eventNodeToGridBoxItems(
     return result;
 }
 
-interface ScopeContext {
-    fromStack: string[];
-    currentScopeName: string;
-}
-
-function nextScope(scopeContext: ScopeContext, toScope: string): ScopeContext {
-    let currentScopeName: string;
-    if (toScope.match(/^from(?:\.from)*$/)) {
-        const fromCount = toScope.split('.').length;
-        const fromIndex = scopeContext.fromStack.length - fromCount;
-        if (fromIndex < 0) {
-            currentScopeName = (scopeContext.fromStack.length > 0 ? scopeContext.fromStack[0] : scopeContext.currentScopeName) +
-                repeat('.FROM', -fromIndex);
-        } else {
-            currentScopeName = scopeContext.fromStack[fromIndex];
-        }
-    } else {
-        currentScopeName = toScope.replace(/\{event_target\}/g, scopeContext.currentScopeName);
+function removeSharedOptionChildEdges(optionNode: OptionNode, sharedGroups: readonly SharedOptionChildGroup<OptionNode, EventEdge>[]): OptionNode {
+    const sharedEdges = new Set(sharedGroups.flatMap(group => group.optionNodes.includes(optionNode) ? [group.edge] : []));
+    if (sharedEdges.size === 0) {
+        return optionNode;
     }
 
     return {
-        fromStack: [ ...scopeContext.fromStack, scopeContext.currentScopeName ],
-        currentScopeName,
+        ...optionNode,
+        children: optionNode.children.filter(child => !sharedEdges.has(child)),
     };
 }
 

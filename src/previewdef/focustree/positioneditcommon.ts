@@ -8,6 +8,12 @@ export interface ScalarFieldMeta {
     valueRange: TextRange;
 }
 
+export interface FocusConditionPreset {
+    id: string;
+    name: string;
+    exprKeys: string[];
+}
+
 export interface FocusPositionOffsetMeta {
     x: number;
     y: number;
@@ -75,6 +81,7 @@ export interface CreateFocusTemplateAtPositionMessage {
 export interface ApplyFocusLinkEditMessage {
     command: 'applyFocusLinkEdit';
     parentFocusId: string;
+    parentFocusIds?: string[];
     childFocusId: string;
     targetLocalX: number;
     targetLocalY: number;
@@ -99,7 +106,18 @@ export interface ApplyContinuousFocusPositionEditMessage {
 export interface DeleteFocusMessage {
     command: 'deleteFocus';
     focusId: string;
+    focusIds?: string[];
     documentVersion: number;
+}
+
+export interface PromptFocusConditionPresetNameMessage {
+    command: 'promptFocusConditionPresetName';
+    initialValue?: string;
+}
+
+export interface PersistFocusConditionPresetsMessage {
+    command: 'persistFocusConditionPresets';
+    presetsByTree: Record<string, FocusConditionPreset[]>;
 }
 
 export type FocusPositionEditMessage =
@@ -108,7 +126,9 @@ export type FocusPositionEditMessage =
     | ApplyFocusLinkEditMessage
     | ApplyFocusExclusiveLinkEditMessage
     | ApplyContinuousFocusPositionEditMessage
-    | DeleteFocusMessage;
+    | DeleteFocusMessage
+    | PromptFocusConditionPresetNameMessage
+    | PersistFocusConditionPresetsMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;

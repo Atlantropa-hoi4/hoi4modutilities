@@ -14,6 +14,7 @@ import { registerLocalisationIndex } from "./util/localisationIndex";
 import { registerLocalisationHighlighting } from './util/localisationHighlighting';
 import { registerSharedFocusIndex } from "./util/sharedFocusIndex";
 import { registerCountryColorProvider } from './util/countryColorProvider';
+import { registerIndexPrewarm } from './util/indexprewarm';
 
 export function activate(context: vscode.ExtensionContext) {
     let locale = (context as any).extension?.packageJSON.locale;
@@ -39,6 +40,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(registerSharedFocusIndex());
     context.subscriptions.push(registerGfxIndex());
     context.subscriptions.push(registerLocalisationIndex());
+    context.subscriptions.push(registerIndexPrewarm());
     context.subscriptions.push(registerLocalisationHighlighting());
     context.subscriptions.push(registerCountryColorProvider());
 

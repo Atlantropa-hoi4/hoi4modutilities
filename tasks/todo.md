@@ -1,28 +1,22 @@
-# HOI4 Mod Utilities Focus Preview Structural Lint Todo
+# Focus Tree Inlay Preview Regression 2026-04-06
 
 ## Plan
-- [x] Inspect the current focus warning flow, badge rendering path, and relation/runtime metadata needed for lint aggregation
-- [x] Extend the warning model so parse warnings and structural lint share one typed collection
-- [x] Add a pure `focuslint.ts` helper that computes asymmetric exclusive, relative-position mismatch, missing reference, and unreachable-candidate findings
-- [x] Feed lint results into `getFocusTree(...)` so each tree exposes ordered warnings plus per-focus lint counts/messages
-- [x] Render lint badges and lint summaries in the existing focus status / relation UI without breaking hit targets
-- [x] Restructure the warnings panel output to show `[severity][code][kind][source]` entries with lint findings first
-- [x] Add unit coverage for lint rules and runtime warning ordering/aggregation
-- [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
-- [x] Record review notes, verification results, and any environment-blocked checks
+- [x] Inspect the inlay preview load/render path and confirm why the window does not resolve
+- [x] Restore inlay GUI/GFX resolution without reintroducing full index blocking on the hot path
+- [x] Re-run compile and targeted focustree tests, then record the result
 
 ## Notes
-- Scope for this pass is structural lint surfacing only; no new host/webview message contracts and no writeback behavior changes.
-- Lint must reuse the existing warnings panel plus node-level badges rather than introducing a new panel or sidebar.
-- `candidate unreachable` remains `info` severity because branch/condition runtime flow is not fully simulated.
+- Current issue: the Focus Tree preview's Inlay Window surface appears non-functional.
+- Root causes:
+  - `src/previewdef/focustree/inlay.ts` limited GUI window discovery to `interface/scripted_gui/**/*.gui`, so inlay windows defined in other `interface/**/*.gui` files were invisible to the preview resolver.
+  - The recent inlay GFX fast path only used indexed lookups and no longer fell back to cached `interface/*.gfx` scans for unresolved scripted-image names.
 
 ## Review
-- Generalized `FocusWarning` so parse warnings and structural lint now share one typed collection with `code`, `severity`, `kind`, `relatedFocusIds`, and optional navigations.
-- Added `src/previewdef/focustree/focuslint.ts` as a pure helper that computes asymmetric `mutually_exclusive`, `relative_position_id` without matching prerequisite, missing prerequisite/exclusive targets, and unreachable-candidate findings.
-- Wired lint aggregation into `schema.ts` so every focus tree now carries sorted warnings plus per-focus `lintWarningCount`, `lintInfoCount`, and `lintMessages`.
-- Updated focustree inlay warning producers and loader post-processing so inlay-originated warnings still satisfy the expanded warning contract and the tree warning list stays lint-first after inlay resolution.
-- Added preview lint surfacing in the existing UI: node-level lint pills, lint lines in hover status summaries and relation summaries, and a structured warnings panel with clickable navigation entries.
-- Added `test/unit/focustree-lint.test.ts` covering asymmetric exclusive detection, relative-position mismatch, missing targets, unreachable candidates, imported-target false-positive avoidance, and lint-before-parse ordering.
-- Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, `npm run package`.
-- Packaged VSIX: `C:\\Users\\Administrator\\Documents\\Code\\hoi4modutilities\\hoi4modutilities-0.13.20.vsix`.
-- Manual VS Code smoke for lint badge placement, warnings-panel click navigation, and large-tree partial refresh behavior was not run in this terminal session.
+- Inlay GUI discovery now scans `interface/**/*.gui` and only reports matched `.gui` files back as preview dependencies, so the resolver can find inlay windows outside the `scripted_gui` subfolder without bloating dependency tracking.
+- Inlay scripted-image GFX resolution now follows the same indexed-hit plus unresolved-only fallback scan pattern as focus icons, restoring non-indexed `GFX_*` inlay assets without reintroducing a full blocking scan on the hot path.
+- The new `inlayshared` helper keeps the lookup logic pure enough for unit tests, so future inlay regressions can be caught without pulling in the VS Code runtime.
+
+## Verification
+- `npm run compile-ts` passed.
+- `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-inlay.test.js out\\test\\unit\\focustree-focusicongfx.test.js out\\test\\unit\\focustree-schema.test.js` passed with 11 tests.
+- `npm run package` passed and produced `hoi4modutilities-0.13.22.vsix`.

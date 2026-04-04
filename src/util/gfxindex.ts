@@ -41,7 +41,15 @@ export async function getGfxContainerFile(gfxName: string | undefined): Promise<
     }
 
     await Promise.all([ensureGlobalGfxIndex(), ensureWorkspaceGfxIndex()]);
-    return (globalGfxIndex[gfxName] ?? workspaceGfxIndex[gfxName])?.file;
+    return tryGetGfxContainerFile(gfxName);
+}
+
+export function tryGetGfxContainerFile(gfxName: string | undefined): string | undefined {
+    if (!gfxIndex || !gfxName) {
+        return undefined;
+    }
+
+    return workspaceGfxIndex[gfxName]?.file ?? globalGfxIndex[gfxName]?.file;
 }
 
 export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Promise<string[]> {
@@ -61,6 +69,10 @@ async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<void> {
 }
 
 function ensureGlobalGfxIndex(): Promise<void> {
+    return ensureGlobalGfxIndexImpl(true);
+}
+
+function ensureGlobalGfxIndexImpl(showStatusBar: boolean): Promise<void> {
     if (globalGfxIndexReady) {
         return Promise.resolve();
     }
@@ -70,7 +82,9 @@ function ensureGlobalGfxIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const task = buildGlobalGfxIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.building', 'Building GFX index...'), task);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.building', 'Building GFX index...'), task);
+    }
     globalGfxIndexTask = task.then(() => {
         globalGfxIndexReady = true;
         sendEvent('gfxIndex', { size: estimatedSize[0].toString() });
@@ -81,6 +95,10 @@ function ensureGlobalGfxIndex(): Promise<void> {
 }
 
 function ensureWorkspaceGfxIndex(): Promise<void> {
+    return ensureWorkspaceGfxIndexImpl(true);
+}
+
+function ensureWorkspaceGfxIndexImpl(showStatusBar: boolean): Promise<void> {
     if (workspaceGfxIndexReady) {
         return Promise.resolve();
     }
@@ -90,7 +108,9 @@ function ensureWorkspaceGfxIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const task = buildWorkspaceGfxIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.workspace.building', 'Building workspace GFX index...'), task);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('gfxindex.workspace.building', 'Building workspace GFX index...'), task);
+    }
     workspaceGfxIndexTask = task.then(() => {
         workspaceGfxIndexReady = true;
         sendEvent('gfxIndex.workspace', { size: estimatedSize[0].toString() });
@@ -98,6 +118,17 @@ function ensureWorkspaceGfxIndex(): Promise<void> {
         workspaceGfxIndexTask = undefined;
     });
     return workspaceGfxIndexTask;
+}
+
+export async function prewarmGfxIndex(): Promise<void> {
+    if (!gfxIndex) {
+        return;
+    }
+
+    await Promise.all([
+        ensureGlobalGfxIndexImpl(false),
+        ensureWorkspaceGfxIndexImpl(false),
+    ]);
 }
 
 async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean }, estimatedSize?: [number]): Promise<void> {

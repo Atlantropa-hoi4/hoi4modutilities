@@ -1,0 +1,16 @@
+technologies = {
+    sample_tech_a = {
+        folder = {
+            name = infantry
+            position = { x = 0 y = 0 }
+        }
+        path = { leads_to_tech = sample_tech_b }
+    }
+
+    sample_tech_b = {
+        folder = {
+            name = infantry
+            position = { x = 1 y = 1 }
+        }
+    }
+}

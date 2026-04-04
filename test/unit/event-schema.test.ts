@@ -50,4 +50,5 @@ describe('event schema fixtures', () => {
             },
         ]);
     });
+
 });
