@@ -77,7 +77,7 @@ let currentRenderedFocusElementsList: HTMLElement[] = [];
 let currentOccupiedFocusPositionKeys = new Set<string>();
 let currentSelectedFocusIds = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
-let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
+let focusPositionDragBindings: Array<{ element: HTMLElement; eventName: 'mousedown' | 'pointerdown'; handler: EventListener }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
@@ -114,8 +114,18 @@ type ActiveFocusSelectionMarquee = {
     startClientX: number;
     startClientY: number;
     dragGestureStarted: boolean;
+    pointerId: number;
+    captureOwner: HTMLElement;
 };
 let activeFocusSelectionMarquee: ActiveFocusSelectionMarquee | undefined = undefined;
+
+function normalizeFocusIdForClassName(focusId: string): string {
+    return normalizeForStyle(focusId);
+}
+
+function connectionTouchesFocusId(connectionElement: HTMLElement, prefix: 'source' | 'target', focusId: string): boolean {
+    return connectionElement.classList.contains(`focus-connection-${prefix}-${normalizeFocusIdForClassName(focusId)}`);
+}
 
 function getFocusPositionKey(position: NumberPosition): string {
     return `${position.x},${position.y}`;
@@ -232,8 +242,9 @@ function getSelectedConditionPreset(focusTree: FocusTree): FocusConditionPreset 
 
 function refreshConditionPresetUi(focusTree: FocusTree) {
     const presetContainer = document.getElementById('condition-preset-container') as HTMLDivElement | null;
+    const hasConditionExprs = getTreeConditionExprKeys(focusTree).length > 0;
     if (presetContainer) {
-        presetContainer.style.display = useConditionInFocus ? 'flex' : 'none';
+        presetContainer.style.display = useConditionInFocus && hasConditionExprs ? 'flex' : 'none';
     }
 
     if (!conditionPresetsDropdown) {
@@ -461,6 +472,7 @@ function updateFocusPositionEditUi() {
             ? getDirectlyRelatedFocusIds(currentRenderedFocusTree.focuses, hoveredRelationFocusId)
             : [],
     );
+    const hasHoveredRelations = hoveredRelatedFocusIds.size > 0 && !hasPendingFocusLink();
 
     currentRenderedFocusElementsList.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
@@ -469,6 +481,12 @@ function updateFocusPositionEditUi() {
         const isHovered = !!element.dataset.focusId && element.dataset.focusId === hoveredRelationFocusId;
         const isHoverRelated = !!element.dataset.focusId && hoveredRelatedFocusIds.has(element.dataset.focusId);
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
+        element.style.opacity = hasHoveredRelations
+            ? isHoverRelated ? '1' : '0.32'
+            : '';
+        element.style.filter = hasHoveredRelations
+            ? isHoverRelated ? '' : 'saturate(0.45)'
+            : '';
         element.style.boxShadow = isPendingParent
             ? pendingFocusLinkType === 'exclusive'
                 ? '0 0 0 2px rgba(255, 96, 96, 0.95) inset'
@@ -484,10 +502,25 @@ function updateFocusPositionEditUi() {
                 : '';
     });
 
+    document.querySelectorAll<HTMLElement>('.focus-connection').forEach(connectionElement => {
+        if (!hasHoveredRelations) {
+            connectionElement.style.opacity = '';
+            connectionElement.style.filter = '';
+            return;
+        }
+
+        const isHoverRelatedConnection = Array.from(hoveredRelatedFocusIds).some(relatedFocusId => connectionTouchesFocusId(connectionElement, 'source', relatedFocusId))
+            && Array.from(hoveredRelatedFocusIds).some(relatedFocusId => connectionTouchesFocusId(connectionElement, 'target', relatedFocusId));
+
+        connectionElement.style.opacity = isHoverRelatedConnection ? '1' : '0.14';
+        connectionElement.style.filter = isHoverRelatedConnection ? 'saturate(1.1)' : 'saturate(0.35)';
+    });
+
     const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
     const continuousEditable = isContinuousFocusEditable(currentRenderedFocusTree);
     if (continuousFocusElement) {
         continuousFocusElement.style.cursor = focusPositionEditMode && continuousEditable ? 'grab' : 'default';
+        continuousFocusElement.style.pointerEvents = focusPositionEditMode && continuousEditable ? 'auto' : 'none';
         continuousFocusElement.style.boxShadow = focusPositionEditMode && continuousEditable
             ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
             : '';
@@ -567,6 +600,13 @@ function getSelectedFocusIdsFromRect(selectionRect: FocusSelectionRect): string[
 }
 
 function clearActiveFocusSelectionMarquee() {
+    if (activeFocusSelectionMarquee) {
+        try {
+            activeFocusSelectionMarquee.captureOwner.releasePointerCapture(activeFocusSelectionMarquee.pointerId);
+        } catch {
+            // Ignore stale pointer capture releases.
+        }
+    }
     activeFocusSelectionMarquee = undefined;
     hideFocusSelectionOverlay();
 }
@@ -963,12 +1003,13 @@ function setupFocusPositionDragHandlers() {
 }
 
 function setupFocusSelectionMarqueeHandler() {
-    document.addEventListener('mousedown', event => {
+    document.addEventListener('pointerdown', event => {
         if (!focusPositionEditMode || event.button !== 0 || !event.shiftKey || hasPendingFocusLink()) {
             return;
         }
 
-        if (!getBlankCanvasPanTarget(event)) {
+        const captureOwner = getBlankCanvasPanTarget(event);
+        if (!captureOwner) {
             return;
         }
 
@@ -976,16 +1017,19 @@ function setupFocusSelectionMarqueeHandler() {
         hideFocusContextMenu();
         event.preventDefault();
         event.stopPropagation();
+        captureOwner.setPointerCapture?.(event.pointerId);
         activeFocusSelectionMarquee = {
             startClientX: event.clientX,
             startClientY: event.clientY,
             dragGestureStarted: false,
+            pointerId: event.pointerId,
+            captureOwner,
         };
         hideFocusSelectionOverlay();
     }, true);
 
-    document.addEventListener('mousemove', event => {
-        if (!activeFocusSelectionMarquee) {
+    document.addEventListener('pointermove', event => {
+        if (!activeFocusSelectionMarquee || event.pointerId !== activeFocusSelectionMarquee.pointerId) {
             return;
         }
 
@@ -1006,7 +1050,7 @@ function setupFocusSelectionMarqueeHandler() {
         setCurrentSelectedFocusIds(getSelectedFocusIdsFromRect(selectionRect), false);
     }, true);
 
-    document.addEventListener('mouseup', () => {
+    const finishSelectionMarquee = () => {
         if (!activeFocusSelectionMarquee) {
             return;
         }
@@ -1017,10 +1061,18 @@ function setupFocusSelectionMarqueeHandler() {
             persistCurrentSelectedFocusIds();
             suppressEditableFocusClickUntil = Date.now() + 250;
         }
+    };
+
+    document.addEventListener('pointerup', event => {
+        if (!activeFocusSelectionMarquee || event.pointerId !== activeFocusSelectionMarquee.pointerId) {
+            return;
+        }
+
+        finishSelectionMarquee();
     }, true);
 
-    document.addEventListener('mouseleave', () => {
-        if (!activeFocusSelectionMarquee) {
+    document.addEventListener('pointercancel', event => {
+        if (!activeFocusSelectionMarquee || event.pointerId !== activeFocusSelectionMarquee.pointerId) {
             return;
         }
 
@@ -1309,7 +1361,7 @@ function setupBlankCanvasPanFallback() {
 
 function clearFocusPositionDragBindings() {
     focusPositionDragBindings.forEach(binding => {
-        binding.element.removeEventListener('mousedown', binding.handler, true);
+        binding.element.removeEventListener(binding.eventName, binding.handler, true);
     });
     focusPositionDragBindings = [];
 }
@@ -1412,7 +1464,7 @@ function bindFocusPositionDragHandlers() {
         };
 
         focusElement.addEventListener('mousedown', handler, true);
-        focusPositionDragBindings.push({ element: focusElement, handler });
+        focusPositionDragBindings.push({ element: focusElement, eventName: 'mousedown', handler: handler as EventListener });
     });
 
     const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
@@ -1421,13 +1473,14 @@ function bindFocusPositionDragHandlers() {
         return;
     }
 
-    const handler = (event: MouseEvent) => {
+    const handler = (event: PointerEvent) => {
         if (!focusPositionEditMode || event.button !== 0 || hasPendingFocusLink() || !currentRenderedFocusTree) {
             return;
         }
 
         event.preventDefault();
         event.stopPropagation();
+        continuousFocusElement.setPointerCapture?.(event.pointerId);
 
         const startingLeft = parseFloat(continuousFocusElement.style.left || '0');
         const startingTop = parseFloat(continuousFocusElement.style.top || '0');
@@ -1439,7 +1492,11 @@ function bindFocusPositionDragHandlers() {
         continuousFocusElement.style.zIndex = '20';
         continuousFocusElement.style.willChange = 'left, top';
 
-        const mouseMoveHandler = (moveEvent: MouseEvent) => {
+        const pointerMoveHandler = (moveEvent: PointerEvent) => {
+            if (moveEvent.pointerId !== event.pointerId) {
+                return;
+            }
+
             const scale = getState().scale || 1;
             const deltaPageX = moveEvent.pageX - event.pageX;
             const deltaPageY = moveEvent.pageY - event.pageY;
@@ -1454,9 +1511,15 @@ function bindFocusPositionDragHandlers() {
             continuousFocusElement.style.top = `${nextTop}px`;
         };
 
-        const mouseUpHandler = () => {
-            document.removeEventListener('mousemove', mouseMoveHandler);
-            document.removeEventListener('mouseup', mouseUpHandler);
+        const finishContinuousDrag = () => {
+            continuousFocusElement.removeEventListener('pointermove', pointerMoveHandler);
+            continuousFocusElement.removeEventListener('pointerup', pointerUpHandler);
+            continuousFocusElement.removeEventListener('pointercancel', pointerCancelHandler);
+            try {
+                continuousFocusElement.releasePointerCapture(event.pointerId);
+            } catch {
+                // Ignore stale pointer capture releases.
+            }
             continuousFocusElement.style.cursor = focusPositionEditMode ? 'grab' : 'default';
             continuousFocusElement.style.zIndex = '';
             continuousFocusElement.style.willChange = '';
@@ -1484,12 +1547,29 @@ function bindFocusPositionDragHandlers() {
             });
         };
 
-        document.addEventListener('mousemove', mouseMoveHandler);
-        document.addEventListener('mouseup', mouseUpHandler);
+        const pointerUpHandler = (upEvent: PointerEvent) => {
+            if (upEvent.pointerId !== event.pointerId) {
+                return;
+            }
+
+            finishContinuousDrag();
+        };
+
+        const pointerCancelHandler = (cancelEvent: PointerEvent) => {
+            if (cancelEvent.pointerId !== event.pointerId) {
+                return;
+            }
+
+            finishContinuousDrag();
+        };
+
+        continuousFocusElement.addEventListener('pointermove', pointerMoveHandler);
+        continuousFocusElement.addEventListener('pointerup', pointerUpHandler);
+        continuousFocusElement.addEventListener('pointercancel', pointerCancelHandler);
     };
 
-    continuousFocusElement.addEventListener('mousedown', handler, true);
-    focusPositionDragBindings.push({ element: continuousFocusElement, handler });
+    continuousFocusElement.addEventListener('pointerdown', handler, true);
+    focusPositionDragBindings.push({ element: continuousFocusElement, eventName: 'pointerdown', handler: handler as EventListener });
 }
 
 function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, targetLocalY: number) {
@@ -1897,11 +1977,13 @@ function focusToGridItem(
         prerequisites.forEach(p => {
             const fp = focusTree.focuses[p];
             const classNames2 = fp?.inAllowBranch.map(v => 'inbranch_' + v).join(' ') ?? '';
+            const normalizedFocusId = normalizeFocusIdForClassName(focus.id);
+            const normalizedTargetId = normalizeFocusIdForClassName(p);
             connections.push({
                 target: p,
                 targetType: 'parent',
                 style: style,
-                classNames: classNames + ' ' + classNames2,
+                classNames: `${classNames} ${classNames2} focus-connection focus-connection-prerequisite focus-connection-source-${normalizedFocusId} focus-connection-target-${normalizedTargetId}`,
             });
         });
     }
@@ -1909,11 +1991,13 @@ function focusToGridItem(
     focus.exclusive.forEach(e => {
         const fe = focusTree.focuses[e];
         const classNames2 = fe?.inAllowBranch.map(v => 'inbranch_' + v).join(' ') ?? '';
+        const normalizedFocusId = normalizeFocusIdForClassName(focus.id);
+        const normalizedTargetId = normalizeFocusIdForClassName(e);
         connections.push({
             target: e,
             targetType: 'related',
             style: "1px solid rgba(255, 96, 96, 0.48)",
-            classNames: classNames + ' ' + classNames2,
+            classNames: `${classNames} ${classNames2} focus-connection focus-connection-exclusive focus-connection-source-${normalizedFocusId} focus-connection-target-${normalizedTargetId}`,
         });
     });
 
