@@ -188,19 +188,8 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:${payload.focusToolbarHeight}px;left:-20px;position:relative`)}">
             <div id="focustreeplaceholder" class="${styleTable.oneTimeStyle('focustreeplaceholder', () => `position: relative; z-index: 2;`)}"></div>
             <div id="inlaywindowplaceholder" class="${styleTable.oneTimeStyle('inlaywindowplaceholder', () => `position: relative; z-index: 3;`)}"></div>
-            <div id="focus-empty-state" class="${styleTable.oneTimeStyle('focusEmptyState', () => `
-                position: absolute;
-                top: 24px;
-                left: 24px;
-                display: none;
-                padding: 10px 12px;
-                background: rgba(127, 127, 127, 0.12);
-                border: 1px dashed var(--vscode-panel-border);
-                z-index: 4;
-            `)}">${localize('TODO', 'No focuses match the current conditions.')}</div>
             ${continuousFocusContent}
         </div>` +
-        renderFocusMinimapShell(styleTable, payload.focusToolbarHeight) +
         renderWarningContainer(styleTable) +
         renderToolBar(payload.focusTrees, styleTable);
     const shellCss = styleTable.toStyleContent();
@@ -210,91 +199,6 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<style id="focus-tree-dynamic-style" nonce="${payload.styleNonce}">${payload.dynamicStyleCss}</style>` +
         shellMarkup
     );
-}
-
-function renderFocusMinimapShell(styleTable: StyleTable, toolbarHeight: number): string {
-    return `<div id="focus-minimap" class="${styleTable.oneTimeStyle('focusMinimap', () => `
-        position: fixed;
-        right: 12px;
-        top: ${toolbarHeight + 12}px;
-        width: 188px;
-        max-height: calc(100vh - ${toolbarHeight + 24}px);
-        display: flex;
-        flex-direction: column;
-        border: 1px solid var(--vscode-panel-border);
-        background: color-mix(in srgb, var(--vscode-editor-background) 94%, transparent);
-        backdrop-filter: blur(4px);
-        z-index: 40;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
-    `)}">
-        <div class="${styleTable.oneTimeStyle('focusMinimapHeader', () => `
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            min-height: 28px;
-            padding: 4px 6px;
-            border-bottom: 1px solid var(--vscode-panel-border);
-            gap: 6px;
-        `)}">
-            <span>${localize('TODO', 'Minimap')}</span>
-            <button id="toggle-focus-minimap" title="${localize('TODO', 'Collapse minimap')}">
-                <i class="codicon codicon-chevron-down"></i>
-            </button>
-        </div>
-        <div id="focus-minimap-body" class="${styleTable.oneTimeStyle('focusMinimapBody', () => `
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            padding: 6px;
-        `)}">
-            <div class="${styleTable.oneTimeStyle('focusMinimapActions', () => `
-                display: flex;
-                gap: 6px;
-            `)}">
-                <button id="jump-to-selected" class="${styleTable.oneTimeStyle('focusMinimapActionButton', () => `
-                    flex: 1 1 0;
-                    min-height: 24px;
-                `)}">${localize('TODO', 'Jump to selected')}</button>
-                <button id="jump-to-continuous" class="${styleTable.oneTimeStyle('focusMinimapActionButton', () => `
-                    flex: 1 1 0;
-                    min-height: 24px;
-                `)}">${localize('TODO', 'Jump to continuous')}</button>
-            </div>
-            <div id="focus-minimap-canvas" class="${styleTable.oneTimeStyle('focusMinimapCanvas', () => `
-                position: relative;
-                width: 100%;
-                height: 220px;
-                overflow: hidden;
-                border: 1px solid var(--vscode-panel-border);
-                background: rgba(127, 127, 127, 0.08);
-                cursor: pointer;
-            `)}">
-                <div id="focus-minimap-points" class="${styleTable.oneTimeStyle('focusMinimapPoints', () => `
-                    position: absolute;
-                    inset: 0;
-                `)}"></div>
-                <div id="focus-minimap-viewport" class="${styleTable.oneTimeStyle('focusMinimapViewport', () => `
-                    position: absolute;
-                    display: none;
-                    border: 1px solid rgba(96, 196, 255, 0.95);
-                    background: rgba(96, 196, 255, 0.15);
-                    box-sizing: border-box;
-                    pointer-events: none;
-                `)}"></div>
-                <div id="focus-minimap-tooltip" class="${styleTable.oneTimeStyle('focusMinimapTooltip', () => `
-                    position: absolute;
-                    display: none;
-                    padding: 3px 6px;
-                    border: 1px solid var(--vscode-panel-border);
-                    background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
-                    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground));
-                    pointer-events: none;
-                    white-space: nowrap;
-                    z-index: 1;
-                `)}"></div>
-            </div>
-        </div>
-    </div>`;
 }
 
 function normalizeFocusSpacingValue(value: number | undefined, fallback: number): number {
@@ -439,19 +343,19 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
         <div id="condition-preset-container" class="${toolbarGroupStyle()}">
             <label for="condition-presets" class="${toolbarLabelStyle()}">${localize('TODO', 'Preset: ')}</label>
             <div class="select-container">
-                <div id="condition-presets" class="select multiple-select ${styleTable.style('conditionPresetLabel', () => `max-width:220px`)}" tabindex="0" role="combobox">
+                <div id="condition-presets" class="select multiple-select ${styleTable.style('conditionsLabel', () => `max-width:240px`)}" tabindex="0" role="combobox">
                     <span class="value"></span>
                 </div>
             </div>
             <button
                 id="save-condition-preset"
                 title="${localize('TODO', 'Save current preset')}"
-                class="${styleTable.style('conditionPresetIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:6px;`)}"
-            ><i class="codicon codicon-save"></i></button>
+                class="${styleTable.style('toolbarSmallIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
+            ><i class="codicon codicon-add"></i></button>
             <button
                 id="delete-condition-preset"
-                title="${localize('TODO', 'Delete current preset')}"
-                class="${styleTable.style('conditionPresetIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
+                title="${localize('TODO', 'Delete selected preset')}"
+                class="${styleTable.style('toolbarSmallIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
             ><i class="codicon codicon-trash"></i></button>
         </div>`;
 
@@ -468,8 +372,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
                 ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
-                ${useConditionInFocus ? conditionPresets : ''}
-                ${useConditionInFocus ? conditions : allowbranch}
+                ${useConditionInFocus ? conditionPresets + conditions : allowbranch}
                 ${inlayWindows}
                 ${warningsButton}
             </div>
@@ -670,80 +573,6 @@ function ensureFocusStatusStyles(styleTable: StyleTable) {
         border-color: rgba(108, 128, 150, 1);
         color: #ffffff;
     `);
-    styleTable.raw('.focus-status-badges', `
-        position: absolute;
-        top: 2px;
-        right: 2px;
-        display: flex;
-        gap: 3px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        max-width: 120px;
-        z-index: 2;
-        pointer-events: none;
-    `);
-    styleTable.raw('.focus-status-badge', `
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 14px;
-        padding: 0 4px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(32, 32, 32, 0.82);
-        color: var(--vscode-editor-foreground);
-        font-size: 9px;
-        line-height: 1;
-        white-space: nowrap;
-        box-sizing: border-box;
-        pointer-events: none;
-    `);
-    styleTable.raw('.focus-status-badge-available', `
-        background: rgba(46, 160, 67, 0.9);
-        border-color: rgba(46, 160, 67, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-status-badge-blocked', `
-        background: rgba(201, 70, 56, 0.92);
-        border-color: rgba(201, 70, 56, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-status-badge-branch', `
-        background: rgba(40, 112, 214, 0.9);
-        border-color: rgba(40, 112, 214, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-status-badge-capitulated', `
-        background: rgba(182, 126, 22, 0.92);
-        border-color: rgba(182, 126, 22, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-status-badge-prerequisite, .focus-status-badge-exclusive', `
-        background: rgba(90, 90, 90, 0.88);
-        border-color: rgba(120, 120, 120, 1);
-        color: #ffffff;
-    `);
-    styleTable.raw('.focus-status-summary', `
-        position: absolute;
-        top: 20px;
-        right: 0;
-        display: none;
-        min-width: 168px;
-        max-width: 240px;
-        padding: 6px 8px;
-        border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
-        background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
-        color: var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground));
-        text-align: left;
-        white-space: pre-line;
-        line-height: 1.35;
-        z-index: 3;
-        pointer-events: none;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    `);
-    styleTable.raw('.navigator:hover .focus-status-summary, .navigator:focus-within .focus-status-summary', `
-        display: block;
-    `);
 }
 
 async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
@@ -796,11 +625,8 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     ${file === focus.file ? '' : `file="${focus.file}"`}
     data-focus-id="${attributeEscape(focus.id)}"
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
-    title="${focus.id}\n({{position}})">
+    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}">
         {{lintBadges}}
-        {{statusBadges}}
-        {{statusSummary}}
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>

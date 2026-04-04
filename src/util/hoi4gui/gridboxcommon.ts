@@ -12,11 +12,6 @@ export interface GridBoxConnection {
     targetType: GridBoxConnectionType;
     style?: string;
     classNames?: string;
-    relationKind?: 'prerequisite' | 'exclusive';
-    sourceFocusId?: string;
-    targetFocusId?: string;
-    prerequisiteGroupIndex?: number;
-    isGroupedPrerequisite?: boolean;
 }
 
 export interface GridBoxItem {
@@ -57,27 +52,9 @@ function attributeEscape(value: string): string {
 
 function getConnectionPresentation(connection: GridBoxConnection | undefined): { classNames: string; dataAttrs: string } {
     const classNames = [connection?.classNames];
-    const dataAttrs: string[] = [];
-    if (connection?.relationKind) {
-        classNames.push('focus-relation-line', `focus-relation-${connection.relationKind}`);
-        dataAttrs.push(`data-relation-kind="${attributeEscape(connection.relationKind)}"`);
-    }
-    if (connection?.sourceFocusId) {
-        dataAttrs.push(`data-source-focus-id="${attributeEscape(connection.sourceFocusId)}"`);
-    }
-    if (connection?.targetFocusId) {
-        dataAttrs.push(`data-target-focus-id="${attributeEscape(connection.targetFocusId)}"`);
-    }
-    if (connection?.prerequisiteGroupIndex !== undefined) {
-        dataAttrs.push(`data-prerequisite-group-index="${connection.prerequisiteGroupIndex}"`);
-    }
-    if (connection?.isGroupedPrerequisite !== undefined) {
-        dataAttrs.push(`data-is-grouped-prerequisite="${connection.isGroupedPrerequisite ? 'true' : 'false'}"`);
-    }
-
     return {
         classNames: classNames.filter(Boolean).join(' '),
-        dataAttrs: dataAttrs.join(' '),
+        dataAttrs: '',
     };
 }
 

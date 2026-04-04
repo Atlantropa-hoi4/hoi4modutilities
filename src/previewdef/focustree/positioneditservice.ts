@@ -284,8 +284,10 @@ export function buildFocusLinkTextChanges(
     childFocusId: string,
     targetLocalX?: number,
     targetLocalY?: number,
+    parentFocusIds?: readonly string[],
 ): FocusLinkTextChangeResult {
-    if (parentFocusId === childFocusId) {
+    const normalizedParentFocusIds = normalizeParentFocusIds(parentFocusId, parentFocusIds, childFocusId);
+    if (normalizedParentFocusIds.length === 0) {
         return { error: 'A focus cannot be linked to itself.' };
     }
 
@@ -306,16 +308,21 @@ export function buildFocusLinkTextChanges(
     const child = matches[0];
     const lineEnding = detectLineEnding(content);
     const changes: FocusPositionTextChange[] = [];
-    const hasExistingPrerequisiteLink = child.prerequisiteIds.includes(parentFocusId);
     const hasExistingRelativePositionLink = child.currentRelativePositionId === parentFocusId;
+    const matchingPrerequisiteField = findMatchingPrerequisiteField(child, normalizedParentFocusIds);
+    const hasExactPrerequisiteGroup = !!matchingPrerequisiteField
+        && areFocusIdSetsEqual(matchingPrerequisiteField.focusIds, normalizedParentFocusIds);
 
-    if (hasExistingPrerequisiteLink || hasExistingRelativePositionLink) {
+    if (hasExactPrerequisiteGroup && hasExistingRelativePositionLink) {
         if (targetLocalX !== undefined && targetLocalY !== undefined) {
             ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
             ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
         }
-        removeNamedFocusReferences(changes, content, child.prerequisiteFields, parentFocusId, lineEnding);
-        if (hasExistingRelativePositionLink && child.relativePositionId) {
+        changes.push({
+            range: expandRangeToWholeLines(content, matchingPrerequisiteField.range),
+            text: '',
+        });
+        if (child.relativePositionId) {
             changes.push({
                 range: expandRangeToWholeLines(content, child.relativePositionId.nodeRange),
                 text: '',
@@ -331,7 +338,7 @@ export function buildFocusLinkTextChanges(
         ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
         ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
     }
-    ensurePrerequisiteLink(changes, content, child, parentFocusId, lineEnding);
+    ensurePrerequisiteLink(changes, content, child, normalizedParentFocusIds, lineEnding, matchingPrerequisiteField);
     ensureRelativePositionIdLink(changes, content, child, parentFocusId, lineEnding);
 
     return {
@@ -345,8 +352,9 @@ export function buildFocusLinkWorkspaceEdit(
     childFocusId: string,
     targetLocalX?: number,
     targetLocalY?: number,
+    parentFocusIds?: readonly string[],
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
-    const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY);
+    const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY, parentFocusIds);
     if (result.error) {
         return { error: result.error };
     }
@@ -795,10 +803,20 @@ function ensurePrerequisiteLink(
     changes: FocusPositionTextChange[],
     content: string,
     focus: FocusNodeMeta,
-    parentFocusId: string,
+    parentFocusIds: readonly string[],
     lineEnding: string,
+    matchingField?: FocusReferenceFieldMeta,
 ): void {
-    if (focus.prerequisiteIds.includes(parentFocusId)) {
+    if (matchingField) {
+        const mergedIds = Array.from(new Set([...matchingField.focusIds, ...parentFocusIds]));
+        if (mergedIds.length === matchingField.focusIds.length) {
+            return;
+        }
+
+        changes.push({
+            range: expandRangeToWholeLines(content, matchingField.range),
+            text: buildFocusReferenceFieldReplacement(content, matchingField.range, matchingField.fieldName, mergedIds, matchingField.hasOrWrapper, lineEnding),
+        });
         return;
     }
 
@@ -806,7 +824,7 @@ function ensurePrerequisiteLink(
     const { childIndent } = getBlockIndentation(content, focus.sourceRange);
     changes.push({
         range: { start: insertPosition, end: insertPosition },
-        text: `${childIndent}prerequisite = { focus = ${parentFocusId} }${lineEnding}`,
+        text: buildInsertedFocusReferenceField(childIndent, 'prerequisite', parentFocusIds, lineEnding),
     });
 }
 
@@ -854,6 +872,30 @@ function ensureExclusiveLink(
         range: { start: insertPosition, end: insertPosition },
         text: `${childIndent}mutually_exclusive = { focus = ${targetFocusId} }${lineEnding}`,
     });
+}
+
+function normalizeParentFocusIds(
+    parentFocusId: string,
+    parentFocusIds: readonly string[] | undefined,
+    childFocusId: string,
+): string[] {
+    return Array.from(new Set((parentFocusIds && parentFocusIds.length > 0 ? parentFocusIds : [parentFocusId]).filter(focusId => focusId && focusId !== childFocusId)));
+}
+
+function findMatchingPrerequisiteField(
+    focus: FocusNodeMeta,
+    parentFocusIds: readonly string[],
+): FocusReferenceFieldMeta | undefined {
+    return focus.prerequisiteFields.find(field => parentFocusIds.some(parentFocusId => field.focusIds.includes(parentFocusId)));
+}
+
+function areFocusIdSetsEqual(left: readonly string[], right: readonly string[]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    const rightSet = new Set(right);
+    return left.every(focusId => rightSet.has(focusId));
 }
 
 function removeDeletedFocusReferences(
@@ -1096,6 +1138,20 @@ function inferIndentUnit(content: string, blockIndent: string, blockRange: TextR
     return blockIndent.includes('\t') ? '\t' : '    ';
 }
 
+function inferIndentUnitFromIndent(indent: string): string {
+    const tabMatch = /(\t+)$/.exec(indent);
+    if (tabMatch?.[1]) {
+        return '\t';
+    }
+
+    const spaceMatch = /( +)$/.exec(indent);
+    if (spaceMatch?.[1]) {
+        return spaceMatch[1];
+    }
+
+    return '    ';
+}
+
 function buildFocusReferenceFieldReplacement(
     content: string,
     fieldRange: TextRange,
@@ -1123,6 +1179,23 @@ function buildFocusReferenceFieldReplacement(
     return `${blockIndent}${fieldName} = {${lineEnding}` +
         remainingIds.map(id => `${childIndent}focus = ${id}${lineEnding}`).join('') +
         `${blockIndent}}${lineEnding}`;
+}
+
+function buildInsertedFocusReferenceField(
+    childIndent: string,
+    fieldName: string,
+    focusIds: readonly string[],
+    lineEnding: string,
+): string {
+    if (focusIds.length === 1) {
+        return `${childIndent}${fieldName} = { focus = ${focusIds[0]} }${lineEnding}`;
+    }
+
+    const indentUnit = inferIndentUnitFromIndent(childIndent);
+    const focusIndent = childIndent + indentUnit;
+    return `${childIndent}${fieldName} = {${lineEnding}` +
+        focusIds.map(id => `${focusIndent}focus = ${id}${lineEnding}`).join('') +
+        `${childIndent}}${lineEnding}`;
 }
 
 function getBlockIndentation(content: string, blockRange: TextRange): { childIndent: string } {

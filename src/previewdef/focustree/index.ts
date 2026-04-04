@@ -9,51 +9,6 @@ import { FocusPositionEditMessage } from './positioneditcommon';
 import { buildContinuousFocusPositionWorkspaceEdit, buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
 
-type FocusConditionPresetPromptMessage = {
-    command: 'promptFocusConditionPresetName';
-    initialValue?: string;
-};
-
-type FocusConditionPresetWarningMessage = {
-    command: 'showFocusConditionPresetWarning';
-    message: string;
-};
-
-export type FocusConditionPresetTestAction =
-    | 'snapshot'
-    | 'selectConditions'
-    | 'savePreset'
-    | 'applyPreset'
-    | 'deletePreset';
-
-type FocusConditionPresetTestRequestMessage = {
-    command: 'focusConditionPresetTest';
-    requestId: string;
-    action: FocusConditionPresetTestAction;
-    name?: string;
-    presetId?: string;
-    exprKeys?: string[];
-};
-
-export type FocusConditionPresetTestSnapshot = {
-    treeId: string;
-    availableExprKeys: string[];
-    selectedExprKeys: string[];
-    selectedPresetId?: string;
-    presets: Array<{
-        id: string;
-        name: string;
-        exprKeys: string[];
-    }>;
-};
-
-type FocusConditionPresetTestResponseMessage = {
-    command: 'focusConditionPresetTestResponse';
-    requestId: string;
-    snapshot?: FocusConditionPresetTestSnapshot;
-    error?: string;
-};
-
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
     if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'national_focus', '*']) && uri.path.toLowerCase().endsWith('.txt')) {
@@ -71,11 +26,6 @@ export class FocusTreePreview extends PreviewBase {
     private webviewReady = false;
     private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
     private latestRefreshRequestId = 0;
-    private pendingConditionPresetTestRequests = new Map<string, {
-        resolve: (snapshot: FocusConditionPresetTestSnapshot) => void;
-        reject: (error: Error) => void;
-        timeoutHandle: NodeJS.Timeout;
-    }>();
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -168,76 +118,6 @@ export class FocusTreePreview extends PreviewBase {
         this.panel.webview.html = content;
     }
 
-    public async runConditionPresetTestAction(
-        action: FocusConditionPresetTestAction,
-        options?: {
-            name?: string;
-            presetId?: string;
-            exprKeys?: string[];
-        },
-    ): Promise<FocusConditionPresetTestSnapshot> {
-        await this.waitForWebviewReady();
-
-        const requestId = `condition-preset-test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        const message: FocusConditionPresetTestRequestMessage = {
-            command: 'focusConditionPresetTest',
-            requestId,
-            action,
-            name: options?.name,
-            presetId: options?.presetId,
-            exprKeys: options?.exprKeys,
-        };
-
-        return await new Promise<FocusConditionPresetTestSnapshot>(async (resolve, reject) => {
-            const timeoutHandle = setTimeout(() => {
-                this.pendingConditionPresetTestRequests.delete(requestId);
-                reject(new Error(`Timed out waiting for condition preset test action "${action}".`));
-            }, 15000);
-
-            this.pendingConditionPresetTestRequests.set(requestId, {
-                resolve: snapshot => {
-                    clearTimeout(timeoutHandle);
-                    resolve(snapshot);
-                },
-                reject: error => {
-                    clearTimeout(timeoutHandle);
-                    reject(error);
-                },
-                timeoutHandle,
-            });
-
-            const posted = await this.panel.webview.postMessage(message);
-            if (!posted) {
-                const pending = this.pendingConditionPresetTestRequests.get(requestId);
-                if (pending) {
-                    clearTimeout(pending.timeoutHandle);
-                    this.pendingConditionPresetTestRequests.delete(requestId);
-                }
-                reject(new Error(`Failed to post condition preset test action "${action}" to the focus preview.`));
-            }
-        });
-    }
-
-    public override dispose(): void {
-        for (const pending of this.pendingConditionPresetTestRequests.values()) {
-            clearTimeout(pending.timeoutHandle);
-            pending.reject(new Error('Focus preview disposed before the condition preset test action completed.'));
-        }
-        this.pendingConditionPresetTestRequests.clear();
-        super.dispose();
-    }
-
-    private async waitForWebviewReady(timeoutMs: number = 15000): Promise<void> {
-        const deadline = Date.now() + timeoutMs;
-        while (!this.webviewReady) {
-            if (Date.now() >= deadline) {
-                throw new Error('Timed out waiting for the focus preview webview to become ready.');
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-    }
-
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
         const command = (msg as any).command as string | undefined;
         if (command === 'focusTreeWebviewReady') {
@@ -245,46 +125,16 @@ export class FocusTreePreview extends PreviewBase {
             return true;
         }
 
-        if (command === 'focusConditionPresetTestResponse') {
-            const response = msg as unknown as FocusConditionPresetTestResponseMessage;
-            const pending = this.pendingConditionPresetTestRequests.get(response.requestId);
-            if (!pending) {
-                return true;
-            }
-
-            this.pendingConditionPresetTestRequests.delete(response.requestId);
-            if (response.error) {
-                pending.reject(new Error(response.error));
-                return true;
-            }
-
-            if (!response.snapshot) {
-                pending.reject(new Error('Condition preset test response did not include a snapshot.'));
-                return true;
-            }
-
-            pending.resolve(response.snapshot);
-            return true;
-        }
-
         if (command === 'promptFocusConditionPresetName') {
-            const promptMessage = msg as unknown as FocusConditionPresetPromptMessage;
             const name = await vscode.window.showInputBox({
-                title: localize('TODO', 'Save focus condition preset'),
-                prompt: localize('TODO', 'Enter a name for the current focus condition preset.'),
-                value: promptMessage.initialValue ?? '',
+                prompt: localize('TODO', 'Preset name'),
+                value: (msg as any).initialValue ?? '',
                 ignoreFocusOut: true,
             });
             await this.panel.webview.postMessage({
                 command: 'focusConditionPresetNameResolved',
                 name,
             });
-            return true;
-        }
-
-        if (command === 'showFocusConditionPresetWarning') {
-            const warningMessage = msg as unknown as FocusConditionPresetWarningMessage;
-            await vscode.window.showWarningMessage(warningMessage.message);
             return true;
         }
 
@@ -380,6 +230,7 @@ export class FocusTreePreview extends PreviewBase {
                 msg.childFocusId,
                 msg.targetLocalX,
                 msg.targetLocalY,
+                msg.parentFocusIds,
             );
             if (error) {
                 await vscode.window.showErrorMessage(error);
@@ -390,6 +241,7 @@ export class FocusTreePreview extends PreviewBase {
                 await this.panel.webview.postMessage({
                     command: 'focusLinkEditApplied',
                     parentFocusId: msg.parentFocusId,
+                    parentFocusIds: msg.parentFocusIds,
                     childFocusId: msg.childFocusId,
                     targetLocalX: msg.targetLocalX,
                     targetLocalY: msg.targetLocalY,
@@ -411,6 +263,7 @@ export class FocusTreePreview extends PreviewBase {
             await this.panel.webview.postMessage({
                 command: 'focusLinkEditApplied',
                 parentFocusId: msg.parentFocusId,
+                parentFocusIds: msg.parentFocusIds,
                 childFocusId: msg.childFocusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
@@ -487,44 +340,48 @@ export class FocusTreePreview extends PreviewBase {
             return true;
         }
 
-        const { edit, error, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
-            document,
-            this.relativeFilePath,
-            msg.treeEditKey,
-            msg.targetAbsoluteX,
-            msg.targetAbsoluteY,
-        );
-        if (error) {
-            await vscode.window.showErrorMessage(error);
-            return true;
-        }
-
-        if (!edit) {
-            return true;
-        }
-
-        const applied = await vscode.workspace.applyEdit(edit);
-        if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus template insert.'));
-            return true;
-        }
-
-        const updatedDocument = getDocumentByUri(this.uri);
-        if (updatedDocument) {
-            this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            await super.onDocumentChange(updatedDocument);
-            if (placeholderRange) {
-                await vscode.window.showTextDocument(updatedDocument, {
-                    selection: new vscode.Range(
-                        updatedDocument.positionAt(placeholderRange.start),
-                        updatedDocument.positionAt(placeholderRange.end),
-                    ),
-                    viewColumn: vscode.ViewColumn.One,
-                });
+        if (msg.command === 'createFocusTemplateAtPosition') {
+            const { edit, error, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
+                document,
+                this.relativeFilePath,
+                msg.treeEditKey,
+                msg.targetAbsoluteX,
+                msg.targetAbsoluteY,
+            );
+            if (error) {
+                await vscode.window.showErrorMessage(error);
+                return true;
             }
+
+            if (!edit) {
+                return true;
+            }
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus template insert.'));
+                return true;
+            }
+
+            const updatedDocument = getDocumentByUri(this.uri);
+            if (updatedDocument) {
+                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+                await super.onDocumentChange(updatedDocument);
+                if (placeholderRange) {
+                    await vscode.window.showTextDocument(updatedDocument, {
+                        selection: new vscode.Range(
+                            updatedDocument.positionAt(placeholderRange.start),
+                            updatedDocument.positionAt(placeholderRange.end),
+                        ),
+                        viewColumn: vscode.ViewColumn.One,
+                    });
+                }
+            }
+
+            return true;
         }
 
-        return true;
+        return false;
     }
 }
 

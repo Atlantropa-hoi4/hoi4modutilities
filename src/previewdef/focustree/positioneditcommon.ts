@@ -75,6 +75,7 @@ export interface CreateFocusTemplateAtPositionMessage {
 export interface ApplyFocusLinkEditMessage {
     command: 'applyFocusLinkEdit';
     parentFocusId: string;
+    parentFocusIds?: string[];
     childFocusId: string;
     targetLocalX: number;
     targetLocalY: number;
@@ -102,13 +103,19 @@ export interface DeleteFocusMessage {
     documentVersion: number;
 }
 
+export interface PromptFocusConditionPresetNameMessage {
+    command: 'promptFocusConditionPresetName';
+    initialValue?: string;
+}
+
 export type FocusPositionEditMessage =
     | ApplyFocusPositionEditMessage
     | CreateFocusTemplateAtPositionMessage
     | ApplyFocusLinkEditMessage
     | ApplyFocusExclusiveLinkEditMessage
     | ApplyContinuousFocusPositionEditMessage
-    | DeleteFocusMessage;
+    | DeleteFocusMessage
+    | PromptFocusConditionPresetNameMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;

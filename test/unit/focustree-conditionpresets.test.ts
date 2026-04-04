@@ -1,57 +1,46 @@
 import * as assert from 'assert';
 
 const {
+    normalizeConditionExprKeys,
+    filterConditionPresetExprKeys,
+    findMatchingConditionPreset,
     areConditionExprKeySetsEqual,
-    conditionItemToExprKey,
-    deleteConditionPreset,
-    filterConditionExprKeys,
-    findMatchingConditionPresetId,
 } = require('../../src/previewdef/focustree/conditionpresets') as typeof import('../../src/previewdef/focustree/conditionpresets');
 
-describe('focus tree condition preset helpers', () => {
-    it('matches condition sets regardless of order', () => {
-        const first = [
-            conditionItemToExprKey({ scopeName: '', nodeContent: 'has_country_flag = ENG_path_fixed' }),
-            conditionItemToExprKey({ scopeName: '', nodeContent: 'check_variable = { ENG_focus_branch = 0 }' }),
-        ];
-        const second = [first[1], first[0]];
-
-        assert.strictEqual(areConditionExprKeySetsEqual(first, second), true);
+describe('focus tree condition presets', () => {
+    it('normalizes expr keys by deduping and sorting them', () => {
+        assert.deepStrictEqual(
+            normalizeConditionExprKeys(['b!|two', 'a!|one', 'b!|two']),
+            ['a!|one', 'b!|two'],
+        );
     });
 
-    it('filters preset expr keys against the currently available keys', () => {
-        const available = [
-            conditionItemToExprKey({ scopeName: '', nodeContent: 'has_country_flag = ENG_path_fixed' }),
-            conditionItemToExprKey({ scopeName: '', nodeContent: 'check_variable = { ENG_focus_branch = 0 }' }),
-        ];
-        const filtered = filterConditionExprKeys(
+    it('filters preset expr keys against the currently available tree condition keys', () => {
+        assert.deepStrictEqual(
+            filterConditionPresetExprKeys(
+                ['root!|a', 'root!|missing', 'root!|b'],
+                ['root!|b', 'root!|a'],
+            ),
+            ['root!|a', 'root!|b'],
+        );
+    });
+
+    it('matches presets by exact expr key set regardless of order', () => {
+        const preset = findMatchingConditionPreset(
             [
-                available[1],
-                conditionItemToExprKey({ scopeName: '', nodeContent: 'missing_condition = yes' }),
-                available[0],
+                { id: 'one', name: 'Path A', exprKeys: ['root!|b', 'root!|a'] },
+                { id: 'two', name: 'Path B', exprKeys: ['root!|c'] },
             ],
-            available,
+            ['root!|a', 'root!|b'],
         );
 
-        assert.deepStrictEqual(filtered, [available[0], available[1]].sort());
+        assert.strictEqual(preset?.id, 'one');
     });
 
-    it('returns undefined when stale preset keys collapse to an empty selection', () => {
-        const presetExprKeys = [conditionItemToExprKey({ scopeName: '', nodeContent: 'missing_condition = yes' })];
-        const filtered = filterConditionExprKeys(presetExprKeys, []);
-
-        assert.deepStrictEqual(filtered, []);
-    });
-
-    it('removes deleted presets and clears their selection match', () => {
-        const exprKeys = [conditionItemToExprKey({ scopeName: '', nodeContent: 'has_country_flag = ENG_path_fixed' })];
-        const presets = [
-            { id: 'preset-a', name: 'A', exprKeys },
-            { id: 'preset-b', name: 'B', exprKeys: [conditionItemToExprKey({ scopeName: '', nodeContent: 'other = yes' })] },
-        ];
-        const remainingPresets = deleteConditionPreset(presets, 'preset-a');
-
-        assert.deepStrictEqual(remainingPresets.map(preset => preset.id), ['preset-b']);
-        assert.strictEqual(findMatchingConditionPresetId(remainingPresets, exprKeys), undefined);
+    it('treats different expr key sets as different presets', () => {
+        assert.strictEqual(
+            areConditionExprKeySetsEqual(['root!|a', 'root!|b'], ['root!|a']),
+            false,
+        );
     });
 });
