@@ -69,7 +69,6 @@ For feature details and user manual, please refer to the fork wiki and repositor
 
 * GUI of focus tree can't be configured like technology tree.
 * Edge lines on world map not alway fit edge of colors.
-* Event tree preview will duplicate events even they are same event if they are from different option.
 
 ## Development
 

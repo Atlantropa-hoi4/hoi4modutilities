@@ -1,8 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { Commands, ViewType, WebviewType } from '../../src/constants';
-import { FocusTreePreview } from '../../src/previewdef/focustree';
-import { previewManager } from '../../src/previewdef/previewmanager';
 import { waitFor } from '../testUtils';
 
 function hasPreviewTab(viewType: string): boolean {
@@ -18,10 +16,6 @@ function hasCustomEditorTab(viewType: string, uri: vscode.Uri): boolean {
         .some(tab => tab.input instanceof vscode.TabInputCustom &&
             tab.input.viewType === viewType &&
             tab.input.uri.toString() === uri.toString());
-}
-
-function getPreview(uri: vscode.Uri): FocusTreePreview | undefined {
-    return (previewManager as any)._previews[uri.toString()] as FocusTreePreview | undefined;
 }
 
 suite('extension smoke', () => {
