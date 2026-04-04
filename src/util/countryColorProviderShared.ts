@@ -1,3 +1,5 @@
+import { Node, NodeValue, parseHoi4File } from '../hoiformat/hoiparser';
+
 export interface CountryColorMatch {
     start: number;
     end: number;
@@ -15,38 +17,21 @@ export function isCountryColorFile(path: string): boolean {
 }
 
 export function findCountryColorMatches(text: string): CountryColorMatch[] {
-    const matches: CountryColorMatch[] = [];
+    try {
+        const root = parseHoi4File(text);
+        const matches: CountryColorMatch[] = [];
 
-    for (const match of text.matchAll(countryColorPattern)) {
-        const fullMatch = match[0];
-        const propertyPrefix = match.groups?.prefix;
-        const key = match.groups?.key;
-        if (!fullMatch || propertyPrefix === undefined || (key !== 'color' && key !== 'color_ui') || isCommentedOut(text, match.index ?? 0)) {
-            continue;
-        }
-
-        const red = parseRgbComponent(match.groups?.red);
-        const green = parseRgbComponent(match.groups?.green);
-        const blue = parseRgbComponent(match.groups?.blue);
-        if (red === undefined || green === undefined || blue === undefined) {
-            continue;
-        }
-
-        const start = (match.index ?? 0) + propertyPrefix.length;
-        const valueText = fullMatch.slice(propertyPrefix.length);
-        matches.push({
-            start,
-            end: (match.index ?? 0) + fullMatch.length,
-            key,
-            valueText,
-            red,
-            green,
-            blue,
-            format: match.groups?.attachment ? "rgb" : "plain",
+        visitNodeValue(root.value, node => {
+            const match = toCountryColorMatch(node, text);
+            if (match) {
+                matches.push(match);
+            }
         });
-    }
 
-    return matches;
+        return matches;
+    } catch {
+        return [];
+    }
 }
 
 export function formatCountryColorValue(
@@ -85,8 +70,8 @@ export function formatCountryColorBlock(
     return rewritten ?? createCountryColorLabel(referenceText, rgb);
 }
 
-function parseRgbComponent(rawValue: string | undefined): number | undefined {
-    if (rawValue === undefined) {
+function parseRgbComponent(rawValue: string | null | undefined): number | undefined {
+    if (rawValue === undefined || rawValue === null) {
         return undefined;
     }
 
@@ -110,13 +95,57 @@ function normalizeRgbComponent(value: number): number {
     return Math.round(value);
 }
 
-function isCommentedOut(text: string, matchStart: number): boolean {
-    const lineStart = text.lastIndexOf('\n', matchStart - 1) + 1;
-    const commentIndex = text.indexOf('#', lineStart);
-    return commentIndex !== -1 && commentIndex < matchStart;
+function visitNodeValue(value: NodeValue, callback: (node: Node) => void): void {
+    if (!Array.isArray(value)) {
+        return;
+    }
+
+    for (const node of value) {
+        callback(node);
+        visitNodeValue(node.value, callback);
+    }
 }
 
-const countryColorPattern = /(?<prefix>\b(?<key>color(?:_ui)?)\b\s*=\s*)(?<attachment>rgb\s*)?\{\s*(?<red>-?(?:\d+(?:\.\d*)?|\.\d+))\s+(?<green>-?(?:\d+(?:\.\d*)?|\.\d+))\s+(?<blue>-?(?:\d+(?:\.\d*)?|\.\d+))\s*\}/gim;
+function toCountryColorMatch(node: Node, sourceText: string): CountryColorMatch | undefined {
+    const key = node.name?.toLowerCase();
+    if (key !== 'color' && key !== 'color_ui') {
+        return undefined;
+    }
+
+    if (!Array.isArray(node.value) || !node.valueStartToken || !node.valueEndToken) {
+        return undefined;
+    }
+
+    const attachment = node.valueAttachment?.name?.toLowerCase();
+    if (attachment && attachment !== 'rgb') {
+        return undefined;
+    }
+
+    const [redNode, greenNode, blueNode, extraNode] = node.value;
+    if (extraNode) {
+        return undefined;
+    }
+
+    const red = parseRgbComponent(redNode?.name);
+    const green = parseRgbComponent(greenNode?.name);
+    const blue = parseRgbComponent(blueNode?.name);
+    if (red === undefined || green === undefined || blue === undefined) {
+        return undefined;
+    }
+
+    const start = (node.valueAttachmentToken ?? node.valueStartToken).start;
+    const end = node.valueEndToken.end;
+    return {
+        start,
+        end,
+        key,
+        valueText: sourceText.slice(start, end),
+        red,
+        green,
+        blue,
+        format: attachment === 'rgb' ? 'rgb' : 'plain',
+    };
+}
 
 function rewriteCountryColorBlock(
     referenceText: string,

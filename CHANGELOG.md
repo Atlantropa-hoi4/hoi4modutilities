@@ -9,6 +9,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Added
 * Add a native VS Code RGB color picker for `common/countries/colors.txt`, `common/countries/color.txt`, `common/countries/cosmetic.txt`, and `common/ideologies/*.txt`, so definition color values can be chosen directly from the editor instead of typed by hand.
 
+### Fixed
+* Tighten RGB picker range discovery to parsed HOI4 `color` and `color_ui` nodes, preventing the editor from showing color-picker decorations on stray color-like text in supported definition files.
+
 ## [0.13.19] - 2026/04/04
 
 ### Added
