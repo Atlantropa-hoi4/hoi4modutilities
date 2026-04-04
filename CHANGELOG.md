@@ -4,7 +4,7 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.20] - 2026/04/04 - Latest
+## [0.13.21] - 2026/04/04 - Latest
 
 ### Added
 * Add a native VS Code RGB color picker for `common/countries/colors.txt`, `common/countries/color.txt`, `common/countries/cosmetic.txt`, and `common/ideologies/*.txt`, so definition color values can be chosen directly from the editor instead of typed by hand.
