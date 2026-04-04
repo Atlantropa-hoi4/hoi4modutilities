@@ -20,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
-const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildFocusExclusiveLinkTextChanges, buildCreateFocusTemplateTextChanges, buildDeleteFocusTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
+const { buildFocusPositionTextChanges, buildContinuousFocusPositionTextChanges, buildFocusLinkTextChanges, buildFocusExclusiveLinkTextChanges, buildCreateFocusTemplateTextChanges, buildDeleteFocusTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
 const { getFocusPosition, getLocalPositionFromRenderedAbsolute } = require('../../src/previewdef/focustree/positioning') as typeof import('../../src/previewdef/focustree/positioning');
 
 describe('focus tree position edit helpers', () => {
@@ -62,6 +62,79 @@ describe('focus tree position edit helpers', () => {
 
         assert.match(updated, /^\uFEFFfocus_tree = \{/);
         assert.match(updated, /id = ROOT[\s\S]*?x = 9[\s\S]*?y = 10/);
+    });
+
+    it('replaces an existing continuous_focus_position block in the current focus tree', () => {
+        const content = readFixture('focus', 'layout-edit.txt');
+        const result = buildContinuousFocusPositionTextChanges(
+            content,
+            'common/national_focus/layout-edit.txt',
+            'focus-tree:common/national_focus/layout-edit.txt:focus:0',
+            222,
+            333,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /continuous_focus_position = \{[\s\S]*?x = 222[\s\S]*?y = 333/);
+    });
+
+    it('inserts a missing continuous_focus_position block inside the focus tree', () => {
+        const content = `focus_tree = {
+    id = TREE
+    focus = {
+        id = ROOT
+        x = 1
+        y = 2
+    }
+}`;
+        const result = buildContinuousFocusPositionTextChanges(
+            content,
+            'common/national_focus/no-continuous.txt',
+            'focus-tree:common/national_focus/no-continuous.txt:focus:0',
+            120,
+            340,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /focus = \{[\s\S]*?y = 2[\s\S]*?\}\n\s*continuous_focus_position = \{[\s\S]*?x = 120[\s\S]*?y = 340[\s\S]*?\}\n\}/);
+    });
+
+    it('preserves parser offsets when inserting continuous_focus_position into a BOM file', () => {
+        const content = '\uFEFFfocus_tree = {\n    id = TREE\n}';
+        const result = buildContinuousFocusPositionTextChanges(
+            content,
+            'common/national_focus/bom-continuous.txt',
+            'focus-tree:common/national_focus/bom-continuous.txt:focus:0',
+            50,
+            1000,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /^\uFEFFfocus_tree = \{/);
+        assert.match(updated, /continuous_focus_position = \{[\s\S]*?x = 50[\s\S]*?y = 1000/);
+    });
+
+    it('rejects continuous position edits for non-focus-tree edit keys', () => {
+        const content = `shared_focus = {
+    id = SHARED
+    x = 1
+    y = 2
+}`;
+        const result = buildContinuousFocusPositionTextChanges(
+            content,
+            'common/national_focus/shared.txt',
+            'focus-tree:common/national_focus/shared.txt:shared:top-level',
+            1,
+            2,
+        );
+
+        assert.match(result.error ?? '', /not editable/i);
     });
 
     it('derives the local x and y from rendered absolute drop positions', () => {

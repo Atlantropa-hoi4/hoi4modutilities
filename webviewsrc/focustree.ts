@@ -146,6 +146,10 @@ let lastNavigatedFocusIdByTree: Record<string, string | undefined> = getState().
 let xGridSize: number = (window as any).xGridSize;
 let yGridSize: number = (window as any).yGridSize ?? 130;
 const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
+const continuousFocusWidth = 770;
+const continuousFocusHeight = 380;
+const continuousFocusLeftAnchorOffset = 59;
+const continuousFocusTopAnchorOffset = 7;
 const focusCreateSidePaddingColumns = 4;
 const focusCreateTopPaddingRows = 4;
 const focusCreateRightPaddingColumns = 4;
@@ -644,14 +648,70 @@ function navigatePreviewToFocusId(focusId: string, options?: { updateLastNavigat
 }
 
 function navigatePreviewToContinuousFocus() {
-    const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
-    if (!continuousFocusElement || continuousFocusElement.style.display === 'none') {
+    const center = getCurrentContinuousFocusCanvasCenter();
+    if (!center) {
         return;
     }
 
-    const left = parseFloat(continuousFocusElement.style.left || '0') + 385;
-    const top = parseFloat(continuousFocusElement.style.top || '0') + 190;
-    scrollCanvasPointIntoView({ x: left, y: top });
+    scrollCanvasPointIntoView(center);
+}
+
+function getContinuousFocusDisplayPositionFromStored(x: number, y: number): NumberPosition {
+    return {
+        x: x - continuousFocusLeftAnchorOffset,
+        y: y + continuousFocusTopAnchorOffset,
+    };
+}
+
+function getContinuousFocusStoredPositionFromDisplay(left: number, top: number): NumberPosition {
+    return {
+        x: left + continuousFocusLeftAnchorOffset,
+        y: top - continuousFocusTopAnchorOffset,
+    };
+}
+
+function getCurrentContinuousFocusCanvasCenter(): NumberPosition | undefined {
+    const focusTree = currentRenderedFocusTree ?? focusTrees[selectedFocusTreeIndex];
+    if (!focusTree
+        || focusTree.continuousFocusPositionX === undefined
+        || focusTree.continuousFocusPositionY === undefined) {
+        return undefined;
+    }
+
+    const displayPosition = getContinuousFocusDisplayPositionFromStored(
+        focusTree.continuousFocusPositionX,
+        focusTree.continuousFocusPositionY,
+    );
+    return {
+        x: displayPosition.x + continuousFocusWidth / 2,
+        y: displayPosition.y + continuousFocusHeight / 2,
+    };
+}
+
+function applyContinuousFocusElementPosition(focusTree: FocusTree | undefined) {
+    const continuousFocuses = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+    if (!continuousFocuses) {
+        return;
+    }
+
+    if (focusTree?.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
+        const displayPosition = getContinuousFocusDisplayPositionFromStored(
+            focusTree.continuousFocusPositionX,
+            focusTree.continuousFocusPositionY,
+        );
+        continuousFocuses.style.left = `${displayPosition.x}px`;
+        continuousFocuses.style.top = `${displayPosition.y}px`;
+        continuousFocuses.style.display = 'block';
+    } else {
+        continuousFocuses.style.display = 'none';
+    }
+}
+
+function isContinuousFocusEditable(focusTree: FocusTree | undefined): boolean {
+    return !!focusTree
+        && focusTree.kind === 'focus'
+        && !!focusTree.continuousLayout?.editable
+        && focusTree.continuousLayout.sourceFile === (window as any).focusPositionActiveFile;
 }
 
 function projectFocusPositionToCanvas(position: NumberPosition): NumberPosition {
@@ -915,9 +975,10 @@ function updateFocusMinimapTooltip(canvas: HTMLDivElement, tooltip: HTMLDivEleme
         selectedFocusIds: currentSelectedFocusIds,
         searchedFocusIds: currentSearchedFocusIds,
         lastNavigatedFocusId: getCurrentLastNavigatedFocusId(),
+        continuousCanvasPoint: getCurrentContinuousFocusCanvasCenter(),
     });
 
-    let nearestFocusId: string | undefined;
+    let nearestLabel: string | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const focusPoint of model.points) {
         const minimapPoint = projectCanvasPointToMinimap({ x: focusPoint.canvasX, y: focusPoint.canvasY }, transform);
@@ -926,16 +987,29 @@ function updateFocusMinimapTooltip(canvas: HTMLDivElement, tooltip: HTMLDivEleme
         const distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < nearestDistance) {
             nearestDistance = distance;
-            nearestFocusId = focusPoint.focusId;
+            nearestLabel = focusPoint.focusId;
+        }
+    }
+    if (model.continuousPoint) {
+        const minimapPoint = projectCanvasPointToMinimap(
+            { x: model.continuousPoint.canvasX, y: model.continuousPoint.canvasY },
+            transform,
+        );
+        const dx = minimapPoint.x - point.x;
+        const dy = minimapPoint.y - point.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestLabel = model.continuousPoint.label;
         }
     }
 
-    if (!nearestFocusId || nearestDistance > 14) {
+    if (!nearestLabel || nearestDistance > 14) {
         tooltip.style.display = 'none';
         return;
     }
 
-    tooltip.textContent = nearestFocusId;
+    tooltip.textContent = nearestLabel;
     tooltip.style.display = 'block';
     tooltip.style.left = `${Math.min(point.x + 10, rect.width - tooltip.offsetWidth - 4)}px`;
     tooltip.style.top = `${Math.min(point.y + 10, rect.height - tooltip.offsetHeight - 4)}px`;
@@ -965,9 +1039,10 @@ function updateFocusMinimapUi() {
         selectedFocusIds: currentSelectedFocusIds,
         searchedFocusIds: currentSearchedFocusIds,
         lastNavigatedFocusId: getCurrentLastNavigatedFocusId(),
+        continuousCanvasPoint: getCurrentContinuousFocusCanvasCenter(),
     });
 
-    points.innerHTML = minimapModel.points.map(point => {
+    const focusPointMarkup = minimapModel.points.map(point => {
         const projected = projectCanvasPointToMinimap({ x: point.canvasX, y: point.canvasY }, transform);
         const size = point.isSelected ? 6 : point.isSearched ? 5 : 4;
         const background = point.isSelected
@@ -990,6 +1065,24 @@ function updateFocusMinimapUi() {
             box-sizing:border-box;
         "></div>`;
     }).join('');
+    const continuousPointMarkup = minimapModel.continuousPoint ? (() => {
+        const projected = projectCanvasPointToMinimap(
+            { x: minimapModel.continuousPoint!.canvasX, y: minimapModel.continuousPoint!.canvasY },
+            transform,
+        );
+        return `<div data-continuous-point="true" style="
+            position:absolute;
+            left:${projected.x - 4}px;
+            top:${projected.y - 4}px;
+            width:8px;
+            height:8px;
+            border-radius:2px;
+            background:rgba(255, 196, 64, 0.95);
+            border:1px solid rgba(0, 0, 0, 0.45);
+            box-sizing:border-box;
+        "></div>`;
+    })() : '';
+    points.innerHTML = focusPointMarkup + continuousPointMarkup;
 
     const viewportRect = getFocusMinimapViewportRect({
         scrollX: window.scrollX,
@@ -1043,6 +1136,15 @@ function updateFocusPositionEditUi() {
                 ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
                 : '';
     });
+
+    const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+    const continuousEditable = isContinuousFocusEditable(currentRenderedFocusTree);
+    if (continuousFocusElement) {
+        continuousFocusElement.style.cursor = focusPositionEditMode && continuousEditable ? 'grab' : 'default';
+        continuousFocusElement.style.boxShadow = focusPositionEditMode && continuousEditable
+            ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
+            : '';
+    }
     updateFocusRelationVisualizationUi();
     updateFocusMinimapUi();
 }
@@ -1820,7 +1922,7 @@ function getBlankCanvasPanTarget(event: MouseEvent): HTMLElement | null {
         return null;
     }
 
-    if (element.closest('[data-focus-id], .navigator, #focus-minimap, .toolbar-outer, #warnings-container, input, select, button, textarea, option, ul.select-dropdown, li')) {
+    if (element.closest('[data-focus-id], .navigator, #continuousFocuses, #focus-minimap, .toolbar-outer, #warnings-container, input, select, button, textarea, option, ul.select-dropdown, li')) {
         return null;
     }
 
@@ -2009,6 +2111,82 @@ function bindFocusPositionDragHandlers() {
         focusElement.addEventListener('mousedown', handler, true);
         focusPositionDragBindings.push({ element: focusElement, handler });
     });
+
+    const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
+    const focusTree = currentRenderedFocusTree;
+    if (!continuousFocusElement || !isContinuousFocusEditable(focusTree)) {
+        return;
+    }
+
+    const handler = (event: MouseEvent) => {
+        if (!focusPositionEditMode || event.button !== 0 || hasPendingFocusLink() || !currentRenderedFocusTree) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startingLeft = parseFloat(continuousFocusElement.style.left || '0');
+        const startingTop = parseFloat(continuousFocusElement.style.top || '0');
+        let nextLeft = startingLeft;
+        let nextTop = startingTop;
+        let dragGestureStarted = false;
+
+        continuousFocusElement.style.cursor = 'grabbing';
+        continuousFocusElement.style.zIndex = '20';
+        continuousFocusElement.style.willChange = 'left, top';
+
+        const mouseMoveHandler = (moveEvent: MouseEvent) => {
+            const scale = getState().scale || 1;
+            const deltaPageX = moveEvent.pageX - event.pageX;
+            const deltaPageY = moveEvent.pageY - event.pageY;
+            if (!dragGestureStarted && Math.max(Math.abs(deltaPageX), Math.abs(deltaPageY)) < focusPositionDragThresholdPx) {
+                return;
+            }
+
+            dragGestureStarted = true;
+            nextLeft = startingLeft + deltaPageX / scale;
+            nextTop = startingTop + deltaPageY / scale;
+            continuousFocusElement.style.left = `${nextLeft}px`;
+            continuousFocusElement.style.top = `${nextTop}px`;
+        };
+
+        const mouseUpHandler = () => {
+            document.removeEventListener('mousemove', mouseMoveHandler);
+            document.removeEventListener('mouseup', mouseUpHandler);
+            continuousFocusElement.style.cursor = focusPositionEditMode ? 'grab' : 'default';
+            continuousFocusElement.style.zIndex = '';
+            continuousFocusElement.style.willChange = '';
+
+            if (!dragGestureStarted || !currentRenderedFocusTree) {
+                applyContinuousFocusElementPosition(currentRenderedFocusTree);
+                return;
+            }
+
+            const nextStoredPosition = getContinuousFocusStoredPositionFromDisplay(nextLeft, nextTop);
+            const roundedTargetX = Math.round(nextStoredPosition.x);
+            const roundedTargetY = Math.round(nextStoredPosition.y);
+            if (roundedTargetX === currentRenderedFocusTree.continuousFocusPositionX
+                && roundedTargetY === currentRenderedFocusTree.continuousFocusPositionY) {
+                applyContinuousFocusElementPosition(currentRenderedFocusTree);
+                return;
+            }
+
+            vscode.postMessage({
+                command: 'applyContinuousFocusPositionEdit',
+                focusTreeEditKey: currentRenderedFocusTree.continuousLayout?.editKey ?? '',
+                targetX: roundedTargetX,
+                targetY: roundedTargetY,
+                documentVersion: focusPositionDocumentVersion,
+            });
+        };
+
+        document.addEventListener('mousemove', mouseMoveHandler);
+        document.addEventListener('mouseup', mouseUpHandler);
+    };
+
+    continuousFocusElement.addEventListener('mousedown', handler, true);
+    focusPositionDragBindings.push({ element: continuousFocusElement, handler });
 }
 
 function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, targetLocalY: number) {
@@ -2029,6 +2207,19 @@ function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, ta
         getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
     });
     setCurrentFocusPositions(recalculatedPositions);
+}
+
+function updateContinuousFocusPositionAfterApply(focusTreeEditKey: string, targetX: number, targetY: number) {
+    const targetTree = focusTrees.find(focusTree => focusTree.continuousLayout?.editKey === focusTreeEditKey);
+    if (!targetTree) {
+        return;
+    }
+
+    targetTree.continuousFocusPositionX = targetX;
+    targetTree.continuousFocusPositionY = targetY;
+    if (targetTree.continuousLayout) {
+        targetTree.continuousLayout.basePosition = { x: targetX, y: targetY };
+    }
 }
 
 function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, targetLocalX?: number, targetLocalY?: number) {
@@ -2137,6 +2328,7 @@ async function buildContent() {
     syncCurrentSelectedFocusIds();
     setCurrentFocusPositions({ ...focusPosition });
     currentRenderedExprs = renderExprs;
+    applyContinuousFocusElementPosition(focusTree);
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
     const minY = minBy(Object.values(focusPosition), 'y')?.y ?? 0;
@@ -2238,15 +2430,7 @@ function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Re
 
 function updateSelectedFocusTree(clearCondition: boolean) {
     const focusTree = focusTrees[selectedFocusTreeIndex];
-    const continuousFocuses = document.getElementById('continuousFocuses') as HTMLDivElement;
-
-    if (focusTree.continuousFocusPositionX !== undefined && focusTree.continuousFocusPositionY !== undefined) {
-        continuousFocuses.style.left = (focusTree.continuousFocusPositionX - 59) + 'px';
-        continuousFocuses.style.top = (focusTree.continuousFocusPositionY + 7) + 'px';
-        continuousFocuses.style.display = 'block';
-    } else {
-        continuousFocuses.style.display = 'none';
-    }
+    applyContinuousFocusElementPosition(focusTree);
 
     if (useConditionInFocus) {
         const conditionExprs = getTreeConditionExprKeys(focusTree).map(exprKeyToConditionItem);
@@ -2634,8 +2818,11 @@ window.addEventListener('load', tryRun(async function() {
             documentVersion?: number;
             name?: string;
             focusId?: string;
+            focusTreeEditKey?: string;
             targetLocalX?: number;
             targetLocalY?: number;
+            targetX?: number;
+            targetY?: number;
             parentFocusId?: string;
             childFocusId?: string;
             sourceFocusId?: string;
@@ -2677,6 +2864,7 @@ window.addEventListener('load', tryRun(async function() {
         }
 
         if (message.command !== 'focusPositionEditApplied'
+            && message.command !== 'continuousFocusPositionEditApplied'
             && message.command !== 'focusLinkEditApplied'
             && message.command !== 'focusExclusiveLinkEditApplied') {
             return;
@@ -2688,6 +2876,12 @@ window.addEventListener('load', tryRun(async function() {
             && message.targetLocalX !== undefined
             && message.targetLocalY !== undefined) {
             updateFocusPositionAfterApply(message.focusId, message.targetLocalX, message.targetLocalY);
+        }
+        if (message.command === 'continuousFocusPositionEditApplied'
+            && message.focusTreeEditKey !== undefined
+            && message.targetX !== undefined
+            && message.targetY !== undefined) {
+            updateContinuousFocusPositionAfterApply(message.focusTreeEditKey, message.targetX, message.targetY);
         }
         if (message.command === 'focusLinkEditApplied'
             && message.parentFocusId !== undefined

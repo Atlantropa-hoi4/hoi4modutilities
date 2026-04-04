@@ -1,28 +1,30 @@
-# HOI4 Mod Utilities Focus Preview Large-Tree Navigation Todo
+# HOI4 Mod Utilities Continuous Focus Position Edit Todo
 
 ## Plan
-- [x] Inspect the current search, zoom, scroll, and selection restore paths for large-tree navigation
-- [x] Add a right-side minimap shell with collapse state and compact jump actions
-- [x] Add tested minimap geometry helpers for bounds, viewport, and scroll-target conversion
-- [x] Wire minimap rendering, click jump, drag move, and hover tooltip in the focustree webview
-- [x] Reflect selected, searched, and last-navigated focuses in minimap state without regressing edit-mode interactions
-- [x] Add regression coverage for minimap geometry and state projection
-- [x] Update changelog notes for the same `0.13.20` release line
+- [x] Inspect the current `continuous_focus_position` parse/render path and reuse the existing focus-edit message flow where possible
+- [x] Extend focustree metadata/types so continuous focus positions keep writable source ranges and tree ownership info
+- [x] Add host-side continuous position writeback helpers for replace-or-insert behavior with BOM-safe ranges
+- [x] Wire a dedicated `applyContinuousFocusPositionEdit` message through the focus preview host and optimistic webview refresh path
+- [x] Add edit-mode drag handling for `#continuousFocuses` without regressing blank-canvas pan, create, marquee, minimap, or relation editing
+- [x] Keep `Jump to continuous` and minimap navigation synchronized with the updated continuous position source of truth
+- [x] Add regression coverage for continuous position text changes and minimap model support
+- [x] Update the existing `0.13.20` release notes for the new continuous edit capability
 - [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
 - [x] Record review results and verification notes
 
 ## Notes
-- Scope for this pass is large-tree navigation only in the focus preview; parser/schema/writeback behavior stays unchanged.
-- The primary v1 navigation surface is a fixed minimap on the right, plus `Jump to selected` and `Jump to continuous` actions.
-- Minimap interaction must stay separate from blank-canvas pan, drag edit, marquee select, and context-menu hit targets.
+- Scope for this pass is `continuous_focus_position` editing only; no numeric HUD, reset action, or unrelated parser changes.
+- Continuous position writeback must stay in absolute preview coordinates, not focus grid cell coordinates.
+- Imported/shared/joint trees remain read-only for continuous editing; only the current document's top-level `focus_tree` continuous block is editable.
 
 ## Review
-- Added a fixed right-side focus minimap shell with collapse state, viewport rectangle, hover tooltip, and quick jumps to the selected or continuous focus region.
-- Added pure minimap helper calculations in `src/previewdef/focustree/focusminimap.ts` so focus-point projection, viewport mapping, and click-to-scroll behavior are testable outside the webview.
-- The focustree webview now rebuilds minimap points only after content renders, then keeps viewport and highlight state in sync across scroll, zoom, search, selection, and tree changes.
-- Blank-canvas pan, drag edit, marquee selection, create, and context-menu hit-tests now explicitly ignore the minimap layer so navigation clicks do not leak into edit interactions.
-- Added regression coverage in `test/unit/focustree-minimap.test.ts` for negative-coordinate bounds projection, viewport rectangle conversion, and main-preview scroll targeting.
-- Updated `CHANGELOG.md` within the existing `0.13.20` release line to record the large-tree minimap navigation work.
-- Verification passed sequentially: `npm run compile-ts`, `npm run lint`, `npm test`, `npm run package`.
+- Added continuous-position edit metadata for local `focus_tree` blocks so the host can rewrite existing `continuous_focus_position` coordinates or insert the block later using the same stable tree edit key.
+- Added `buildContinuousFocusPositionTextChanges` and a matching workspace-edit builder that are BOM-safe, reject non-local trees, and support both replace and insert flows inside `focus_tree = {}`.
+- Wired a new `applyContinuousFocusPositionEdit` message through the focus preview host and optimistic webview update path, reusing the existing local-version guard instead of forcing a full preview reload.
+- In `Edit` mode, the `Continuous focuses` helper is now its own draggable target with pointer ownership separated from blank-canvas pan, create, marquee selection, minimap clicks, and relation editing.
+- `Jump to continuous` and the minimap now read from the same continuous-position source of truth, and the minimap renders a dedicated continuous marker in addition to focus points.
+- Added regression coverage in `test/unit/focustree-positionedit.test.ts`, `test/unit/focustree-schema.test.ts`, and `test/unit/focustree-minimap.test.ts` for replace/insert, BOM safety, read-only rejection, metadata capture, and continuous minimap projection.
+- Updated `CHANGELOG.md` within the existing `0.13.20` line to record direct preview editing of `continuous_focus_position`.
+- Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, `npm run package`.
 - Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.20.vsix`.
-- Manual VS Code preview smoke for live minimap drag, tooltip, and jump behavior was not run in this terminal session.
+- Manual VS Code smoke for live dragging of `Continuous focuses` inside the preview was not run in this terminal session.

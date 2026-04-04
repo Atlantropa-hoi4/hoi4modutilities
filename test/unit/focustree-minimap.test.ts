@@ -17,6 +17,7 @@ describe('focus tree minimap helpers', () => {
             selectedFocusIds: ['RIGHT_BOTTOM'],
             searchedFocusIds: ['LEFT_TOP'],
             lastNavigatedFocusId: 'RIGHT_BOTTOM',
+            continuousCanvasPoint: { x: 820, y: 1180 },
         });
 
         assert.strictEqual(model.canvasWidth, 1200);
@@ -38,6 +39,11 @@ describe('focus tree minimap helpers', () => {
             isSelected: true,
             isSearched: false,
             isLastNavigated: true,
+        });
+        assert.deepStrictEqual(model.continuousPoint, {
+            canvasX: 820,
+            canvasY: 1180,
+            label: 'Continuous focuses',
         });
     });
 

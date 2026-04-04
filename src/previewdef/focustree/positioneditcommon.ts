@@ -42,6 +42,20 @@ export interface FocusTreeCreateMeta {
     focusIdPrefix?: string;
 }
 
+export interface ContinuousFocusPositionMeta {
+    editKey: string;
+    editable: boolean;
+    sourceFile: string;
+    focusTreeRange?: TextRange;
+    sourceRange?: TextRange;
+    x?: ScalarFieldMeta;
+    y?: ScalarFieldMeta;
+    basePosition: {
+        x: number;
+        y: number;
+    };
+}
+
 export interface ApplyFocusPositionEditMessage {
     command: 'applyFocusPositionEdit';
     focusId: string;
@@ -74,6 +88,14 @@ export interface ApplyFocusExclusiveLinkEditMessage {
     documentVersion: number;
 }
 
+export interface ApplyContinuousFocusPositionEditMessage {
+    command: 'applyContinuousFocusPositionEdit';
+    focusTreeEditKey: string;
+    targetX: number;
+    targetY: number;
+    documentVersion: number;
+}
+
 export interface DeleteFocusMessage {
     command: 'deleteFocus';
     focusId: string;
@@ -85,6 +107,7 @@ export type FocusPositionEditMessage =
     | CreateFocusTemplateAtPositionMessage
     | ApplyFocusLinkEditMessage
     | ApplyFocusExclusiveLinkEditMessage
+    | ApplyContinuousFocusPositionEditMessage
     | DeleteFocusMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
-import { FocusTreeCreateMeta, TextRange } from "./positioneditcommon";
+import { ContinuousFocusPositionMeta, FocusTreeCreateMeta, TextRange } from "./positioneditcommon";
 import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 interface ScalarFieldMeta {
@@ -109,6 +109,75 @@ export function buildFocusPositionWorkspaceEdit(
     targetLocalY: number,
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
     const result = buildFocusPositionTextChanges(document.getText(), focusId, targetLocalX, targetLocalY);
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const changes = result.changes ?? [];
+    if (changes.length === 0) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+        edit.replace(
+            document.uri,
+            new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+            change.text,
+        );
+    }
+
+    return { edit };
+}
+
+export function buildContinuousFocusPositionTextChanges(
+    content: string,
+    filePath: string,
+    treeEditKey: string,
+    targetX: number,
+    targetY: number,
+): FocusPositionTextChangeResult {
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const continuousMeta = collectFocusPositionFileMetadata(root, filePath).continuousTrees[treeEditKey];
+    const shiftedMeta = continuousMeta ? shiftContinuousFocusMeta(continuousMeta, bomOffset) : undefined;
+    if (!shiftedMeta || !shiftedMeta.editable) {
+        return { error: 'The selected focus tree continuous position is not editable in the current file.' };
+    }
+
+    if (!shiftedMeta.focusTreeRange) {
+        return { error: 'The selected focus tree has no writable continuous position anchor.' };
+    }
+
+    const lineEnding = detectLineEnding(content);
+    const changes: FocusPositionTextChange[] = [];
+    if (shiftedMeta.sourceRange) {
+        ensureScalarField(changes, content, shiftedMeta.sourceRange, shiftedMeta.x, 'x', `${Math.round(targetX)}`, lineEnding);
+        ensureScalarField(changes, content, shiftedMeta.sourceRange, shiftedMeta.y, 'y', `${Math.round(targetY)}`, lineEnding);
+    } else {
+        changes.push(createContinuousFocusInsertionChange(content, shiftedMeta.focusTreeRange, Math.round(targetX), Math.round(targetY), lineEnding));
+    }
+
+    return {
+        changes: dedupeChanges(changes),
+    };
+}
+
+export function buildContinuousFocusPositionWorkspaceEdit(
+    document: vscode.TextDocument,
+    filePath: string,
+    treeEditKey: string,
+    targetX: number,
+    targetY: number,
+): { edit?: vscode.WorkspaceEdit; error?: string } {
+    const result = buildContinuousFocusPositionTextChanges(
+        document.getText(),
+        filePath,
+        treeEditKey,
+        targetX,
+        targetY,
+    );
     if (result.error) {
         return { error: result.error };
     }
@@ -474,6 +543,28 @@ function createFocusTemplateInsertionChange(
     };
 }
 
+function createContinuousFocusInsertionChange(
+    content: string,
+    focusTreeRange: TextRange,
+    x: number,
+    y: number,
+    lineEnding: string,
+): FocusPositionTextChange {
+    const insertPosition = getBlockClosingLineStart(content, focusTreeRange);
+    const { childIndent } = getBlockIndentation(content, focusTreeRange);
+    const indentUnit = inferIndentUnit(content, getLineIndent(content, focusTreeRange.start), focusTreeRange);
+    const nestedIndent = childIndent + indentUnit;
+    const separator = getBlankLineSeparatorBeforeInsert(content, insertPosition, lineEnding);
+    return {
+        range: { start: insertPosition, end: insertPosition },
+        text:
+            `${separator}${childIndent}continuous_focus_position = {${lineEnding}` +
+            `${nestedIndent}x = ${x}${lineEnding}` +
+            `${nestedIndent}y = ${y}${lineEnding}` +
+            `${childIndent}}${lineEnding}`,
+    };
+}
+
 function buildNestedFocusTemplateBlock(
     content: string,
     blockRange: TextRange,
@@ -626,6 +717,20 @@ function shiftTreeMeta(meta: FocusTreeCreateMeta, offset: number): FocusTreeCrea
     return {
         ...meta,
         sourceRange: meta.sourceRange ? shiftRange(meta.sourceRange, offset) : undefined,
+    };
+}
+
+function shiftContinuousFocusMeta(meta: ContinuousFocusPositionMeta, offset: number): ContinuousFocusPositionMeta {
+    if (offset === 0) {
+        return meta;
+    }
+
+    return {
+        ...meta,
+        focusTreeRange: meta.focusTreeRange ? shiftRange(meta.focusTreeRange, offset) : undefined,
+        sourceRange: meta.sourceRange ? shiftRange(meta.sourceRange, offset) : undefined,
+        x: meta.x ? shiftScalarField(meta.x, offset) : undefined,
+        y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
     };
 }
 

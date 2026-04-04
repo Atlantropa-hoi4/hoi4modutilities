@@ -83,4 +83,21 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.isInCurrentFile, false);
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.layout?.sourceFile, 'common/national_focus/shared.txt');
     });
+
+    it('captures editable continuous focus position metadata for local focus trees', () => {
+        const trees = getFocusTree(
+            parseHoi4File(readFixture('focus', 'layout-edit.txt')),
+            [],
+            'common/national_focus/layout-edit.txt',
+        );
+        const focusTree = trees.find(tree => tree.kind === 'focus');
+
+        assert.ok(focusTree);
+        assert.strictEqual(focusTree?.continuousLayout?.editKey, 'focus-tree:common/national_focus/layout-edit.txt:focus:0');
+        assert.strictEqual(focusTree?.continuousLayout?.sourceFile, 'common/national_focus/layout-edit.txt');
+        assert.deepStrictEqual(focusTree?.continuousLayout?.basePosition, { x: 150, y: 275 });
+        assert.ok(focusTree?.continuousLayout?.sourceRange);
+        assert.ok(focusTree?.continuousLayout?.x);
+        assert.ok(focusTree?.continuousLayout?.y);
+    });
 });

@@ -6,7 +6,7 @@ import { PreviewProviderDef } from '../previewmanager';
 import { FocusTreeLoader } from './loader';
 import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { FocusPositionEditMessage } from './positioneditcommon';
-import { buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { buildContinuousFocusPositionWorkspaceEdit, buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
 
 type FocusConditionPresetPromptMessage = {
@@ -289,6 +289,7 @@ export class FocusTreePreview extends PreviewBase {
         }
 
         if (command !== 'applyFocusPositionEdit'
+            && command !== 'applyContinuousFocusPositionEdit'
             && command !== 'createFocusTemplateAtPosition'
             && command !== 'applyFocusLinkEdit'
             && command !== 'applyFocusExclusiveLinkEdit'
@@ -328,6 +329,44 @@ export class FocusTreePreview extends PreviewBase {
                 focusId: msg.focusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
+                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+            });
+
+            return true;
+        }
+
+        if (msg.command === 'applyContinuousFocusPositionEdit') {
+            const { edit, error } = buildContinuousFocusPositionWorkspaceEdit(
+                document,
+                this.relativeFilePath,
+                msg.focusTreeEditKey,
+                msg.targetX,
+                msg.targetY,
+            );
+            if (error) {
+                await vscode.window.showErrorMessage(error);
+                return true;
+            }
+
+            if (!edit) {
+                return true;
+            }
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the continuous focus position edit.'));
+                return true;
+            }
+
+            const updatedDocument = getDocumentByUri(this.uri);
+            if (updatedDocument) {
+                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+            }
+            await this.panel.webview.postMessage({
+                command: 'continuousFocusPositionEditApplied',
+                focusTreeEditKey: msg.focusTreeEditKey,
+                targetX: msg.targetX,
+                targetY: msg.targetY,
                 documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 

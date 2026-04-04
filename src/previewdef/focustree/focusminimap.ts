@@ -13,6 +13,11 @@ export interface FocusMinimapModel {
     canvasWidth: number;
     canvasHeight: number;
     points: FocusMinimapPoint[];
+    continuousPoint?: {
+        canvasX: number;
+        canvasY: number;
+        label: string;
+    };
 }
 
 export interface FocusMinimapTransform {
@@ -47,6 +52,7 @@ export function buildFocusMinimapModel(input: {
     selectedFocusIds?: Iterable<string>;
     searchedFocusIds?: Iterable<string>;
     lastNavigatedFocusId?: string;
+    continuousCanvasPoint?: NumberPosition;
 }): FocusMinimapModel {
     const selectedFocusIdSet = new Set(input.selectedFocusIds ?? []);
     const searchedFocusIdSet = new Set(input.searchedFocusIds ?? []);
@@ -65,6 +71,13 @@ export function buildFocusMinimapModel(input: {
                 isLastNavigated: input.lastNavigatedFocusId === focusId,
             };
         }),
+        continuousPoint: input.continuousCanvasPoint
+            ? {
+                canvasX: input.continuousCanvasPoint.x,
+                canvasY: input.continuousCanvasPoint.y,
+                label: 'Continuous focuses',
+            }
+            : undefined,
     };
 }
 
