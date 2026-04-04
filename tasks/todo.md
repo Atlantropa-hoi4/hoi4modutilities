@@ -1,21 +1,20 @@
-# HOI4 Mod Utilities Focus Preview Canvas Padding Todo
+# HOI4 Mod Utilities Focus Preview Multi-Select Todo
 
 ## Plan
-- [x] Inspect the current focus preview canvas padding path
-- [x] Extend the edit buffer so focus preview has spare space on all sides, not only the bottom
-- [x] Record the correction in `tasks/lessons.md`
+- [x] Inspect the current focus preview drag/pan/create interaction flow
+- [x] Add marquee multi-select for focuses without breaking existing edit-mode pan and drag behavior
+- [x] Update `tasks/lessons.md` for the new interaction rule
 - [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
 - [x] Record review results and verification notes
 
 ## Notes
-- Scope for this pass is the focus preview canvas bounds in `webviewsrc/focustree.ts`.
+- Scope for this pass is the focus preview webview interaction layer in `webviewsrc/focustree.ts`.
 - Keep the current `0.13.20` release line unless the user asks for a separate version.
-- The create/edit buffer should exist on left, top, right, and bottom, not only under the lowest focus.
+- To avoid regressing the restored blank-space pan in edit mode, use `Shift + left drag` on blank canvas for marquee multi-select.
 
 ## Review
-- Focus preview now reserves edit buffer on left, top, right, and bottom by shifting the rendered grid origin and enlarging the minimum canvas width and height together.
-- Blank-space creation and drag calculations continue to use the updated `currentGridLeftPadding` and `currentGridTopPadding`, so the extra space remains usable rather than only decorative.
+- Focus preview now supports marquee multi-select with `Shift + left drag` on blank canvas in edit mode, so users can select multiple focuses without regressing the restored plain-drag pan path.
+- Selection is tracked per focus tree in webview state, highlighted immediately, cleared on blank clicks or `Escape`, and pruned automatically when the rendered tree changes.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
-- `npm test` initially failed only because it was run in parallel with `npm run package` and the package step cleaned `out/`; a standalone rerun passed.
 - Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.20.vsix`.
-- Manual VS Code preview smoke was not run in this terminal session.
+- Manual VS Code preview smoke for marquee selection was not run in this terminal session.

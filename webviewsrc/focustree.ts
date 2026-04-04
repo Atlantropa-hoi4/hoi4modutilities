@@ -58,6 +58,7 @@ type PendingFocusLinkType = 'prerequisite' | 'exclusive';
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
 let selectedFocusTreeIndex: number = Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0);
+let selectedFocusIdsByTree: Record<string, string[]> = getState().selectedFocusIdsByTree ?? {};
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let inlayWindows: DivDropdown | undefined = undefined;
@@ -68,6 +69,7 @@ let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedFocusElements: Record<string, HTMLElement> = {};
 let currentRenderedFocusElementsList: HTMLElement[] = [];
 let currentOccupiedFocusPositionKeys = new Set<string>();
+let currentSelectedFocusIds = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
 let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
@@ -89,6 +91,13 @@ const focusPositionDragThresholdPx = 4;
 const focusNavigateDelayMs = 220;
 let currentGridLeftPadding = 0;
 let currentGridTopPadding = 0;
+type FocusSelectionRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+type ActiveFocusSelectionMarquee = {
+    startClientX: number;
+    startClientY: number;
+    dragGestureStarted: boolean;
+};
+let activeFocusSelectionMarquee: ActiveFocusSelectionMarquee | undefined = undefined;
 
 function getFocusPositionKey(position: NumberPosition): string {
     return `${position.x},${position.y}`;
@@ -114,6 +123,76 @@ function rebuildRenderedFocusElementCache() {
         currentRenderedFocusElements[focusId] = element;
         currentRenderedFocusElementsList.push(element);
     });
+}
+
+function getCurrentSelectionTreeId(): string | undefined {
+    return currentRenderedFocusTree?.id ?? focusTrees[selectedFocusTreeIndex]?.id;
+}
+
+function persistCurrentSelectedFocusIds() {
+    const treeId = getCurrentSelectionTreeId();
+    if (!treeId) {
+        return;
+    }
+
+    const nextSelectedFocusIdsByTree = { ...selectedFocusIdsByTree };
+    if (currentSelectedFocusIds.size === 0) {
+        delete nextSelectedFocusIdsByTree[treeId];
+    } else {
+        nextSelectedFocusIdsByTree[treeId] = Array.from(currentSelectedFocusIds);
+    }
+
+    selectedFocusIdsByTree = nextSelectedFocusIdsByTree;
+    setState({ selectedFocusIdsByTree });
+}
+
+function areFocusIdSetsEqual(left: Set<string>, right: Set<string>): boolean {
+    if (left.size !== right.size) {
+        return false;
+    }
+
+    return Array.from(left).every(focusId => right.has(focusId));
+}
+
+function setCurrentSelectedFocusIds(nextIds: Iterable<string>, persistState = true) {
+    const nextSelectedFocusIds = new Set(nextIds);
+    if (areFocusIdSetsEqual(currentSelectedFocusIds, nextSelectedFocusIds)) {
+        return;
+    }
+
+    currentSelectedFocusIds = nextSelectedFocusIds;
+    if (persistState) {
+        persistCurrentSelectedFocusIds();
+    }
+    updateFocusPositionEditUi();
+}
+
+function syncCurrentSelectedFocusIds() {
+    const treeId = getCurrentSelectionTreeId();
+    const nextSelectedFocusIds = new Set(treeId ? (selectedFocusIdsByTree[treeId] ?? []) : []);
+    const focusTree = currentRenderedFocusTree;
+    if (focusTree) {
+        Array.from(nextSelectedFocusIds).forEach(focusId => {
+            if (!focusTree.focuses[focusId]) {
+                nextSelectedFocusIds.delete(focusId);
+            }
+        });
+    }
+
+    currentSelectedFocusIds = nextSelectedFocusIds;
+    persistCurrentSelectedFocusIds();
+}
+
+function clearCurrentSelectedFocusIds() {
+    if (currentSelectedFocusIds.size === 0) {
+        return;
+    }
+
+    setCurrentSelectedFocusIds([]);
+}
+
+function isFocusSelected(focusId: string | undefined): boolean {
+    return !!focusId && currentSelectedFocusIds.has(focusId);
 }
 
 function getSelectedInlayWindowIds() {
@@ -142,6 +221,9 @@ function setFocusPositionEditMode(enabled: boolean) {
     setState({ focusPositionEditMode: enabled });
     clearPendingFocusNavigate();
     clearPendingFocusLink();
+    if (!enabled) {
+        clearCurrentSelectedFocusIds();
+    }
     updateFocusPositionEditUi();
 }
 
@@ -161,15 +243,95 @@ function updateFocusPositionEditUi() {
     currentRenderedFocusElementsList.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
         const isPendingParent = hasPendingFocusLink() && element.dataset.focusId === pendingFocusLinkParentId;
+        const isSelected = isFocusSelected(element.dataset.focusId);
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
         element.style.boxShadow = isPendingParent
             ? pendingFocusLinkType === 'exclusive'
                 ? '0 0 0 2px rgba(255, 96, 96, 0.95) inset'
                 : '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
+            : isSelected
+                ? '0 0 0 2px rgba(96, 196, 255, 0.95) inset'
             : focusPositionEditMode && editable
                 ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
                 : '';
     });
+}
+
+function getSelectionRect(startClientX: number, startClientY: number, currentClientX: number, currentClientY: number): FocusSelectionRect {
+    const left = Math.min(startClientX, currentClientX);
+    const top = Math.min(startClientY, currentClientY);
+    const right = Math.max(startClientX, currentClientX);
+    const bottom = Math.max(startClientY, currentClientY);
+    return {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+    };
+}
+
+function ensureFocusSelectionOverlay(): HTMLDivElement {
+    let overlay = document.getElementById('focus-selection-overlay') as HTMLDivElement | null;
+    if (overlay) {
+        return overlay;
+    }
+
+    overlay = document.createElement('div');
+    overlay.id = 'focus-selection-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.display = 'none';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.left = '0';
+    overlay.style.top = '0';
+    overlay.style.border = '1px solid rgba(96, 196, 255, 0.95)';
+    overlay.style.background = 'rgba(96, 196, 255, 0.12)';
+    overlay.style.zIndex = '995';
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function hideFocusSelectionOverlay() {
+    const overlay = document.getElementById('focus-selection-overlay') as HTMLDivElement | null;
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
+
+function updateFocusSelectionOverlay(selectionRect: FocusSelectionRect) {
+    const overlay = ensureFocusSelectionOverlay();
+    overlay.style.display = 'block';
+    overlay.style.left = `${selectionRect.left}px`;
+    overlay.style.top = `${selectionRect.top}px`;
+    overlay.style.width = `${selectionRect.width}px`;
+    overlay.style.height = `${selectionRect.height}px`;
+}
+
+function rectsIntersect(selectionRect: FocusSelectionRect, rect: DOMRect): boolean {
+    return selectionRect.left <= rect.right
+        && selectionRect.right >= rect.left
+        && selectionRect.top <= rect.bottom
+        && selectionRect.bottom >= rect.top;
+}
+
+function getSelectedFocusIdsFromRect(selectionRect: FocusSelectionRect): string[] {
+    return currentRenderedFocusElementsList
+        .filter(element => {
+            if (!element.dataset.focusId) {
+                return false;
+            }
+
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && rectsIntersect(selectionRect, rect);
+        })
+        .map(element => element.dataset.focusId!)
+        .filter((focusId, index, focusIds) => focusIds.indexOf(focusId) === index);
+}
+
+function clearActiveFocusSelectionMarquee() {
+    activeFocusSelectionMarquee = undefined;
+    hideFocusSelectionOverlay();
 }
 
 function getFocusElement(target: EventTarget | null): HTMLDivElement | null {
@@ -474,6 +636,9 @@ function setupFocusPositionDragHandlers() {
         }
 
         if (!focusElement) {
+            if (getBlankCanvasPanTarget(event)) {
+                clearCurrentSelectedFocusIds();
+            }
             return;
         }
 
@@ -519,12 +684,82 @@ function setupFocusPositionDragHandlers() {
             hideFocusContextMenu();
             if (hasPendingFocusLink()) {
                 clearPendingFocusLink();
+                return;
             }
+
+            clearActiveFocusSelectionMarquee();
+            clearCurrentSelectedFocusIds();
         }
     }, true);
 
     window.addEventListener('scroll', () => {
         hideFocusContextMenu();
+    }, true);
+}
+
+function setupFocusSelectionMarqueeHandler() {
+    document.addEventListener('mousedown', event => {
+        if (!focusPositionEditMode || event.button !== 0 || !event.shiftKey || hasPendingFocusLink()) {
+            return;
+        }
+
+        if (!getBlankCanvasPanTarget(event)) {
+            return;
+        }
+
+        clearPendingFocusNavigate();
+        hideFocusContextMenu();
+        event.preventDefault();
+        event.stopPropagation();
+        activeFocusSelectionMarquee = {
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            dragGestureStarted: false,
+        };
+        hideFocusSelectionOverlay();
+    }, true);
+
+    document.addEventListener('mousemove', event => {
+        if (!activeFocusSelectionMarquee) {
+            return;
+        }
+
+        const selectionRect = getSelectionRect(
+            activeFocusSelectionMarquee.startClientX,
+            activeFocusSelectionMarquee.startClientY,
+            event.clientX,
+            event.clientY,
+        );
+
+        if (!activeFocusSelectionMarquee.dragGestureStarted
+            && Math.max(selectionRect.width, selectionRect.height) < focusPositionDragThresholdPx) {
+            return;
+        }
+
+        activeFocusSelectionMarquee.dragGestureStarted = true;
+        updateFocusSelectionOverlay(selectionRect);
+        setCurrentSelectedFocusIds(getSelectedFocusIdsFromRect(selectionRect), false);
+    }, true);
+
+    document.addEventListener('mouseup', () => {
+        if (!activeFocusSelectionMarquee) {
+            return;
+        }
+
+        const dragGestureStarted = activeFocusSelectionMarquee.dragGestureStarted;
+        clearActiveFocusSelectionMarquee();
+        if (dragGestureStarted) {
+            persistCurrentSelectedFocusIds();
+            suppressEditableFocusClickUntil = Date.now() + 250;
+        }
+    }, true);
+
+    document.addEventListener('mouseleave', () => {
+        if (!activeFocusSelectionMarquee) {
+            return;
+        }
+
+        clearActiveFocusSelectionMarquee();
     }, true);
 }
 
@@ -735,7 +970,7 @@ function setupFocusTemplateCreateHandler() {
 
 function setupBlankCanvasPanFallback() {
     document.addEventListener('mousedown', event => {
-        if (event.button !== 0 || event.defaultPrevented) {
+        if (event.button !== 0 || event.defaultPrevented || event.shiftKey) {
             return;
         }
 
@@ -1000,6 +1235,7 @@ async function buildContent() {
     if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
         clearPendingFocusLink();
     }
+    syncCurrentSelectedFocusIds();
     setCurrentFocusPositions({ ...focusPosition });
     currentRenderedExprs = renderExprs;
 
@@ -1464,6 +1700,7 @@ window.addEventListener('load', tryRun(async function() {
     });
 
     setupFocusPositionDragHandlers();
+    setupFocusSelectionMarqueeHandler();
     setupFocusTemplateCreateHandler();
     setupBlankCanvasPanFallback();
 
