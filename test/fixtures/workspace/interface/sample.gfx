@@ -1,0 +1,7 @@
+spriteTypes = {
+    spriteType = {
+        name = "GFX_sample_sprite"
+        texturefile = "gfx/interface/missing.dds"
+        noOfFrames = 1
+    }
+}

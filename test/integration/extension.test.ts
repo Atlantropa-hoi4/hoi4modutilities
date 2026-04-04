@@ -3,11 +3,16 @@ import * as vscode from 'vscode';
 import { Commands, ViewType, WebviewType } from '../../src/constants';
 import { waitFor } from '../testUtils';
 
-function hasPreviewTab(viewType: string): boolean {
+function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
     return vscode.window.tabGroups.all
         .flatMap(group => group.tabs)
-        .some(tab => (tab.input instanceof vscode.TabInputWebview && tab.input.viewType === viewType)
-            || tab.label.startsWith('HOI4: '));
+        .some(tab => {
+            const labelMatches = !labelPrefix || tab.label.startsWith(labelPrefix);
+            return labelMatches && (
+                (tab.input instanceof vscode.TabInputWebview && tab.input.viewType === viewType)
+                || (viewType === WebviewType.Preview && tab.label.startsWith('HOI4: '))
+            );
+        });
 }
 
 function hasCustomEditorTab(viewType: string, uri: vscode.Uri): boolean {
@@ -50,7 +55,72 @@ suite('extension smoke', () => {
         await vscode.window.showTextDocument(document);
 
         await vscode.commands.executeCommand(Commands.Preview);
-        await waitFor(() => hasPreviewTab(WebviewType.Preview), 30000);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'), 30000);
+    });
+
+    test('opens a technology preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'technologies', 'sample_technology.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_technology.txt'), 30000);
+    });
+
+    test('opens a gui preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'interface', 'sample.gui');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample.gui'), 30000);
+    });
+
+    test('opens a gfx preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'interface', 'sample.gfx');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample.gfx'), 30000);
+    });
+
+    test('opens a mio preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'military_industrial_organization', 'organizations', 'sample_mio.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_mio.txt'), 30000);
+    });
+
+    test('opens a mio preview webview for an off-path MIO fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'misc', 'sample_mio_preview.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_mio_preview.txt'), 30000);
+    });
+
+    test('opens the world map preview panel', async () => {
+        await vscode.commands.executeCommand(Commands.PreviewWorld);
+        await waitFor(() => hasPreviewTab(WebviewType.PreviewWorldMap, 'Preview World Map'), 30000);
     });
 
     test('opens the TGA custom editor provider', async () => {
@@ -61,5 +131,15 @@ suite('extension smoke', () => {
         await vscode.commands.executeCommand('vscode.openWith', fixtureUri, ViewType.TGA);
 
         await waitFor(() => hasCustomEditorTab(ViewType.TGA, fixtureUri));
+    });
+
+    test('opens the DDS custom editor provider', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'gfx', 'broken.dds');
+        await vscode.commands.executeCommand('vscode.openWith', fixtureUri, ViewType.DDS);
+
+        await waitFor(() => hasCustomEditorTab(ViewType.DDS, fixtureUri));
     });
 });

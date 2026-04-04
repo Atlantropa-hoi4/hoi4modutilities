@@ -5,14 +5,19 @@ import { getRelativePathInWorkspace } from '../../util/vsccommon';
 import { matchPathEnd } from '../../util/nodecommon';
 import { MioLoader } from './loader';
 import { renderMioFile } from './contentbuilder';
+import { getMioPreviewPriority } from './detect';
 
 function canPreviewMio(document: vscode.TextDocument) {
     const uri = document.uri;
-    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'military_industrial_organization', 'organizations', '*']) && uri.path.toLowerCase().endsWith('.txt')) {
+    if (!uri.path.toLowerCase().endsWith('.txt')) {
+        return undefined;
+    }
+
+    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'military_industrial_organization', 'organizations', '*'])) {
         return 0;
     }
-    
-    return undefined;
+
+    return getMioPreviewPriority(document.getText());
 }
 
 class MioPreview extends PreviewBase {

@@ -1,0 +1,7 @@
+generic_organization = {
+    trait = {
+        token = generic_trait
+        name = generic_trait
+        position = { x = 0 y = 0 }
+    }
+}

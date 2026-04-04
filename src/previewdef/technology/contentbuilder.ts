@@ -456,7 +456,7 @@ async function renderSubTechnology(
                 left: 0;
                 top: 0;
                 width: 0;
-                height: p;
+                height: 0;
                 cursor: pointer;
                 pointer-events: auto;
             `)}

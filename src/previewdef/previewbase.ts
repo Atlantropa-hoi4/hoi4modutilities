@@ -35,7 +35,7 @@ export abstract class PreviewBase {
     }
 
     public getDocumentChangeDebounceMs(): number {
-        return 1000;
+        return 250;
     }
     
     public dispose(): void {
