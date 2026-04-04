@@ -42,8 +42,15 @@ export interface Focus {
     y: number;
     id: string;
     icon: FocusIconWithCondition[];
+    available?: ConditionComplexExpr;
+    availableIfCapitulated: boolean;
+    hasAiWillDo: boolean;
+    hasCompletionReward: boolean;
     prerequisite: string[][];
+    prerequisiteGroupCount: number;
+    prerequisiteFocusCount: number;
     exclusive: string[];
+    exclusiveCount: number;
     hasAllowBranch: boolean;
     inAllowBranch: string[];
     allowBranch: ConditionComplexExpr | undefined;
@@ -121,6 +128,10 @@ interface FocusTreeDef {
 interface FocusDef {
     id: string;
     icon: Raw[];
+    available: Raw;
+    available_if_capitulated: boolean;
+    ai_will_do: Raw;
+    completion_reward: Raw;
     x: number;
     y: number;
     prerequisite: FocusOrORList[];
@@ -171,6 +182,10 @@ const focusSchema: SchemaDef<FocusDef> = {
         _innerType: 'raw',
         _type: 'array',
     },
+    available: "raw",
+    available_if_capitulated: "boolean",
+    ai_will_do: "raw",
+    completion_reward: "raw",
     x: "number",
     y: "number",
     prerequisite: {
@@ -458,6 +473,9 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         .filter((s): s is string => s !== undefined);
     const prerequisite = hoiFocus.prerequisite
         .map(p => p.focus.concat(p.OR).filter((s): s is string => s !== undefined));
+    const available = hoiFocus.available
+        ? extractConditionValue(hoiFocus.available._raw.value, countryScope, conditionExprs).condition
+        : undefined;
     const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants, conditionExprs);
     const hasAllowBranch = hoiFocus.allow_branch.length > 0;
     const allowBranchCondition = extractConditionValues(hoiFocus.allow_branch.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition;
@@ -473,11 +491,18 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         layoutEditKey: createFocusPositionEditKey(filePath, hoiFocus._token?.start ?? id),
         id,
         icon,
+        available,
+        availableIfCapitulated: hoiFocus.available_if_capitulated === true,
+        hasAiWillDo: hoiFocus.ai_will_do !== undefined,
+        hasCompletionReward: hoiFocus.completion_reward !== undefined,
         x: hoiFocus.x ?? 0,
         y: hoiFocus.y ?? 0,
         relativePositionId: hoiFocus.relative_position_id,
         prerequisite,
+        prerequisiteGroupCount: prerequisite.length,
+        prerequisiteFocusCount: prerequisite.reduce((sum, group) => sum + group.length, 0),
         exclusive,
+        exclusiveCount: exclusive.length,
         hasAllowBranch,
         inAllowBranch: hasAllowBranch ? [id] : [],
         allowBranch: allowBranchCondition,

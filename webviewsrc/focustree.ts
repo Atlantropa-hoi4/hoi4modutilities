@@ -9,7 +9,9 @@ import { NumberPosition } from "../src/util/common";
 import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
 import { Checkbox } from "./util/checkbox";
+import { feLocalize } from "./util/i18n";
 import { vscode } from "./util/vscode";
+import { evaluateFocusBadgeState } from "../src/previewdef/focustree/focusbadges";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import {
     conditionItemToExprKey,
@@ -273,6 +275,14 @@ function updateConditionPresetUi(focusTree: FocusTree) {
     if (deleteButton) {
         deleteButton.disabled = !selectedPresetId;
     }
+}
+
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function buildConditionPresetTestSnapshot(focusTree: FocusTree): FocusConditionPresetTestSnapshot {
@@ -1591,6 +1601,8 @@ async function buildContent() {
             renderedFocus[item.id]
                 .replace('{{position}}', item.gridX + ', ' + item.gridY)
                 .replace('{{iconClass}}', getFocusIcon(focusTree.focuses[item.id], renderExprs, styleTable))
+                .replace('{{statusBadges}}', renderFocusStatusBadges(focusTree.focuses[item.id], renderExprs))
+                .replace('{{statusSummary}}', renderFocusStatusSummary(focusTree.focuses[item.id], renderExprs))
             ),
         cornerPosition: 0.5,
     });
@@ -1713,6 +1725,82 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         warnings.value = focusTree.warnings.length === 0 ? 'No warnings.' :
             focusTree.warnings.map(w => `[${w.source}] ${w.text}`).join('\n');
     }
+}
+
+function renderFocusStatusBadge(kind: string, label: string, title: string): string {
+    return `<span class="focus-status-badge focus-status-badge-${kind}" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function renderFocusStatusBadges(focus: Focus, exprs: ConditionItem[]): string {
+    const status = evaluateFocusBadgeState(focus, exprs, { enableAvailability: useConditionInFocus });
+    const badges: string[] = [];
+
+    if (status.showAvailability) {
+        badges.push(status.isAvailable
+            ? renderFocusStatusBadge('available', 'OK', feLocalize('TODO', 'Available under current conditions'))
+            : renderFocusStatusBadge('blocked', 'Blocked', feLocalize('TODO', 'Blocked by current conditions')));
+    }
+    if (status.hasAllowBranch) {
+        badges.push(renderFocusStatusBadge('branch', 'Branch', feLocalize('TODO', 'Branch-gated focus')));
+    }
+    if (status.availableIfCapitulated) {
+        badges.push(renderFocusStatusBadge('capitulated', 'Cap', feLocalize('TODO', 'Available when capitulated')));
+    }
+    if (status.prerequisiteFocusCount > 0) {
+        badges.push(renderFocusStatusBadge(
+            'prerequisite',
+            `P${status.prerequisiteFocusCount}`,
+            feLocalize('TODO', 'Prerequisites: {0} focus(es) in {1} group(s)', status.prerequisiteFocusCount, status.prerequisiteGroupCount),
+        ));
+    }
+    if (status.exclusiveCount > 0) {
+        badges.push(renderFocusStatusBadge(
+            'exclusive',
+            `X${status.exclusiveCount}`,
+            feLocalize('TODO', 'Mutually exclusive with {0} focus(es)', status.exclusiveCount),
+        ));
+    }
+
+    if (badges.length === 0) {
+        return '';
+    }
+
+    return `<div class="focus-status-badges" aria-hidden="true">${badges.join('')}</div>`;
+}
+
+function renderFocusStatusSummary(focus: Focus, exprs: ConditionItem[]): string {
+    const status = evaluateFocusBadgeState(focus, exprs, { enableAvailability: useConditionInFocus });
+    const lines: string[] = [];
+
+    if (status.showAvailability) {
+        lines.push(status.isAvailable
+            ? feLocalize('TODO', 'Available: yes')
+            : feLocalize('TODO', 'Available: no'));
+    }
+    if (status.hasAllowBranch) {
+        lines.push(feLocalize('TODO', 'Branch gated: yes'));
+    }
+    if (status.availableIfCapitulated) {
+        lines.push(feLocalize('TODO', 'Available if capitulated: yes'));
+    }
+    if (status.prerequisiteFocusCount > 0) {
+        lines.push(feLocalize('TODO', 'Prerequisites: {0} focus(es) across {1} group(s)', status.prerequisiteFocusCount, status.prerequisiteGroupCount));
+    }
+    if (status.exclusiveCount > 0) {
+        lines.push(feLocalize('TODO', 'Mutually exclusive: {0} focus(es)', status.exclusiveCount));
+    }
+    if (status.hasAiWillDo) {
+        lines.push(feLocalize('TODO', 'AI weight block: yes'));
+    }
+    if (status.hasCompletionReward) {
+        lines.push(feLocalize('TODO', 'Completion reward: yes'));
+    }
+
+    if (lines.length === 0) {
+        return '';
+    }
+
+    return `<div class="focus-status-summary" aria-hidden="true">${escapeHtml(lines.join('\n'))}</div>`;
 }
 
 function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTable): string {

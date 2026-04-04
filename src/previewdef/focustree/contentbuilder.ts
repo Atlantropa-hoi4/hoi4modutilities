@@ -503,7 +503,86 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
+function ensureFocusStatusStyles(styleTable: StyleTable) {
+    styleTable.raw('.focus-status-badges', `
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        display: flex;
+        gap: 3px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        max-width: 120px;
+        z-index: 2;
+        pointer-events: none;
+    `);
+    styleTable.raw('.focus-status-badge', `
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 14px;
+        padding: 0 4px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(32, 32, 32, 0.82);
+        color: var(--vscode-editor-foreground);
+        font-size: 9px;
+        line-height: 1;
+        white-space: nowrap;
+        box-sizing: border-box;
+        pointer-events: none;
+    `);
+    styleTable.raw('.focus-status-badge-available', `
+        background: rgba(46, 160, 67, 0.9);
+        border-color: rgba(46, 160, 67, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-status-badge-blocked', `
+        background: rgba(201, 70, 56, 0.92);
+        border-color: rgba(201, 70, 56, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-status-badge-branch', `
+        background: rgba(40, 112, 214, 0.9);
+        border-color: rgba(40, 112, 214, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-status-badge-capitulated', `
+        background: rgba(182, 126, 22, 0.92);
+        border-color: rgba(182, 126, 22, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-status-badge-prerequisite, .focus-status-badge-exclusive', `
+        background: rgba(90, 90, 90, 0.88);
+        border-color: rgba(120, 120, 120, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-status-summary', `
+        position: absolute;
+        top: 20px;
+        right: 0;
+        display: none;
+        min-width: 168px;
+        max-width: 240px;
+        padding: 6px 8px;
+        border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+        background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+        color: var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground));
+        text-align: left;
+        white-space: pre-line;
+        line-height: 1.35;
+        z-index: 3;
+        pointer-events: none;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    `);
+    styleTable.raw('.navigator:hover .focus-status-summary, .navigator:focus-within .focus-status-summary', `
+        display: block;
+    `);
+}
+
 async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
+    ensureFocusStatusStyles(styleTable);
+
     for (const focusIcon of focus.icon) {
         const iconName = focusIcon.icon;
         const iconObject = iconName ? await getFocusIcon(iconName, gfxFiles) : null;
@@ -542,6 +621,8 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
             height: 100%;
             text-align: center;
             cursor: pointer;
+            position: relative;
+            overflow: visible;
         `)}
     "
     start="${focus.token?.start}"
@@ -551,6 +632,8 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
     data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
     title="${focus.id}\n({{position}})">
+        {{statusBadges}}
+        {{statusSummary}}
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>
