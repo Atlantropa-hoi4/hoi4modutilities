@@ -8,6 +8,8 @@ import { sharedFocusIndex } from "../../util/featureflags";
 import { findFileByFocusKey } from "../../util/sharedFocusIndex";
 import {
     addInlayGfxWarnings,
+    getCachedInterfaceGfxFiles,
+    getCachedInterfaceGfxSpriteNames,
     loadFocusInlayWindows,
     resolveInlayGfxFiles,
     resolveInlayGuiWindows,
@@ -120,8 +122,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         ]));
         const iconGfxFiles = await resolveFocusIconGfxFiles(focusIconNames, {
             resolveIndexedFile: async gfxName => tryGetGfxContainerFile(gfxName),
-            listInterfaceGfxFiles: async () => [],
-            readSpriteNames: async () => [],
+            listInterfaceGfxFiles: getCachedInterfaceGfxFiles,
+            readSpriteNames: getCachedInterfaceGfxSpriteNames,
         });
 
         const gfxDependencies = [

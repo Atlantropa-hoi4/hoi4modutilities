@@ -372,8 +372,12 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
             inlayWindows: [],
             inlayConditionExprs: [],
             allowBranchOptions: getAllowBranchOptions(focuses),
-            continuousFocusPositionX: normalizeNumberLike(focusTree.continuous_focus_position?.x, 0) ?? 50,
-            continuousFocusPositionY: normalizeNumberLike(focusTree.continuous_focus_position?.y, 0) ?? 1000,
+            continuousFocusPositionX: focusTree.continuous_focus_position
+                ? (normalizeNumberLike(focusTree.continuous_focus_position.x, 0) ?? 50)
+                : undefined,
+            continuousFocusPositionY: focusTree.continuous_focus_position
+                ? (normalizeNumberLike(focusTree.continuous_focus_position.y, 0) ?? 1000)
+                : undefined,
             conditionExprs,
             isSharedFocues: false,
             warnings,

@@ -198,6 +198,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             margin: 20px;
             background: rgba(128, 128, 128, 0.2);
             text-align: center;
+            display: none;
             pointer-events: none;
             z-index: 1;
         `)}">Continuous focuses</div>`;

@@ -101,6 +101,27 @@ describe('focus tree schema fixtures', () => {
         assert.ok(focusTree?.continuousLayout?.y);
     });
 
+    it('keeps continuous focus coordinates undefined when the tree does not define continuous_focus_position', () => {
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = no_continuous_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/no-continuous-tree.txt',
+        );
+
+        assert.ok(tree);
+        assert.strictEqual(tree.continuousFocusPositionX, undefined);
+        assert.strictEqual(tree.continuousFocusPositionY, undefined);
+    });
+
     it('collects Conditions options from allow_branch triggers only', () => {
         const [tree] = getFocusTree(
             parseHoi4File(`
