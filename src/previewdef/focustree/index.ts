@@ -12,6 +12,7 @@ import { contextContainer } from '../../context';
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './conditionpresets';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { error } from '../../util/debug';
+import { createFocusTreeRenderPatch, FocusTreeRenderStateSnapshot } from './renderpayloadpatch';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
@@ -38,6 +39,7 @@ export class FocusTreePreview extends PreviewBase {
     private webviewReady = false;
     private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
     private latestRefreshRequestId = 0;
+    private lastRenderPayload: FocusTreeRenderStateSnapshot | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -93,15 +95,18 @@ export class FocusTreePreview extends PreviewBase {
                 || payload.focusTrees.length === 0;
             if (structureChanged) {
                 this.lastRenderStructure = nextStructure;
+                this.lastRenderPayload = payload;
                 this.webviewReady = false;
                 await this.applyFullRefresh(document, requestId, requestDocumentVersion);
                 return;
             }
 
             this.lastRenderStructure = nextStructure;
+            const patch = createFocusTreeRenderPatch(this.lastRenderPayload, payload);
+            this.lastRenderPayload = payload;
             await this.panel.webview.postMessage({
                 command: 'focusTreeContentUpdated',
-                ...payload,
+                ...patch,
             });
         } catch (e) {
             error(e);

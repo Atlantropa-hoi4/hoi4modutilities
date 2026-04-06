@@ -65,6 +65,11 @@ export function subscribeNavigators() {
     const navigators = document.getElementsByClassName("navigator");
     for (let i = 0; i < navigators.length; i++) {
         const navigator = navigators[i] as HTMLDivElement;
+        if (navigator.dataset.navigatorBound === 'true') {
+            continue;
+        }
+
+        navigator.dataset.navigatorBound = 'true';
         navigator.addEventListener('click', function(e) {
             e.stopPropagation();
             const startStr = this.attributes.getNamedItem('start')?.value;
