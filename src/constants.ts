@@ -23,6 +23,7 @@ export namespace Commands {
     export const SelectModFile = 'server.hoi4modutilities.selectmodfile';
     export const SelectHoiFolder = 'server.hoi4modutilities.selecthoifolder';
     export const Test = 'server.hoi4modutilities.test';
+    export const DebugFocusTreePreviewState = 'server.hoi4modutilities.debug.focustreepreviewstate';
 }
 
 export namespace WebviewType {

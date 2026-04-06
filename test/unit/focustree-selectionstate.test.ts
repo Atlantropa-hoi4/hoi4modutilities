@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { clampFocusTreeIndex, resolveFocusTreeSelection } from '../../src/previewdef/focustree/selectionstate';
+import { clampFocusTreeIndex, resolveFocusTreeSelection, resolveRenderableFocusTreeSelection } from '../../src/previewdef/focustree/selectionstate';
 
 describe('focustree selection state', () => {
     it('clamps negative restored indexes back to zero for single-tree previews', () => {
@@ -39,6 +39,41 @@ describe('focustree selection state', () => {
             ],
             'missing_tree',
             9,
+        );
+
+        assert.deepStrictEqual(selection, {
+            selectedFocusTreeIndex: 1,
+            selectedFocusTreeId: 'focus_tree_beta',
+        });
+    });
+
+    it('keeps the resolved selection when that tree is renderable', () => {
+        const selection = resolveRenderableFocusTreeSelection(
+            [
+                { id: 'focus_tree_alpha', renderable: false },
+                { id: 'focus_tree_beta', renderable: true },
+            ],
+            'focus_tree_beta',
+            0,
+            focusTree => focusTree.renderable,
+        );
+
+        assert.deepStrictEqual(selection, {
+            selectedFocusTreeIndex: 1,
+            selectedFocusTreeId: 'focus_tree_beta',
+        });
+    });
+
+    it('falls back to the first renderable tree when the resolved selection cannot be rendered', () => {
+        const selection = resolveRenderableFocusTreeSelection(
+            [
+                { id: 'focus_tree_alpha', renderable: false },
+                { id: 'focus_tree_beta', renderable: true },
+                { id: 'focus_tree_gamma', renderable: true },
+            ],
+            'focus_tree_alpha',
+            0,
+            focusTree => focusTree.renderable,
         );
 
         assert.deepStrictEqual(selection, {

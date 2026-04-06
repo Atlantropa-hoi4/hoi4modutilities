@@ -35,8 +35,11 @@ jobs:
           }
           "RELEASE_VERSION=$packageVersion" >> $env:GITHUB_ENV
 
-      - name: Compile TypeScript
+      - name: Typecheck
         run: npm run compile-ts
+
+      - name: Build extension bundles
+        run: npm run build
 
       - name: Run lint
         run: npm run lint

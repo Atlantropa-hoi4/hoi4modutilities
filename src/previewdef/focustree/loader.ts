@@ -24,14 +24,28 @@ export interface FocusTreeLoaderResult {
     focusTrees: FocusTree[];
     gfxFiles: string[];
     focusSpacing?: NumberPosition;
+    deferredAssetLoad?: boolean;
 }
+
+export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
 
 export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
-    public createSnapshotLoader(contentProvider: () => Promise<string>): FocusTreeLoader {
-        const loader = new FocusTreeLoader(this.file, contentProvider);
+    constructor(
+        file: string,
+        contentProvider?: () => Promise<string>,
+        private assetLoadMode: FocusTreeAssetLoadMode = 'full',
+    ) {
+        super(file, contentProvider);
+    }
+
+    public createSnapshotLoader(
+        contentProvider: () => Promise<string>,
+        assetLoadMode: FocusTreeAssetLoadMode = this.assetLoadMode,
+    ): FocusTreeLoader {
+        const loader = new FocusTreeLoader(this.file, contentProvider, assetLoadMode);
         this.copyDependencyLoadersTo(loader);
         return loader;
     }
@@ -44,6 +58,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         if (error || (content === undefined)) {
             throw error;
         }
+
+        const deferAssetLoad = this.assetLoadMode === 'deferred';
 
         const constants = {};
 
@@ -76,9 +92,15 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const focusTrees = getFocusTree(parsedNode, importedFocusTrees, this.file);
         focusTrees.push(...importedFocusTrees.filter(tree => tree.kind === 'joint' && !focusTrees.some(localTree => localTree.id === tree.id)));
 
-        const hasInlayRefs = focusTrees.some(focusTree => focusTree.inlayWindowRefs.length > 0);
+        const hasInlayRefs = !deferAssetLoad && focusTrees.some(focusTree => focusTree.inlayWindowRefs.length > 0);
         let loadedInlayFiles: string[] = [];
-        if (hasInlayRefs) {
+        if (!hasInlayRefs) {
+            for (const focusTree of focusTrees) {
+                focusTree.inlayWindows = [];
+                focusTree.inlayConditionExprs = [];
+                focusTree.warnings = sortFocusWarnings(focusTree.warnings);
+            }
+        } else {
             const loadedInlays = await loadFocusInlayWindows();
             loadedInlayFiles = loadedInlays.inlays.map(inlay => inlay.file);
             for (const focusTree of focusTrees) {
@@ -91,31 +113,36 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusTree.warnings.push(...resolved.warnings);
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
             }
-        } else {
-            for (const focusTree of focusTrees) {
-                focusTree.inlayWindows = [];
-                focusTree.inlayConditionExprs = [];
-            }
         }
 
         const allInlays = focusTrees.flatMap(ft => ft.inlayWindows);
-        const guiResolution = await resolveInlayGuiWindows(allInlays);
-        for (const focusTree of focusTrees) {
-            focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
-            focusTree.warnings = sortFocusWarnings(focusTree.warnings);
+        const guiResolution = deferAssetLoad
+            ? { guiFiles: [], warnings: [] as ReturnType<typeof sortFocusWarnings> }
+            : await resolveInlayGuiWindows(allInlays);
+        if (!deferAssetLoad) {
+            for (const focusTree of focusTrees) {
+                focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
+                focusTree.warnings = sortFocusWarnings(focusTree.warnings);
+            }
         }
 
-        const inlayGfxResolution = await resolveInlayGfxFiles(allInlays);
-        for (const focusTree of focusTrees) {
-            addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
-            focusTree.warnings = sortFocusWarnings(focusTree.warnings);
+        const inlayGfxResolution = deferAssetLoad
+            ? { resolvedFiles: [] }
+            : await resolveInlayGfxFiles(allInlays);
+        if (!deferAssetLoad) {
+            for (const focusTree of focusTrees) {
+                addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
+                focusTree.warnings = sortFocusWarnings(focusTree.warnings);
+            }
         }
 
-        const focusIconNames = focusTrees
-            .flatMap(ft => Object.values(ft.focuses))
-            .flatMap(focus => focus.icon)
-            .map(icon => icon.icon)
-            .filter((icon): icon is string => icon !== undefined);
+        const focusIconNames = deferAssetLoad
+            ? []
+            : focusTrees
+                .flatMap(ft => Object.values(ft.focuses))
+                .flatMap(focus => focus.icon)
+                .map(icon => icon.icon)
+                .filter((icon): icon is string => icon !== undefined);
         const uniqueInlayFiles = Array.from(new Set([
             ...loadedInlayFiles,
             ...allInlays.map(inlay => inlay.file),
@@ -139,6 +166,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusTrees,
                 gfxFiles: uniq([...gfxDependencies, focusesGFX]),
                 focusSpacing,
+                deferredAssetLoad: deferAssetLoad,
             },
             dependencies: uniq([
                 this.file,

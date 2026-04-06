@@ -6,10 +6,10 @@ src/**
 .gitignore
 vsc-extension-quickstart.md
 **/tsconfig.json
+**/tsconfig.test.json
 **/.eslintrc.json
 **/*.map
 **/*.ts
-**/webpack.config.js
 node_modules/**
 i18n/**
 icon.xcf
@@ -25,3 +25,5 @@ tasks/**
 static/test.js
 Plan.md
 .github/**
+TFR_national_focus_KOR.txt
+GXC focus (Liangguang).txt

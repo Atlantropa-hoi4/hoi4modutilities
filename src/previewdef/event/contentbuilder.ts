@@ -34,7 +34,6 @@ export async function renderEventFile(loader: EventsLoader, uri: vscode.Uri, web
             baseContent,
             [
                 setPreviewFileUriScript,
-                'common.js',
                 'eventtree.js',
             ],
             [

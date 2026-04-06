@@ -1,36 +1,88 @@
-# HOI4 Mod Utilities (Server)
+# HOI4 Mod Utilities
 
-This extension add tools for Heart of Iron IV modding. Some of the tools may work on other Paradox games.
+Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the independent `server.hoi4modutilities` fork of the original `chaofan.hoi4modutilities` extension.
 
-This repository is the `server.hoi4modutilities` fork of the original `chaofan.hoi4modutilities` extension. The extension ID is intentionally different so it can be installed and maintained independently from the upstream release.
+## What It Covers
 
-## Features
+- Focus tree preview and editing helpers
+- World map preview
+- Event tree preview
+- Technology tree preview
+- MIO preview
+- GUI preview
+- `.gfx` sprite preview
+- `.dds` and `.tga` custom editors
+- Localisation highlighting and preview text lookup
 
-* World map preview
-* Focus tree preview
-* Event tree preview
-* Technology tree preview
-* Military industrial organization (MIO) preview.
-* GUI preview
-* `.gfx` file preview (sprites used by HOI4 are defined here)
-* `.dds`, `.tga` file preview (images files used by HOI4)
+## Getting Started
 
-For feature details and user manual, please refer to the fork wiki and repository documentation. Upstream historical docs are still useful for background, but this fork ships independently.
+1. Install the extension in desktop VS Code.
+2. Set `hoi4ModUtilities.installPath` to your HOI4 install folder.
+3. Open your mod workspace.
+4. Optionally set `hoi4ModUtilities.modFile` if your workspace contains multiple `.mod` descriptors.
+5. Use:
+   - `HOI4 Mod Utilities: Preview HOI4 File`
+   - `HOI4 Mod Utilities: Preview World Map`
+   - the editor toolbar preview button on supported `.txt`, `.gfx`, `.gui`, and `map/default.map` files
+   - direct open on `.dds` and `.tga`
 
-## Steps to start
+## Performance Notes
 
-1. Install and enable this extension in VSCode.
-2. Set the Hearts of Iron IV install path. You can:
-    * Open command palette using `Ctrl+Shift+P`. Use command `Select HOI4 install path` to browse the folder that installed Hearts of Iron IV.
-    * Update setting `hoi4ModUtilities.installPath` (you can open settings page of VSCode using `Ctrl+,`) to the folder that installed Hearts of Iron IV.
-3. Open your mod develop folder.
-4. (*Optional*) Open command palette using `Ctrl+Shift+P`. Use command `Select mod file` to set working mod descriptor (the `.mod` file).
-5. Use these entries:
-    * Command palette (`Ctrl+Shift+P`) commands: `Preview World Map` and `Preview HOI4 file`*.
-    * `Preview HOI4 file` (![Preview HOI4 file button](demo/preview-icon.png))* button on right-top tool bar of text editor.
-    * Open a `.dds` or `.tga` file.
+- Activation is contextual now: the extension waits for HOI4-relevant files, custom editors, or preview panels instead of activating broadly at startup.
+- Focus tree previews keep their webview context while hidden, so re-opening the same preview should avoid a full bootstrap.
+- The focus tree preview no longer performs a redundant pre-ready full load before the webview handshake, which shortens the first-open path on large trees.
+- Shared indexes for GFX, localisation, and shared focuses are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
 
-\* *`Preview HOI4 file` (![Preview HOI4 file button](demo/preview-icon.png)) button/command is invisible, except on `.gfx`, `map/default.map`, technology tree or national focus tree files.*
+## Settings
+
+| Setting | Type | Description |
+| --- | --- | --- |
+| `hoi4ModUtilities.installPath` | `string` | Hearts of Iron IV install path. Most previews need this. |
+| `hoi4ModUtilities.loadDlcContents` | `boolean` | Loads DLC image content for previews. Uses more memory. |
+| `hoi4ModUtilities.modFile` | `string` | Working `.mod` file used for `replace_path` resolution. |
+| `hoi4ModUtilities.enableSupplyArea` | `boolean` | Enables supply-area checks for older HOI4 versions. |
+| `hoi4ModUtilities.previewLocalisation` | `string enum` | Preview language used by localisation-aware previews. |
+| `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced or experimental flows. |
+
+## Development
+
+This fork targets desktop VS Code only and uses the esbuild-based build pipeline in this repository.
+
+Recommended environment:
+
+- Node.js 20 LTS
+- npm 10+
+- Windows for the closest match to the packaged release workflow
+
+Common commands:
+
+```bash
+npm ci
+npm run build
+npm run lint
+npm run test
+npm run test-ui
+npm run package
+```
+
+One-shot verification:
+
+```bash
+npm run verify
+```
+
+`npm run verify` runs typecheck, bundle build, lint, unit tests, VS Code integration tests, and VSIX packaging.
+
+## Release Flow
+
+Push a semantic version tag that matches `package.json`:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions rebuilds the extension on `windows-latest`, validates the tag, runs the verification pipeline, and publishes the generated `.vsix` plus checksum to the matching GitHub Release.
 
 ## Demos
 
@@ -50,46 +102,6 @@ For feature details and user manual, please refer to the fork wiki and repositor
 
 ![Technology tree preview demo](demo/4.gif)
 
-### GUI Preview
+### GUI preview
 
 ![GUI preview demo](demo/7.gif)
-
-## Extension Settings
-
-|Setting|Type|Description|
-|-------|----------|--------|
-|`hoi4ModUtilities.installPath`|`string`|Hearts of Iron IV install path. Without this, most features are broken.|
-|`hoi4ModUtilities.loadDlcContents`|`boolean`|Whether to load DLC images when previewing files. Enabling this will use more memory (All DLCs are around 600MB).|
-|`hoi4ModUtilities.modFile`|`string`|Path to the working `.mod` file. This file is used to read replace_path. If not specified, will use first `.mod` file in first folder of the workspace.|
-|`hoi4ModUtilities.enableSupplyArea`|`boolean`|If you are developing mod for HOI4(version<=1.10). Use this to check enable supply area.|
-|`hoi4ModUtilities.previewLocalisation`|`enum`|Language of content in event tree preview.|
-|`hoi4ModUtilities.featureFlags`|`array` of `string`|Feature flags are used to disable or enable features. Reloading is required after changing this. Please refer to this fork's GitHub documentation for details.|
-
-## Known Issues
-
-* GUI of focus tree can't be configured like technology tree.
-* Edge lines on world map not alway fit edge of colors.
-
-## Development
-
-This extension now targets desktop VS Code only.
-
-For local development, use Node.js 20 LTS and run:
-
-```bash
-npm ci
-npm run verify
-```
-
-`npm run verify` runs the local build, lint, unit tests, VS Code integration tests, and VSIX packaging flow from the repository root.
-
-## Release Automation
-
-This repository now publishes release assets from GitHub Actions when you push a semantic version tag that matches `package.json`.
-
-```bash
-git tag v0.13.20
-git push origin v0.13.20
-```
-
-The release workflow rebuilds the extension on `windows-latest`, validates that the tag matches the extension version, runs compile/lint/test/test-ui/package verification, and attaches the generated `.vsix` plus a SHA-256 checksum file to the GitHub Release for that tag.

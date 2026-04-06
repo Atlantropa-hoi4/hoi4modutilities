@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { matchPathEnd } from '../../util/nodecommon';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { WorldMapContainer } from "./worldmapcontainer";
 
 export const worldMap = new WorldMapContainer();
@@ -14,7 +14,8 @@ function onPreviewWorldmap(document: vscode.TextDocument): Promise<void> {
     return worldMap.openPreview();
 }
 
-export const worldMapPreviewDef: PreviewProviderDef = {
+export const worldMapPreviewDef: PreviewDescriptor = {
+    kind: 'alternative',
     type: 'worldmap',
     canPreview: canPreviewWorldmap,
     onPreview: onPreviewWorldmap,

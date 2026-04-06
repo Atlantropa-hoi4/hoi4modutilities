@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { PreviewBase } from '../previewbase';
 import { GuiFileLoader } from './loader';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
@@ -28,8 +28,9 @@ class GuiPreview extends PreviewBase {
     }
 }
 
-export const guiPreviewDef: PreviewProviderDef = {
+export const guiPreviewDef: PreviewDescriptor = {
+    kind: 'panel',
     type: 'gui',
     canPreview: canPreviewGui,
-    previewContructor: GuiPreview,
+    createPreview: (uri, panel) => new GuiPreview(uri, panel),
 };

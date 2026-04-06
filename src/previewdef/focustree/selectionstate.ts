@@ -15,6 +15,33 @@ export interface FocusTreeSelectionState {
     selectedFocusTreeId: string | undefined;
 }
 
+export function resolveRenderableFocusTreeSelection<T extends FocusTreeSelectionLike>(
+    focusTrees: readonly T[],
+    selectedFocusTreeId: string | undefined,
+    selectedFocusTreeIndex: number,
+    isRenderable: (focusTree: T) => boolean,
+): FocusTreeSelectionState {
+    const resolvedSelection = resolveFocusTreeSelection(
+        focusTrees,
+        selectedFocusTreeId,
+        selectedFocusTreeIndex,
+    );
+    const selectedTree = focusTrees[resolvedSelection.selectedFocusTreeIndex];
+    if (selectedTree && isRenderable(selectedTree)) {
+        return resolvedSelection;
+    }
+
+    const fallbackIndex = focusTrees.findIndex(isRenderable);
+    if (fallbackIndex >= 0) {
+        return {
+            selectedFocusTreeIndex: fallbackIndex,
+            selectedFocusTreeId: focusTrees[fallbackIndex]?.id,
+        };
+    }
+
+    return resolvedSelection;
+}
+
 export function resolveFocusTreeSelection<T extends FocusTreeSelectionLike>(
     focusTrees: readonly T[],
     selectedFocusTreeId: string | undefined,

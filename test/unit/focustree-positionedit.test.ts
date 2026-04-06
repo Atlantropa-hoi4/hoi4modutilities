@@ -324,6 +324,54 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /id = CHILD[\s\S]*?x = 12[\s\S]*?y = 14/);
     });
 
+    it('prefers an exact multi-parent prerequisite match over an earlier overlapping group when toggling links', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OTHER
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = THIRD
+        x = 2
+        y = 2
+    }
+    focus = {
+        id = CHILD
+        prerequisite = {
+            focus = ROOT
+            focus = THIRD
+        }
+        prerequisite = {
+            focus = ROOT
+            focus = OTHER
+        }
+        relative_position_id = ROOT
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 12, 14, ['ROOT', 'OTHER']);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(
+            updated,
+            /id = CHILD[\s\S]*?prerequisite = \{\s*\n\s*focus = ROOT\s*\n\s*focus = THIRD\s*\n\s*\}[\s\S]*?x = 12[\s\S]*?y = 14/,
+        );
+        assert.doesNotMatch(
+            updated,
+            /id = CHILD[\s\S]*?prerequisite = \{\s*\n\s*focus = ROOT\s*\n\s*focus = OTHER\s*\n\s*\}/,
+        );
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+    });
+
     it('rejects invalid link requests such as self-links or non-local child focuses', () => {
         const content = `focus_tree = {
     focus = {
@@ -430,7 +478,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 5[\s\S]*?y = 6[\s\S]*?completion_reward = \{\s*\n\s*\}\n    \}\n\}/);
+        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 5[\s\S]*?y = 6[\s\S]*?completion_reward = \{\n\s*\n\s*\}\n    \}\n\}/);
     });
 
     it('creates the requested full shared focus template after the last local shared focus block', () => {
@@ -446,7 +494,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\r?\n\r?\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\r?\n\s*\}\r?\n\}\r?\n\r?\njoint_focus = \{/);
+        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\r?\n\r?\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\r?\n\s*\r?\n\s*\}\r?\n\}\r?\n\r?\njoint_focus = \{/);
     });
 
     it('returns a placeholder range that still points at the generated tag-based focus id in BOM files', () => {
@@ -506,7 +554,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(second.error);
         const twiceUpdated = applyTextChanges(onceUpdated, second.changes ?? []);
 
-        assert.match(twiceUpdated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID_2[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\n\s*\}\n    \}/);
+        assert.match(twiceUpdated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID_2[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\n\s*\n\s*\}\n    \}/);
     });
 
     it('rejects create requests for imported or unknown tree edit keys', () => {

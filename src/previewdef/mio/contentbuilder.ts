@@ -50,7 +50,6 @@ export async function renderMioFile(loader: MioLoader, uri: vscode.Uri, webview:
             [
                 setPreviewFileUriScript,
                 ...jsCodes.map(c => ({ content: c })),
-                'common.js',
                 'miopreview.js',
             ],
             [

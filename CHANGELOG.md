@@ -4,7 +4,25 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.22] - 2026/04/06 - Latest
+## [1.0.0] - 2026/04/08 - Latest
+
+### Changed
+* Refresh the project README for the desktop-only, esbuild-based extension workflow and the current release automation path.
+* Promote the fork to version `1.0.0` to mark the broader stabilization and tooling modernization work as a fresh release line.
+
+### Fixed
+* Remove a redundant pre-ready Focus Tree refresh path that previously loaded the full preview model before the webview handshake, then threw that work away and rendered the shell again.
+
+## [0.13.23] - 2026/04/08
+
+### Changed
+* Unify Focus Tree preview startup and refresh around a single shell bootstrap plus snapshot-update protocol, removing the old small-file inline render heuristic and the separate `mode=full|patch` message split.
+* Refactor Focus Tree host/webview updates to use explicit changed-slot metadata with snapshot versions, reducing duplicated refresh logic and keeping selection state stable across tree-list updates.
+
+### Fixed
+* Narrow incremental Focus Tree DOM work to changed nodes only while preserving targeted selector and warnings refreshes, and add host/webview timing logs that separate load, diff, render, apply, rebuild, and rebind phases.
+
+## [0.13.22] - 2026/04/06
 
 ### Fixed
 * Cache Focus Preview inlay-window, scripted GUI, and interface GFX fallback discovery so repeated preview loads no longer rescan and reparse those folders on every render.
@@ -147,7 +165,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Add localisation editor highlighting for HOI4 color codes, text icons, localisation references, and scripted localisation tokens inside `.yml` strings.
 
 ### Changed
-* Modernize the development toolchain around local `npm ci`, TypeScript 6, webpack 5, and desktop-only VS Code extension packaging.
+* Modernize the development toolchain around local `npm ci`, TypeScript 6, esbuild-based desktop VS Code bundling, and desktop-only release packaging.
 * Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
 * Complete `joint_focus` preview handling so joint focus files render as their own tree and linked national focus trees can surface them consistently.
 * Activate on plaintext and YAML documents so localisation highlighting is available when opening HOI4 localisation files directly.

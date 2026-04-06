@@ -1,57 +1,26 @@
 import * as vscode from 'vscode';
-import { previewManager } from './previewdef/previewmanager';
 import { registerContextContainer, setVscodeContext } from './context';
-import { DDSViewProvider, TGAViewProvider } from './ddsviewprovider';
-import { registerModFile } from './util/modfile';
-import { worldMap } from './previewdef/worldmap';
-import { ViewType, ContextName, Commands } from './constants';
-import { registerTelemetryReporter, sendEvent } from './util/telemetry';
-import { registerScanReferencesCommand } from './util/dependency';
-import { registerHoiFs } from './util/hoifs';
-import { loadI18n } from './util/i18n';
-import { registerGfxIndex } from './util/gfxindex';
-import { registerLocalisationIndex } from "./util/localisationIndex";
-import { registerLocalisationHighlighting } from './util/localisationHighlighting';
-import { registerSharedFocusIndex } from "./util/sharedFocusIndex";
-import { registerCountryColorProvider } from './util/countryColorProvider';
-import { registerIndexPrewarm } from './util/indexprewarm';
+import { ContextName } from './constants';
+import { registerCommandServices } from './services/commands';
+import { registerEditorServices } from './services/editor';
+import { registerIndexServices } from './services/indexes';
+import { registerPreviewServices } from './services/previews';
+import { createExtensionServices } from './services/serviceRegistry';
+import { registerTelemetryServices } from './services/telemetry';
 
 export function activate(context: vscode.ExtensionContext) {
-    let locale = (context as any).extension?.packageJSON.locale;
-    if (locale === "%hoi4modutilities.locale%") {
-        locale = 'en';
-    }
+    const services = createExtensionServices(context);
 
-    loadI18n(locale);
+    // Must register this first because other components may use it.
+    services.push(registerContextContainer(context));
 
-    // Must register this first because other component may use it.
-    context.subscriptions.push(registerContextContainer(context));
-    context.subscriptions.push(registerTelemetryReporter());
+    registerTelemetryServices(services);
+    registerPreviewServices(services);
+    registerEditorServices(services);
+    registerIndexServices(services);
+    registerCommandServices(services);
 
-    sendEvent('extension.activate', { locale, runtime: 'desktop' });
-
-    context.subscriptions.push(previewManager.register());
-    context.subscriptions.push(registerModFile());
-    context.subscriptions.push(worldMap.register());
-    context.subscriptions.push(registerScanReferencesCommand());
-    context.subscriptions.push(registerHoiFs());
-    context.subscriptions.push(vscode.window.registerCustomEditorProvider(ViewType.DDS, new DDSViewProvider()));
-    context.subscriptions.push(vscode.window.registerCustomEditorProvider(ViewType.TGA, new TGAViewProvider()));
-    context.subscriptions.push(registerSharedFocusIndex());
-    context.subscriptions.push(registerGfxIndex());
-    context.subscriptions.push(registerLocalisationIndex());
-    context.subscriptions.push(registerIndexPrewarm());
-    context.subscriptions.push(registerLocalisationHighlighting());
-    context.subscriptions.push(registerCountryColorProvider());
-
-    if (process.env.NODE_ENV !== 'production') {
-        context.subscriptions.push(vscode.commands.registerCommand(Commands.Test, async () => {
-            await vscode.window.showInformationMessage('No developer test command is configured in this fork.');
-        }));
-
-        setVscodeContext(ContextName.Hoi4MUInDev, true);
-    }
-    
+    context.subscriptions.push(services);
     setVscodeContext(ContextName.Hoi4MULoaded, true);
 }
 
