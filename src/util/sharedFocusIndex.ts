@@ -8,13 +8,24 @@ import { Logger } from "./logger";
 import { extractFocusIds } from "../previewdef/focustree/schema";
 import { parseHoi4File } from "../hoiformat/hoiparser";
 import { sharedFocusIndex } from "./featureflags";
+import {
+    applyFocusFileToIndex,
+    createEmptyFocusIndexState,
+    findFileByFocusKeyInIndex,
+    FocusIndexState,
+    removeFocusFileFromIndex,
+} from "./sharedFocusIndexState";
 
-interface FocusIndex {
-    [file: string]: string[]; // Filename -> array of focus keys
-}
+export {
+    applyFocusFileToIndex,
+    createEmptyFocusIndexState,
+    findFileByFocusKeyInIndex,
+    FocusIndexState,
+    removeFocusFileFromIndex,
+};
 
-const globalFocusIndex: FocusIndex = {};
-let workspaceFocusIndex: FocusIndex = {};
+const globalFocusIndex: FocusIndexState = createEmptyFocusIndexState();
+let workspaceFocusIndex: FocusIndexState = createEmptyFocusIndexState();
 let globalFocusIndexTask: Promise<void> | undefined;
 let workspaceFocusIndexTask: Promise<void> | undefined;
 let globalFocusIndexReady = false;
@@ -87,18 +98,28 @@ function ensureWorkspaceFocusIndex(): Promise<void> {
     return workspaceFocusIndexTask;
 }
 
-async function fillFocusItems(focusFile: string, focusIndex: FocusIndex, options: { mod?: boolean; hoi4?: boolean }, estimatedSize?: [number]): Promise<void> {
+async function fillFocusItems(
+    focusFile: string,
+    focusIndex: FocusIndexState,
+    options: { mod?: boolean; hoi4?: boolean },
+    estimatedSize?: [number],
+): Promise<void> {
     const [fileBuffer, uri] = await readFileFromModOrHOI4(focusFile, options);
     const fileContent = fileBuffer.toString();
 
     if (!fileContent.includes('focus_tree')
         && !fileContent.includes('shared_focus')
         && !fileContent.includes('joint_focus')) {
+        removeFocusFileFromIndex(focusIndex, focusFile);
         return;
     }
 
     try {
-        focusIndex[focusFile] = extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile)));
+        applyFocusFileToIndex(
+            focusIndex,
+            focusFile,
+            extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile))),
+        );
 
         if (estimatedSize) {
             estimatedSize[0] += fileBuffer.length;
@@ -118,32 +139,14 @@ async function fillFocusItems(focusFile: string, focusIndex: FocusIndex, options
 // Function to find the file name containing the specified focus key
 export async function findFileByFocusKey(key: string): Promise<string | undefined> {
     await Promise.all([ensureGlobalFocusIndex(), ensureWorkspaceFocusIndex()]);
-    let result: string | undefined;
-
-    // Search in globalFocusIndex first
-    for (const file in globalFocusIndex) {
-        if (globalFocusIndex[file].includes(key)) {
-            result = file;
-            break;
-        }
-    }
-
-    // Always search in workspaceFocusIndex, and if found, override the result
-    for (const file in workspaceFocusIndex) {
-        if (workspaceFocusIndex[file].includes(key)) {
-            result = file;
-            break;
-        }
-    }
-
-    return result;
+    return findFileByFocusKeyInIndex(workspaceFocusIndex, key) ?? findFileByFocusKeyInIndex(globalFocusIndex, key);
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
     if (!workspaceFocusIndexReady) {
         return;
     }
-    workspaceFocusIndex = {};
+    workspaceFocusIndex = createEmptyFocusIndexState();
     workspaceFocusIndexReady = false;
     void ensureWorkspaceFocusIndex();
 }
@@ -214,7 +217,7 @@ function removeWorkspaceFocusIndex(file: vscode.Uri) {
     if (wsFolder) {
         const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
         if (relative && relative.startsWith('common/national_focus/')) {
-            delete workspaceFocusIndex[relative];
+            removeFocusFileFromIndex(workspaceFocusIndex, relative);
         }
     }
 }

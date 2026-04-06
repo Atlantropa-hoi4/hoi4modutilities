@@ -1,14 +1,20 @@
 import { ContentLoader, LoadResultOD, Dependency, LoaderSession, mergeInLoadResult } from "../../util/loader/loader";
 import { convertFocusFileNodeToJson, FocusTree, getFocusTree } from "./schema";
 import { parseHoi4File } from "../../hoiformat/hoiparser";
-import { getSpriteTypes } from "../../hoiformat/spritetype";
 import { localize } from "../../util/i18n";
 import { uniq, flatten } from "lodash";
 import { getGfxContainerFile } from "../../util/gfxindex";
-import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from "../../util/fileloader";
 import { sharedFocusIndex } from "../../util/featureflags";
 import { findFileByFocusKey } from "../../util/sharedFocusIndex";
-import { addInlayGfxWarnings, loadFocusInlayWindows, resolveInlayGfxFiles, resolveInlayGuiWindows, resolveInlaysForTree } from "./inlay";
+import {
+    addInlayGfxWarnings,
+    getCachedInterfaceGfxFiles,
+    getCachedInterfaceGfxSpriteNames,
+    loadFocusInlayWindows,
+    resolveInlayGfxFiles,
+    resolveInlayGuiWindows,
+    resolveInlaysForTree,
+} from "./inlay";
 import { sortFocusWarnings } from "./focuslint";
 import { FocusSpacingLoader } from "./focusspacing";
 import { NumberPosition } from "../../util/common";
@@ -100,20 +106,14 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             .flatMap(focus => focus.icon)
             .map(icon => icon.icon)
             .filter((icon): icon is string => icon !== undefined);
-        const uniqueInlayFiles = Array.from(new Set(allInlays.map(inlay => inlay.file)));
+        const uniqueInlayFiles = Array.from(new Set([
+            ...loadedInlays.inlays.map(inlay => inlay.file),
+            ...allInlays.map(inlay => inlay.file),
+        ]));
         const iconGfxFiles = await resolveFocusIconGfxFiles(focusIconNames, {
             resolveIndexedFile: getGfxContainerFile,
-            listInterfaceGfxFiles: async () =>
-                (await listFilesFromModOrHOI4('interface', { recursively: true }))
-                    .filter(file => file.toLowerCase().endsWith('.gfx'))
-                    .map(file => 'interface/' + file.replace(/\\+/g, '/')),
-            readSpriteNames: async (gfxFile) => {
-                const [buffer, realPath] = await readFileFromModOrHOI4(gfxFile);
-                return getSpriteTypes(parseHoi4File(
-                    buffer.toString('utf-8'),
-                    localize('infile', 'In file {0}:\n', realPath.toString()),
-                )).map(sprite => sprite.name);
-            },
+            listInterfaceGfxFiles: getCachedInterfaceGfxFiles,
+            readSpriteNames: getCachedInterfaceGfxSpriteNames,
         });
 
         const gfxDependencies = [

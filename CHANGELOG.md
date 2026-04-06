@@ -4,7 +4,14 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.21] - 2026/04/04 - Latest
+## [0.13.22] - 2026/04/06 - Latest
+
+### Fixed
+* Cache Focus Preview inlay-window, scripted GUI, and interface GFX fallback discovery so repeated preview loads no longer rescan and reparse those folders on every render.
+* Rebuild shared-focus lookup around a reverse `focus id -> file` index, reducing imported shared-focus resolution from repeated linear scans to direct lookups on large mods.
+* Reuse the cached interface GFX fallback map for focus-icon resolution so missing indexed icons stop triggering a fresh `interface/*.gfx` parse pass for each preview load.
+
+## [0.13.21] - 2026/04/04
 
 ### Added
 * Add a native VS Code RGB color picker for `common/countries/colors.txt`, `common/countries/color.txt`, `common/countries/cosmetic.txt`, and `common/ideologies/*.txt`, so definition color values can be chosen directly from the editor instead of typed by hand.

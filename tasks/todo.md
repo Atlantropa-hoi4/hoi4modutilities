@@ -1,19 +1,23 @@
-# Focus Preview Reopen Load Retention Fix 2026-04-06
+# Focus Preview P0 Performance 2026-04-06
 
 ## Plan
-- [x] Confirm why the preview pays a full bootstrap cost on every reopen/reveal
-- [x] Keep preview webview context alive while hidden so reopening the same preview avoids a full reload
-- [x] Run focused verification and record what was proven versus environment-blocked
+- [x] Reconfirm current hot paths, repo lessons, and the exact P0 scope from the earlier audit
+- [x] Cache focus inlay window, scripted GUI window, and interface GFX fallback discovery so preview loads stop rescanning/parsing whole folders per render
+- [x] Keep shared focus lookup on a reverse index (`focus id -> file`) and verify incremental index maintenance with regression tests
+- [x] Rewire the focus tree loader to use the cached fallback helpers and run targeted verification (`compile-ts`, unit tests, `package`)
 
 ## Notes
-- `src/previewdef/worldmap/worldmapcontainer.ts` already opts into `retainContextWhenHidden`, but the generic preview path in `src/previewdef/previewmanager.ts` does not.
-- That mismatch matches the reported behavior: standard previews lose their in-memory webview state while hidden, then rebuild from scratch when revealed again.
+- Scope for this pass is the audited `P0` items only. `P1` and `P2` remain backlog work after this lands.
+- Focus preview reopen latency was already improved by retaining hidden webview context; this pass targets the remaining host-side parse/index bottlenecks on true loads.
 
 ## Review
-- Root cause was the generic preview panel in `src/previewdef/previewmanager.ts` being created without `retainContextWhenHidden`, unlike the world map preview.
-- `src/previewdef/previewmanager.ts` now enables `retainContextWhenHidden` for standard HOI4 preview panels, so hiding and revealing an already-open preview keeps its live webview state instead of forcing a full bootstrap.
-- Updated `tasks/lessons.md` with the reopen-performance pattern so future preview-slow reports check panel retention before deeper rendering changes.
-- Verification:
-  - `npm run compile-ts` passed.
-  - `npm run package` passed and produced `hoi4modutilities-0.13.21.vsix`.
-  - I did not rerun `npm run test-ui` for this tiny panel-option change; the last local UI runs in this repo are still environment-blocked at `@vscode/test-electron` `spawn EPERM`.
+- `src/previewdef/focustree/inlay.ts` now keeps parsed focus inlay windows, scripted GUI container windows, and interface `.gfx` fallback sprite maps behind `PromiseCache`, keyed by folder contents plus per-file expiry tokens. Repeated preview loads now reuse the parsed results instead of rescanning and reparsing those folders every render.
+- `src/previewdef/focustree/inlay.ts` also clones resolved inlay structures before attaching per-tree position, GUI, and GFX resolution data, so cached parse results stay immutable across preview loads.
+- `src/previewdef/focustree/loader.ts` now reuses the cached interface GFX helpers for unresolved focus icon lookup instead of doing a fresh `interface/*.gfx` scan for every load.
+- `src/util/sharedFocusIndex.ts` now builds on a dedicated `src/util/sharedFocusIndexState.ts` helper that maintains both `file -> ids` and `id -> files`, making shared-focus resolution direct instead of linear over all indexed files.
+- `test/unit/shared-focus-index.test.ts` covers reverse-index insert, replace, and removal behavior, and the helper extraction keeps those tests runnable without a VS Code host shim.
+
+## Verification
+- `npm run compile-ts` passed.
+- `node .\node_modules\mocha\bin\mocha --exit out\test\unit\shared-focus-index.test.js out\test\unit\focustree-focusicongfx.test.js out\test\unit\focustree-schema.test.js out\test\unit\focustree-conditionpresets.test.js out\test\unit\focustree-positionedit.test.js` passed with 44 tests.
+- `npm run package` passed and produced `hoi4modutilities-0.13.22.vsix`.

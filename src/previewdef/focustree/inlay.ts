@@ -4,7 +4,8 @@ import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
 import { convertNodeToJson, HOIPartial, Position, positionSchema } from "../../hoiformat/schema";
 import { getSpriteTypes } from "../../hoiformat/spritetype";
 import { countryScope } from "../../hoiformat/scope";
-import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from "../../util/fileloader";
+import { hoiFileExpiryToken, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from "../../util/fileloader";
+import { PromiseCache } from "../../util/cache";
 import { getGfxContainerFile } from "../../util/gfxindex";
 import { localize } from "../../util/i18n";
 import type {
@@ -21,8 +22,42 @@ interface ParsedInlayFile {
     warnings: FocusWarning[];
 }
 
+interface ParsedInlayFileCache extends ParsedInlayFile {
+    files: string[];
+}
+
+interface ScriptedGuiWindowsCache {
+    guiFiles: string[];
+    windowsByName: Record<string, { file: string; window: HOIPartial<ContainerWindowType> }>;
+}
+
+interface InterfaceGfxCache {
+    gfxFiles: string[];
+    spriteNamesByFile: Record<string, string[]>;
+    spriteToFile: Record<string, string>;
+}
+
 const focusInlayWindowsFolder = "common/focus_inlay_windows";
 const scriptedGuiFolder = "interface/scripted_gui";
+const interfaceFolder = "interface";
+
+const focusInlayWindowsCache = new PromiseCache<ParsedInlayFileCache>({
+    factory: buildFocusInlayWindowsCache,
+    expireWhenChange: () => getFolderFilesExpiryToken(focusInlayWindowsFolder, ".txt"),
+    life: 10 * 60 * 1000,
+});
+
+const scriptedGuiWindowsCache = new PromiseCache<ScriptedGuiWindowsCache>({
+    factory: buildScriptedGuiWindowsCache,
+    expireWhenChange: () => getFolderFilesExpiryToken(scriptedGuiFolder, ".gui"),
+    life: 10 * 60 * 1000,
+});
+
+const interfaceGfxCache = new PromiseCache<InterfaceGfxCache>({
+    factory: buildInterfaceGfxCache,
+    expireWhenChange: () => getFolderFilesExpiryToken(interfaceFolder, ".gfx"),
+    life: 10 * 60 * 1000,
+});
 
 function createParseWarning(params: {
     code: string;
@@ -43,13 +78,50 @@ function createParseWarning(params: {
     };
 }
 
+async function listFolderFiles(folder: string, extension: string): Promise<string[]> {
+    try {
+        const files = await listFilesFromModOrHOI4(folder, { recursively: true });
+        return files
+            .filter(file => file.toLowerCase().endsWith(extension))
+            .map(file => `${folder}/${file}`.replace(/\/+/g, "/"));
+    } catch {
+        return [];
+    }
+}
+
+async function getFolderFilesExpiryToken(folder: string, extension: string): Promise<string> {
+    const files = await listFolderFiles(folder, extension);
+    const tokens = await Promise.all(files.map(file => hoiFileExpiryToken(file)));
+    return `${files.join("|")}::${tokens.join("|")}`;
+}
+
+function cloneInlayForTree(source: FocusTreeInlay, position: FocusTreeInlay["position"]): FocusTreeInlay {
+    return {
+        ...source,
+        position,
+        conditionExprs: [...source.conditionExprs],
+        scriptedImages: source.scriptedImages.map(slot => ({
+            ...slot,
+            gfxOptions: slot.gfxOptions.map(option => ({
+                ...option,
+            })),
+        })),
+        scriptedButtons: source.scriptedButtons.map(button => ({
+            ...button,
+        })),
+    };
+}
+
 export async function loadFocusInlayWindows(): Promise<ParsedInlayFile> {
-    const files = await listFilesFromModOrHOI4(focusInlayWindowsFolder, { recursively: true });
+    return await focusInlayWindowsCache.get();
+}
+
+async function buildFocusInlayWindowsCache(): Promise<ParsedInlayFileCache> {
+    const files = await listFolderFiles(focusInlayWindowsFolder, ".txt");
     const inlays: FocusTreeInlay[] = [];
     const warnings: FocusWarning[] = [];
 
-    for (const file of files.filter(f => f.toLowerCase().endsWith(".txt"))) {
-        const relativePath = `${focusInlayWindowsFolder}/${file}`.replace(/\\+/g, "/");
+    for (const relativePath of files) {
         try {
             const [buffer, uri] = await readFileFromModOrHOI4(relativePath);
             const node = parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString()));
@@ -65,7 +137,7 @@ export async function loadFocusInlayWindows(): Promise<ParsedInlayFile> {
         }
     }
 
-    return { inlays, warnings };
+    return { inlays, warnings, files };
 }
 
 function parseInlayNode(node: Node, file: string): ParsedInlayFile {
@@ -221,10 +293,7 @@ export function resolveInlaysForTree(refs: FocusTreeInlayRef[], allInlays: Focus
             continue;
         }
 
-        const resolved: FocusTreeInlay = {
-            ...matched,
-            position: ref.position,
-        };
+        const resolved = cloneInlayForTree(matched, ref.position);
         extractConditionalExprs(resolved.visible, conditionExprs);
         resolved.scriptedImages.forEach(slot => slot.gfxOptions.forEach(option => extractConditionalExprs(option.condition, conditionExprs)));
         resolved.scriptedButtons.forEach(button => button.available && extractConditionalExprs(button.available, conditionExprs));
@@ -236,29 +305,14 @@ export function resolveInlaysForTree(refs: FocusTreeInlayRef[], allInlays: Focus
 
 export async function resolveInlayGuiWindows(inlays: FocusTreeInlay[]): Promise<{ guiFiles: string[], warnings: FocusWarning[] }> {
     const warnings: FocusWarning[] = [];
-    const guiFiles = await listGuiFiles();
-    const parsedGuiFiles: { file: string, windows: Record<string, HOIPartial<ContainerWindowType>> }[] = [];
-
-    for (const guiFile of guiFiles) {
-        try {
-            const [buffer, uri] = await readFileFromModOrHOI4(guiFile);
-            const guiNode = parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString()));
-            const guiFileData = convertNodeToJson<GuiFile>(guiNode, guiFileSchema);
-            parsedGuiFiles.push({
-                file: guiFile,
-                windows: collectContainerWindows(guiFileData),
-            });
-        } catch (e) {
-            // Ignore malformed GUI files here; the GUI preview already reports them in its own flow.
-        }
-    }
+    const guiWindows = await scriptedGuiWindowsCache.get();
 
     for (const inlay of inlays) {
         if (!inlay.windowName) {
             continue;
         }
 
-        const matched = parsedGuiFiles.find(gui => gui.windows[inlay.windowName!] !== undefined);
+        const matched = guiWindows.windowsByName[inlay.windowName];
         if (!matched) {
             warnings.push(createParseWarning({
                 code: 'inlay-gui-window-missing',
@@ -270,21 +324,36 @@ export async function resolveInlayGuiWindows(inlays: FocusTreeInlay[]): Promise<
         }
 
         inlay.guiFile = matched.file;
-        inlay.guiWindow = matched.windows[inlay.windowName];
+        inlay.guiWindow = matched.window;
     }
 
-    return { guiFiles, warnings };
+    return { guiFiles: guiWindows.guiFiles, warnings };
 }
 
 async function listGuiFiles(): Promise<string[]> {
-    try {
-        const files = await listFilesFromModOrHOI4(scriptedGuiFolder, { recursively: true });
-        return files
-            .filter(file => file.toLowerCase().endsWith(".gui"))
-            .map(file => `${scriptedGuiFolder}/${file}`.replace(/\/+/g, "/"));
-    } catch (e) {
-        return [];
+    return await listFolderFiles(scriptedGuiFolder, ".gui");
+}
+
+async function buildScriptedGuiWindowsCache(): Promise<ScriptedGuiWindowsCache> {
+    const guiFiles = await listGuiFiles();
+    const windowsByName: ScriptedGuiWindowsCache["windowsByName"] = {};
+
+    for (const guiFile of guiFiles) {
+        try {
+            const [buffer, uri] = await readFileFromModOrHOI4(guiFile);
+            const guiNode = parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString()));
+            const guiFileData = convertNodeToJson<GuiFile>(guiNode, guiFileSchema);
+            for (const [windowName, window] of Object.entries(collectContainerWindows(guiFileData))) {
+                if (!(windowName in windowsByName)) {
+                    windowsByName[windowName] = { file: guiFile, window };
+                }
+            }
+        } catch {
+            // Ignore malformed GUI files here; the GUI preview already reports them in its own flow.
+        }
     }
+
+    return { guiFiles, windowsByName };
 }
 
 function collectContainerWindows(guiFile: HOIPartial<GuiFile>): Record<string, HOIPartial<ContainerWindowType>> {
@@ -331,7 +400,7 @@ export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ 
         return { resolvedFiles: Array.from(resolvedFiles) };
     }
 
-    const fallbackMap = await buildFallbackGfxMap(unresolvedByName);
+    const fallbackMap = await getCachedInterfaceGfxMap();
     for (const [gfxName, options] of unresolvedByName.entries()) {
         const resolved = fallbackMap[gfxName];
         if (!resolved) {
@@ -347,33 +416,43 @@ export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ 
     return { resolvedFiles: Array.from(resolvedFiles) };
 }
 
-async function buildFallbackGfxMap(unresolvedByName: Map<string, FocusInlayGfxOption[]>): Promise<Record<string, string>> {
-    const result: Record<string, string> = {};
+async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
+    const gfxFiles = await listFolderFiles(interfaceFolder, ".gfx");
+    const spriteNamesByFile: Record<string, string[]> = {};
+    const spriteToFile: Record<string, string> = {};
 
-    let candidateFiles: string[] = [];
-    try {
-        candidateFiles = (await listFilesFromModOrHOI4("interface", { recursively: true }))
-            .filter(file => file.toLowerCase().endsWith(".gfx"))
-            .map(file => `interface/${file}`.replace(/\/+/g, "/"));
-    } catch (e) {
-        return result;
-    }
-
-    for (const candidateFile of candidateFiles) {
+    for (const candidateFile of gfxFiles) {
         try {
             const [buffer, uri] = await readFileFromModOrHOI4(candidateFile);
-            const spriteTypes = getSpriteTypes(parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString())));
+            const spriteTypes = getSpriteTypes(parseHoi4File(
+                buffer.toString().replace(/^\uFEFF/, ""),
+                localize("infile", "In file {0}:\n", uri.toString()),
+            ));
+            const spriteNames = spriteTypes.map(spriteType => spriteType.name);
+            spriteNamesByFile[candidateFile] = spriteNames;
             for (const spriteType of spriteTypes) {
-                if (!(spriteType.name in result) && unresolvedByName.has(spriteType.name)) {
-                    result[spriteType.name] = candidateFile;
+                if (!(spriteType.name in spriteToFile)) {
+                    spriteToFile[spriteType.name] = candidateFile;
                 }
             }
-        } catch (e) {
+        } catch {
             // Ignore unreadable GFX files in the fallback scan.
         }
     }
 
-    return result;
+    return { gfxFiles, spriteNamesByFile, spriteToFile };
+}
+
+async function getCachedInterfaceGfxMap(): Promise<Record<string, string>> {
+    return (await interfaceGfxCache.get()).spriteToFile;
+}
+
+export async function getCachedInterfaceGfxFiles(): Promise<string[]> {
+    return (await interfaceGfxCache.get()).gfxFiles;
+}
+
+export async function getCachedInterfaceGfxSpriteNames(gfxFile: string): Promise<string[]> {
+    return (await interfaceGfxCache.get()).spriteNamesByFile[gfxFile] ?? [];
 }
 
 export function addInlayGfxWarnings(inlays: FocusTreeInlay[], warnings: FocusWarning[]) {
