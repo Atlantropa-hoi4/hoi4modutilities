@@ -58,6 +58,7 @@ interface LocalisationDocumentAnalysis {
     key: string;
     version: number;
     isHoi4Localisation: boolean;
+    hasDecorations: boolean;
     buckets?: LocalisationRangeBuckets;
 }
 
@@ -94,6 +95,16 @@ export function isLikelyHoi4LocalisationPath(path: string): boolean {
 
 export function hasHoi4LocalisationTokenHints(text: string): boolean {
     return hoi4LocalisationTokenHintPattern.test(text);
+}
+
+function documentHasHoi4LocalisationTokenHints(document: vscode.TextDocument): boolean {
+    for (let i = 0; i < document.lineCount; i++) {
+        if (hasHoi4LocalisationTokenHints(document.lineAt(i).text)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 export function findLocalisationStringRanges(text: string): LocalisationStringRange[] {
@@ -468,7 +479,7 @@ function updateEditorDecorations(
         return;
     }
 
-    if (!analysis.isHoi4Localisation || !analysis.buckets) {
+    if (!analysis.isHoi4Localisation || !analysis.hasDecorations || !analysis.buckets) {
         if (appliedState?.hasDecorations) {
             clearDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
         }
@@ -569,17 +580,31 @@ function getDocumentAnalysis(
             key,
             version: document.version,
             isHoi4Localisation: false,
+            hasDecorations: false,
+        };
+        documentAnalysisCache.set(key, analysis);
+        return analysis;
+    }
+
+    if (!documentHasHoi4LocalisationTokenHints(document)) {
+        const analysis: LocalisationDocumentAnalysis = {
+            key,
+            version: document.version,
+            isHoi4Localisation: true,
+            hasDecorations: false,
         };
         documentAnalysisCache.set(key, analysis);
         return analysis;
     }
 
     const text = document.getText();
+    const decorations = collectLocalisationDecorations(text);
     const analysis: LocalisationDocumentAnalysis = {
         key,
         version: document.version,
         isHoi4Localisation: true,
-        buckets: createRangeBuckets(document, collectLocalisationDecorations(text)),
+        hasDecorations: decorations.length > 0,
+        buckets: decorations.length > 0 ? createRangeBuckets(document, decorations) : undefined,
     };
     documentAnalysisCache.set(key, analysis);
     return analysis;

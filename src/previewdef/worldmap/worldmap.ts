@@ -10,10 +10,10 @@ import { writeFile, mkdirs, getDocumentByUri, dirUri } from '../../util/vsccommo
 import { slice, debounceByInput, forceError } from '../../util/common';
 import { getFilePathFromMod, getHoiOpenedFileOriginalUri, readFileFromModOrHOI4 } from '../../util/fileloader';
 import { WorldMapLoader } from './loader/worldmaploader';
-import { isEqual } from 'lodash';
 import { LoaderSession } from '../../util/loader/loader';
 import { TelemetryMessage, sendByMessage } from '../../util/telemetry';
 import { getConfiguration } from '../../util/vsccommon';
+import { areEqualWithinBudget, createWorldMapComparisonBudget, WorldMapComparisonBudget } from './worldmapdiff';
 
 export class WorldMap {
     public panel: vscode.WebviewPanel | undefined;
@@ -219,55 +219,74 @@ export class WorldMap {
     private async sendDifferences(cachedWorldMap: WorldMapData, worldMap: WorldMapData): Promise<boolean> {
         await this.progressReporter(localize('worldmap.progress.comparing', 'Comparing changes...'));
         const changeMessages: WorldMapMessage[] = [];
+        const comparisonBudget = createWorldMapComparisonBudget();
 
-        if ((['width', 'height', 'provincesCount', 'statesCount', 'countriesCount', 'strategicRegionsCount', 'supplyAreasCount',
+        for (const key of ['width', 'height', 'provincesCount', 'statesCount', 'countriesCount', 'strategicRegionsCount', 'supplyAreasCount',
             'railwaysCount', 'supplyNodesCount',
-            'badProvincesCount', 'badStatesCount', 'badStrategicRegionsCount', 'badSupplyAreasCount'] as (keyof WorldMapData)[])
-            .some(k => !isEqual(cachedWorldMap[k], worldMap[k]))) {
-            return false;
+            'badProvincesCount', 'badStatesCount', 'badStrategicRegionsCount', 'badSupplyAreasCount'] as (keyof WorldMapData)[]) {
+            const equal = areEqualWithinBudget(cachedWorldMap[key], worldMap[key], comparisonBudget);
+            if (equal !== true) {
+                return false;
+            }
         }
 
-        if (!isEqual(cachedWorldMap.warnings, worldMap.warnings)) {
+        const warningsEqual = areEqualWithinBudget(cachedWorldMap.warnings, worldMap.warnings, comparisonBudget);
+        if (warningsEqual === undefined) {
+            return false;
+        }
+        if (!warningsEqual) {
             changeMessages.push({ command: 'warnings', data: JSON.stringify(worldMap.warnings), start: 0, end: 0 });
         }
 
-        if (!isEqual(cachedWorldMap.continents, worldMap.continents)) {
+        const continentsEqual = areEqualWithinBudget(cachedWorldMap.continents, worldMap.continents, comparisonBudget);
+        if (continentsEqual === undefined) {
+            return false;
+        }
+        if (!continentsEqual) {
             changeMessages.push({ command: 'continents', data: JSON.stringify(worldMap.continents), start: 0, end: 0 });
         }
 
-        if (!isEqual(cachedWorldMap.terrains, worldMap.terrains)) {
+        const terrainsEqual = areEqualWithinBudget(cachedWorldMap.terrains, worldMap.terrains, comparisonBudget);
+        if (terrainsEqual === undefined) {
+            return false;
+        }
+        if (!terrainsEqual) {
             changeMessages.push({ command: 'terrains', data: JSON.stringify(worldMap.terrains), start: 0, end: 0 });
         }
 
-        if (!isEqual(cachedWorldMap.resources, worldMap.resources)) {
+        const resourcesEqual = areEqualWithinBudget(cachedWorldMap.resources, worldMap.resources, comparisonBudget);
+        if (resourcesEqual === undefined) {
+            return false;
+        }
+        if (!resourcesEqual) {
             changeMessages.push({ command: 'resources', data: JSON.stringify(worldMap.resources), start: 0, end: 0 });
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.provinces, cachedWorldMap.provinces, 'provinces', worldMap.badProvincesCount, worldMap.provincesCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.provinces, cachedWorldMap.provinces, 'provinces', worldMap.badProvincesCount, worldMap.provincesCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.states, cachedWorldMap.states, 'states', worldMap.badStatesCount, worldMap.statesCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.states, cachedWorldMap.states, 'states', worldMap.badStatesCount, worldMap.statesCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.countries, cachedWorldMap.countries, 'countries', 0, worldMap.countriesCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.countries, cachedWorldMap.countries, 'countries', 0, worldMap.countriesCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.strategicRegions, cachedWorldMap.strategicRegions, 'strategicregions', worldMap.badStrategicRegionsCount, worldMap.strategicRegionsCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.strategicRegions, cachedWorldMap.strategicRegions, 'strategicregions', worldMap.badStrategicRegionsCount, worldMap.strategicRegionsCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.supplyAreas, cachedWorldMap.supplyAreas, 'supplyareas', worldMap.badSupplyAreasCount, worldMap.supplyAreasCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.supplyAreas, cachedWorldMap.supplyAreas, 'supplyareas', worldMap.badSupplyAreasCount, worldMap.supplyAreasCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.railways, cachedWorldMap.railways, 'railways', 0, worldMap.railwaysCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.railways, cachedWorldMap.railways, 'railways', 0, worldMap.railwaysCount, comparisonBudget)) {
             return false;
         }
 
-        if (!this.fillMessageForItem(changeMessages, worldMap.supplyNodes, cachedWorldMap.supplyNodes, 'supplynodes', 0, worldMap.supplyNodesCount)) {
+        if (!this.fillMessageForItem(changeMessages, worldMap.supplyNodes, cachedWorldMap.supplyNodes, 'supplynodes', 0, worldMap.supplyNodesCount, comparisonBudget)) {
             return false;
         }
 
@@ -288,13 +307,35 @@ export class WorldMap {
         command: MapItemMessage['command'],
         listStart: number,
         listEnd: number,
+        comparisonBudget: WorldMapComparisonBudget,
     ): boolean {
         const changeMessagesCountLimit = 30;
         const messageCountLimit = 300;
 
         let lastDifferenceStart: number | undefined = undefined;
         for (let i = listStart; i <= listEnd; i++) {
-            if (i === listEnd || isEqual(list[i], cachedList[i])) {
+            if (i === listEnd) {
+                if (lastDifferenceStart !== undefined) {
+                    changeMessages.push({
+                        command,
+                        data: JSON.stringify(slice(list, lastDifferenceStart, i)),
+                        start: lastDifferenceStart,
+                        end: i,
+                    });
+                    if (changeMessages.length > changeMessagesCountLimit) {
+                        return false;
+                    }
+                    lastDifferenceStart = undefined;
+                }
+                continue;
+            }
+
+            const equal = areEqualWithinBudget(list[i], cachedList[i], comparisonBudget);
+            if (equal === undefined) {
+                return false;
+            }
+
+            if (equal) {
                 if (lastDifferenceStart !== undefined) {
                     changeMessages.push({
                         command,

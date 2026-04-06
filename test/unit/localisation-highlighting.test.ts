@@ -1,13 +1,32 @@
 import * as assert from 'assert';
-import {
+import Module = require('module');
+import { readFixture } from '../testUtils';
+
+const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
+const originalLoad = nodeModule._load;
+nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
+    if (request === 'vscode') {
+        return {
+            window: {},
+            workspace: {},
+            ColorThemeKind: {
+                Light: 1,
+                HighContrastLight: 4,
+            },
+        };
+    }
+
+    return originalLoad.call(this, request, parent, isMain);
+};
+
+const {
     collectLocalisationDecorations,
     correctLocalisationTextColor,
     findLocalisationStringRanges,
     hasHoi4LocalisationTokenHints,
     isHoi4LocalisationText,
     isLikelyHoi4LocalisationPath,
-} from '../../src/util/localisationHighlighting';
-import { readFixture } from '../testUtils';
+} = require('../../src/util/localisationHighlighting') as typeof import('../../src/util/localisationHighlighting');
 
 describe('localisation highlighting helpers', () => {
     it('detects HOI4 localisation text using headers and entry lines', () => {

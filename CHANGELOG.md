@@ -12,6 +12,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Reuse the cached interface GFX fallback map for focus-icon resolution so missing indexed icons stop triggering a fresh `interface/*.gfx` parse pass for each preview load.
 * Replace ambiguous preview-type detection with bounded text sampling plus unchanged-document provider caching, reducing active-editor and visibility update cost on large `.txt` files.
 * Prewarm eligible shared-focus, GFX, and localisation indexes shortly after activation so the first preview open is less likely to pay the full lazy index build cost on the foreground path.
+* Skip the expensive localisation-highlighting full-text parse and decoration application path for HOI4 localisation files that currently contain no highlightable inline tokens.
+* Add a budgeted world-map incremental diff path that bails out to a summary refresh sooner when large edits would otherwise spend too long in deep object comparison.
 
 ## [0.13.21] - 2026/04/04
 
