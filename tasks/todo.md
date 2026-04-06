@@ -1,23 +1,23 @@
-# Focus Preview P0 Performance 2026-04-06
+# Preview Performance P1 2026-04-06
 
 ## Plan
-- [x] Reconfirm current hot paths, repo lessons, and the exact P0 scope from the earlier audit
-- [x] Cache focus inlay window, scripted GUI window, and interface GFX fallback discovery so preview loads stop rescanning/parsing whole folders per render
-- [x] Keep shared focus lookup on a reverse index (`focus id -> file`) and verify incremental index maintenance with regression tests
-- [x] Rewire the focus tree loader to use the cached fallback helpers and run targeted verification (`compile-ts`, unit tests, `package`)
+- [x] Reconfirm the audited P1 scope and the current preview/index hot paths
+- [x] Replace full-document `canPreview` scans with path-first detection plus bounded text sampling where paths are ambiguous
+- [x] Cache preview-provider selection for unchanged document versions so editor/context updates stop recomputing detection work
+- [x] Move eligible lazy index builds off the foreground path with safe background prewarm, then verify with compile/tests/package
 
 ## Notes
-- Scope for this pass is the audited `P0` items only. `P1` and `P2` remain backlog work after this lands.
-- Focus preview reopen latency was already improved by retaining hidden webview context; this pass targets the remaining host-side parse/index bottlenecks on true loads.
+- Scope for this pass is the earlier audit's `P1` items only. `P2` remains backlog work after this lands.
+- P0 loader caching and shared-focus reverse indexing are already in place from the previous step.
 
 ## Review
-- `src/previewdef/focustree/inlay.ts` now keeps parsed focus inlay windows, scripted GUI container windows, and interface `.gfx` fallback sprite maps behind `PromiseCache`, keyed by folder contents plus per-file expiry tokens. Repeated preview loads now reuse the parsed results instead of rescanning and reparsing those folders every render.
-- `src/previewdef/focustree/inlay.ts` also clones resolved inlay structures before attaching per-tree position, GUI, and GFX resolution data, so cached parse results stay immutable across preview loads.
-- `src/previewdef/focustree/loader.ts` now reuses the cached interface GFX helpers for unresolved focus icon lookup instead of doing a fresh `interface/*.gfx` scan for every load.
-- `src/util/sharedFocusIndex.ts` now builds on a dedicated `src/util/sharedFocusIndexState.ts` helper that maintains both `file -> ids` and `id -> files`, making shared-focus resolution direct instead of linear over all indexed files.
-- `test/unit/shared-focus-index.test.ts` covers reverse-index insert, replace, and removal behavior, and the helper extraction keeps those tests runnable without a VS Code host shim.
+- `src/previewdef/previewdetect.ts` and `src/previewdef/previewdetectshared.ts` now provide bounded preview-text sampling and reusable regex detection helpers, and the focus tree, technology, event, and MIO preview selectors now use path-first checks plus sampled text instead of whole-document `getText()` scans on ambiguous `.txt` files.
+- `src/previewdef/mio/index.ts` now requires cheap sampled MIO hint keywords before attempting parser-based detection on off-path files, which cuts unnecessary parser work during editor/context switching.
+- `src/previewdef/previewmanager.ts` now caches the resolved preview provider per document version, so repeated active-editor, visible-editor, and open-document context updates stop rerunning provider detection for unchanged documents.
+- `src/util/indexprewarm.ts` now schedules a delayed background prewarm after activation, and `src/util/sharedFocusIndex.ts`, `src/util/gfxindex.ts`, and `src/util/localisationIndex.ts` expose silent prewarm paths that reuse the same index builders without surfacing status-bar churn during idle warmup.
+- `test/unit/preview-detection.test.ts` adds coverage for bounded preview sampling and regex priority matching, and the existing MIO/schema/index tests still cover the parser-backed preview and shared-focus behavior touched by this pass.
 
 ## Verification
 - `npm run compile-ts` passed.
-- `node .\node_modules\mocha\bin\mocha --exit out\test\unit\shared-focus-index.test.js out\test\unit\focustree-focusicongfx.test.js out\test\unit\focustree-schema.test.js out\test\unit\focustree-conditionpresets.test.js out\test\unit\focustree-positionedit.test.js` passed with 44 tests.
+- `node .\node_modules\mocha\bin\mocha --exit out\test\unit\preview-detection.test.js out\test\unit\mio-preview.test.js out\test\unit\shared-focus-index.test.js out\test\unit\focustree-schema.test.js out\test\unit\focustree-focusicongfx.test.js out\test\unit\focustree-conditionpresets.test.js out\test\unit\focustree-positionedit.test.js` passed with 50 tests.
 - `npm run package` passed and produced `hoi4modutilities-0.13.22.vsix`.

@@ -10,17 +10,23 @@ import { buildContinuousFocusPositionWorkspaceEdit, buildCreateFocusTemplateWork
 import { localize } from '../../util/i18n';
 import { contextContainer } from '../../context';
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './conditionpresets';
+import { findDocumentRegexPreviewPriority } from '../previewdetect';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
-    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'national_focus', '*']) && uri.path.toLowerCase().endsWith('.txt')) {
+    const lowerUri = uri.toString().toLowerCase();
+    const lowerPath = uri.path.toLowerCase();
+    if (!lowerPath.endsWith('.txt')) {
+        return undefined;
+    }
+
+    if (matchPathEnd(lowerUri, ['common', 'national_focus', '*'])) {
         return 0;
     }
 
-    const text = document.getText();
-    return /(focus_tree|shared_focus|joint_focus)\s*=\s*{/.exec(text)?.index;
+    return findDocumentRegexPreviewPriority(document, /(focus_tree|shared_focus|joint_focus)\s*=\s*{/);
 }
 
 export class FocusTreePreview extends PreviewBase {

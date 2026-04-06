@@ -34,6 +34,7 @@ interface PreviewProviderDefAlternative {
 export class PreviewManager implements vscode.WebviewPanelSerializer {
     private _previews: Record<string, PreviewBase> = {};
     private _previewItemUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private _previewProviderCache = new Map<string, { version: number; providerType: string | undefined }>();
 
     private _previewProviders: PreviewProviderDef[] = [
         focusTreePreviewDef,
@@ -88,6 +89,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private onCloseTextDocument(document: vscode.TextDocument): void {
+        this._previewProviderCache.delete(document.uri.toString());
         if (!vscode.window.visibleTextEditors.some(e => e.document.uri.toString() === document.uri.toString())) {
             const key = document.uri.toString();
             this._previews[key]?.panel.dispose();
@@ -219,6 +221,12 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private findPreviewProvider(document: vscode.TextDocument): PreviewProviderDef | undefined {
+        const cacheKey = document.uri.toString();
+        const cached = this._previewProviderCache.get(cacheKey);
+        if (cached?.version === document.version) {
+            return cached.providerType ? this._previewProvidersMap[cached.providerType] : undefined;
+        }
+
         let bestProvider: PreviewProviderDef | undefined;
         let bestPriority: number | undefined;
 
@@ -234,6 +242,10 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             }
         }
 
+        this._previewProviderCache.set(cacheKey, {
+            version: document.version,
+            providerType: bestProvider?.type,
+        });
         return bestProvider;
     }
 

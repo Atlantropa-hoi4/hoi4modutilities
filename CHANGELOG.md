@@ -10,6 +10,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Cache Focus Preview inlay-window, scripted GUI, and interface GFX fallback discovery so repeated preview loads no longer rescan and reparse those folders on every render.
 * Rebuild shared-focus lookup around a reverse `focus id -> file` index, reducing imported shared-focus resolution from repeated linear scans to direct lookups on large mods.
 * Reuse the cached interface GFX fallback map for focus-icon resolution so missing indexed icons stop triggering a fresh `interface/*.gfx` parse pass for each preview load.
+* Replace ambiguous preview-type detection with bounded text sampling plus unchanged-document provider caching, reducing active-editor and visibility update cost on large `.txt` files.
+* Prewarm eligible shared-focus, GFX, and localisation indexes shortly after activation so the first preview open is less likely to pay the full lazy index build cost on the foreground path.
 
 ## [0.13.21] - 2026/04/04
 

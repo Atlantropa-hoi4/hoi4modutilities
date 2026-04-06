@@ -59,6 +59,10 @@ async function buildWorkspaceFocusIndex(estimatedSize: [number]): Promise<void> 
 }
 
 function ensureGlobalFocusIndex(): Promise<void> {
+    return ensureGlobalFocusIndexImpl(true);
+}
+
+function ensureGlobalFocusIndexImpl(showStatusBar: boolean): Promise<void> {
     if (globalFocusIndexReady) {
         return Promise.resolve();
     }
@@ -68,7 +72,9 @@ function ensureGlobalFocusIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const buildTask = buildGlobalFocusIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.building', 'Building Shared Focus index...'), buildTask);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.building', 'Building Shared Focus index...'), buildTask);
+    }
     globalFocusIndexTask = buildTask.then(() => {
         globalFocusIndexReady = true;
         sendEvent('sharedFocusIndex', { size: estimatedSize[0].toString() });
@@ -79,6 +85,10 @@ function ensureGlobalFocusIndex(): Promise<void> {
 }
 
 function ensureWorkspaceFocusIndex(): Promise<void> {
+    return ensureWorkspaceFocusIndexImpl(true);
+}
+
+function ensureWorkspaceFocusIndexImpl(showStatusBar: boolean): Promise<void> {
     if (workspaceFocusIndexReady) {
         return Promise.resolve();
     }
@@ -88,7 +98,9 @@ function ensureWorkspaceFocusIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const buildTask = buildWorkspaceFocusIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.workspace.building', 'Building workspace Focus index...'), buildTask);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.workspace.building', 'Building workspace Focus index...'), buildTask);
+    }
     workspaceFocusIndexTask = buildTask.then(() => {
         workspaceFocusIndexReady = true;
         sendEvent('sharedFocusIndex.workspace', { size: estimatedSize[0].toString() });
@@ -96,6 +108,17 @@ function ensureWorkspaceFocusIndex(): Promise<void> {
         workspaceFocusIndexTask = undefined;
     });
     return workspaceFocusIndexTask;
+}
+
+export async function prewarmSharedFocusIndex(): Promise<void> {
+    if (!sharedFocusIndex) {
+        return;
+    }
+
+    await Promise.all([
+        ensureGlobalFocusIndexImpl(false),
+        ensureWorkspaceFocusIndexImpl(false),
+    ]);
 }
 
 async function fillFocusItems(

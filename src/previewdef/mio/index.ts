@@ -6,18 +6,36 @@ import { matchPathEnd } from '../../util/nodecommon';
 import { MioLoader } from './loader';
 import { renderMioFile } from './contentbuilder';
 import { getMioPreviewPriority } from './detect';
+import { documentSampleContainsAny, getDocumentPreviewSample } from '../previewdetect';
+
+const mioPreviewHintKeywords = [
+    'trait',
+    'add_trait',
+    'override_trait',
+    'remove_trait',
+    'equipment_bonus',
+    'production_bonus',
+    'organization_modifier',
+    'special_trait_background',
+] as const;
 
 function canPreviewMio(document: vscode.TextDocument) {
     const uri = document.uri;
-    if (!uri.path.toLowerCase().endsWith('.txt')) {
+    const lowerUri = uri.toString().toLowerCase();
+    const lowerPath = uri.path.toLowerCase();
+    if (!lowerPath.endsWith('.txt')) {
         return undefined;
     }
 
-    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'military_industrial_organization', 'organizations', '*'])) {
+    if (matchPathEnd(lowerUri, ['common', 'military_industrial_organization', 'organizations', '*'])) {
         return 0;
     }
 
-    return getMioPreviewPriority(document.getText());
+    if (!documentSampleContainsAny(document, mioPreviewHintKeywords)) {
+        return undefined;
+    }
+
+    return getMioPreviewPriority(getDocumentPreviewSample(document));
 }
 
 class MioPreview extends PreviewBase {

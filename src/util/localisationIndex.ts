@@ -108,6 +108,10 @@ async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise
 }
 
 function ensureGlobalLocalisationIndex(): Promise<void> {
+    return ensureGlobalLocalisationIndexImpl(true);
+}
+
+function ensureGlobalLocalisationIndexImpl(showStatusBar: boolean): Promise<void> {
     if (globalLocalisationIndexReady) {
         return Promise.resolve();
     }
@@ -117,7 +121,9 @@ function ensureGlobalLocalisationIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const buildTask = buildGlobalLocalisationIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.building', 'Building Localisation index...'), buildTask);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.building', 'Building Localisation index...'), buildTask);
+    }
     globalLocalisationIndexTask = buildTask.then(() => {
         globalLocalisationIndexReady = true;
         sendEvent('localisationIndex', { size: estimatedSize[0].toString() });
@@ -128,6 +134,10 @@ function ensureGlobalLocalisationIndex(): Promise<void> {
 }
 
 function ensureWorkspaceLocalisationIndex(): Promise<void> {
+    return ensureWorkspaceLocalisationIndexImpl(true);
+}
+
+function ensureWorkspaceLocalisationIndexImpl(showStatusBar: boolean): Promise<void> {
     if (workspaceLocalisationIndexReady) {
         return Promise.resolve();
     }
@@ -137,7 +147,9 @@ function ensureWorkspaceLocalisationIndex(): Promise<void> {
 
     const estimatedSize: [number] = [0];
     const buildTask = buildWorkspaceLocalisationIndex(estimatedSize);
-    vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.workspace.building', 'Building workspace Localisation index...'), buildTask);
+    if (showStatusBar) {
+        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.workspace.building', 'Building workspace Localisation index...'), buildTask);
+    }
     workspaceLocalisationIndexTask = buildTask.then(() => {
         workspaceLocalisationIndexReady = true;
         sendEvent('localisationIndex.workspace', { size: estimatedSize[0].toString() });
@@ -145,6 +157,17 @@ function ensureWorkspaceLocalisationIndex(): Promise<void> {
         workspaceLocalisationIndexTask = undefined;
     });
     return workspaceLocalisationIndexTask;
+}
+
+export async function prewarmLocalisationIndex(): Promise<void> {
+    if (!localisationIndex) {
+        return;
+    }
+
+    await Promise.all([
+        ensureGlobalLocalisationIndexImpl(false),
+        ensureWorkspaceLocalisationIndexImpl(false),
+    ]);
 }
 
 async function fillLocalisationItems(localisationFile: string, localisationIndex: LocalisationData, options: {

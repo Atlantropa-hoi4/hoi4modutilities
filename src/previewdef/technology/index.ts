@@ -5,15 +5,21 @@ import { PreviewProviderDef } from '../previewmanager';
 import { PreviewBase } from '../previewbase';
 import { TechnologyTreeLoader } from './loader';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
+import { findDocumentRegexPreviewPriority } from '../previewdetect';
 
 function canPreviewTechnology(document: vscode.TextDocument) {
     const uri = document.uri;
-    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'technologies', '*']) && uri.path.toLowerCase().endsWith('.txt')) {
+    const lowerUri = uri.toString().toLowerCase();
+    const lowerPath = uri.path.toLowerCase();
+    if (!lowerPath.endsWith('.txt')) {
+        return undefined;
+    }
+
+    if (matchPathEnd(lowerUri, ['common', 'technologies', '*'])) {
         return 0;
     }
 
-    const text = document.getText();
-    return /(technologies)\s*=\s*{/.exec(text)?.index;
+    return findDocumentRegexPreviewPriority(document, /(technologies)\s*=\s*{/);
 }
 
 class TechnologyTreePreview extends PreviewBase {
