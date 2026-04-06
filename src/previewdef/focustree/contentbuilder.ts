@@ -120,17 +120,17 @@ export async function buildFocusTreeRenderPayload(
         allInlays.push(...tree.inlayWindows);
     }
 
+    await prepareFocusIconStyles(allFocuses, styleTable, loadResult.result.gfxFiles, xGridSize, yGridSize);
     const renderedFocus: Record<string, string> = {};
-    await Promise.all(allFocuses.map(async (focus) => {
-        renderedFocus[focus.id] = (await renderFocus(
+    for (const focus of allFocuses) {
+        renderedFocus[focus.id] = renderFocus(
             focus,
             styleTable,
-            loadResult.result.gfxFiles,
             loader.file,
             xGridSize,
             yGridSize,
-        )).replace(/\s\s+/g, ' ');
-    }));
+        ).replace(/\s\s+/g, ' ');
+    }
 
     await prepareInlayGfxStyles(focusTrees, styleTable);
     const renderedInlayWindows: Record<string, string> = {};
@@ -565,37 +565,49 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
-async function renderFocus(
-    focus: Focus,
+async function prepareFocusIconStyles(
+    focuses: readonly Focus[],
     styleTable: StyleTable,
     gfxFiles: string[],
-    file: string,
     xGridSize: number,
     yGridSize: number,
-): Promise<string> {
+): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
+    const uniqueIconNames = Array.from(new Set(
+        focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
+    ));
 
-    for (const focusIcon of focus.icon) {
-        const iconName = focusIcon.icon;
-        const iconObject = iconName ? await getFocusIcon(iconName, gfxFiles) : null;
+    await Promise.all(uniqueIconNames.map(async iconName => {
+        const iconObject = await getFocusIcon(iconName, gfxFiles);
         const displaySize = iconObject
             ? fitFocusIconToBounds(iconObject.width, iconObject.height, maxFocusIconWidth, maxFocusIconHeight)
             : { width: focusPlaceholderSize, height: focusPlaceholderSize };
 
-        styleTable.style('focus-icon-' + normalizeForStyle(iconName ?? '-empty'), () => `
+        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
             width: ${displaySize.width}px;
             height: ${displaySize.height}px;
             ${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
         `);
-    }
+    }));
 
     styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
         width: ${focusPlaceholderSize}px;
         height: ${focusPlaceholderSize}px;
         background: grey;
     `);
+}
+
+function renderFocus(
+    focus: Focus,
+    styleTable: StyleTable,
+    file: string,
+    xGridSize: number,
+    yGridSize: number,
+): string {
+    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
+    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
 
     let textContent = focus.id;
     if (localisationIndex) {

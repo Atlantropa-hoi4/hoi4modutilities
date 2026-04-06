@@ -19,6 +19,7 @@ import {
     normalizeConditionExprKeys,
     normalizeConditionPresetsByTree,
 } from "../src/previewdef/focustree/conditionpresets";
+import { collectCompletedFocusIds } from "../src/previewdef/focustree/conditionexprs";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
@@ -1748,6 +1749,7 @@ async function buildContent() {
     calculateFocusAllowed(focusTree, allowBranchOptionsValue);
     let renderExprs = exprs;
     let focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
+    const completableFocusIds = collectCompletedFocusIds(focusTree.conditionExprs);
     currentRenderedFocusTree = focusTree;
     if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
         clearPendingFocusLink();
@@ -1809,7 +1811,7 @@ async function buildContent() {
 
     bindFocusPositionDragHandlers();
     subscribeNavigators();
-    setupCheckedFocuses(focuses, focusTree);
+    setupCheckedFocuses(focuses, completableFocusIds);
     updateFocusPositionEditUi();
 }
 
@@ -2053,12 +2055,12 @@ function clearCheckedFocuses() {
     checkedFocuses = {};
 }
 
-function setupCheckedFocuses(focuses: Focus[], focusTree: FocusTree) {
+function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<string>) {
     const focusCheckState = getState().checkedFocuses ?? {};
     for (const focus of focuses) {
         const checkbox = document.getElementById(`checkbox-${normalizeForStyle(focus.id)}`) as HTMLInputElement;
         if (checkbox) {
-            if (focusTree.conditionExprs.some(e => e.scopeName === '' && e.nodeContent === 'has_completed_focus = ' + focus.id)) {
+            if (completableFocusIds.has(focus.id)) {
                 checkbox.checked = !!focusCheckState[focus.id];
                 const checkboxItem = new Checkbox(checkbox);
                 checkedFocuses[focus.id] = checkboxItem;
