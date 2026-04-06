@@ -35,8 +35,11 @@
 - `webviewsrc/focustree.ts` now renders lightweight focus shells first and hydrates full focus markup only for selected focuses or nodes near the current viewport, which cuts the initial DOM payload and first layout work on very large trees without breaking existing drag, navigation, or incremental-update paths.
 - `src/previewdef/focustree/focushydration.ts` centralizes the hydration decision as a pure helper so the webview no longer accidentally force-hydrates every shell during the initial build, and future tuning of viewport margin behavior stays testable.
 - Added regression coverage for hydration rules so off-screen unselected focuses stay as shells on first render, while selected focuses still hydrate immediately even outside the viewport.
+- Follow-up regression fix: removed the shell/hydration render split again because it left the expensive host-side `renderedFocus` build intact and only added extra webview work on top of the same initial load.
+- Follow-up responsiveness fix: create/delete now send lightweight success acks and apply a small local preview mutation before the normal patch refresh finishes, so the focus node appears or disappears immediately in the active tree.
 
 ## Verification
 - `npm run compile-ts` passed.
 - `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-focushydration.test.js out\\test\\unit\\focustree-layoutplan.test.js out\\test\\unit\\focustree-webviewupdate.test.js out\\test\\unit\\focustree-renderpayloadpatch.test.js out\\test\\unit\\focustree-conditionexprs.test.js out\\test\\unit\\focustree-inlay.test.js out\\test\\unit\\focustree-focusicongfx.test.js out\\test\\unit\\focustree-schema.test.js` passed with 24 tests.
 - `npm run package` passed and produced `hoi4modutilities-0.13.22.vsix`.
+- `npx mocha --exit out/test/unit/focustree-localpreview.test.js out/test/unit/focustree-layoutplan.test.js out/test/unit/focustree-webviewupdate.test.js out/test/unit/focustree-renderpayloadpatch.test.js out/test/unit/focustree-conditionexprs.test.js out/test/unit/focustree-inlay.test.js out/test/unit/focustree-focusicongfx.test.js out/test/unit/focustree-positionedit.test.js out/test/unit/focustree-schema.test.js` passed with 50 tests.

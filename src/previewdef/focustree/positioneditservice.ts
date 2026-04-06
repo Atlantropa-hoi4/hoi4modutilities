@@ -42,6 +42,7 @@ export interface FocusPositionTextChangeResult {
 
 export interface CreateFocusTemplateTextChangeResult {
     changes?: FocusPositionTextChange[];
+    placeholderFocusId?: string;
     placeholderRange?: TextRange;
     error?: string;
 }
@@ -238,6 +239,7 @@ export function buildCreateFocusTemplateTextChanges(
 
     return {
         changes: [change.change],
+        placeholderFocusId: change.placeholderId,
         placeholderRange: change.placeholderRange,
     };
 }
@@ -248,7 +250,7 @@ export function buildCreateFocusTemplateWorkspaceEdit(
     treeEditKey: string,
     targetAbsoluteX: number,
     targetAbsoluteY: number,
-): { edit?: vscode.WorkspaceEdit; placeholderRange?: TextRange; error?: string } {
+): { edit?: vscode.WorkspaceEdit; placeholderFocusId?: string; placeholderRange?: TextRange; error?: string } {
     const result = buildCreateFocusTemplateTextChanges(
         document.getText(),
         filePath,
@@ -274,6 +276,7 @@ export function buildCreateFocusTemplateWorkspaceEdit(
 
     return {
         edit,
+        placeholderFocusId: result.placeholderFocusId,
         placeholderRange: result.placeholderRange,
     };
 }
@@ -539,7 +542,7 @@ function createFocusTemplateInsertionChange(
     targetAbsoluteY: number,
     lineEnding: string,
     existingFocusIds: Set<string>,
-): { change: FocusPositionTextChange; placeholderRange: TextRange } {
+): { change: FocusPositionTextChange; placeholderId: string; placeholderRange: TextRange } {
     const blockName = treeMeta.kind === 'shared'
         ? 'shared_focus'
         : treeMeta.kind === 'joint'
@@ -556,6 +559,7 @@ function createFocusTemplateInsertionChange(
             range: { start: blockText.insertPosition, end: blockText.insertPosition },
             text: blockText.text,
         },
+        placeholderId: placeholder,
         placeholderRange: {
             start: blockText.insertPosition + placeholderOffset,
             end: blockText.insertPosition + placeholderOffset + placeholder.length,

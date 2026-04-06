@@ -66,7 +66,14 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
-        if (this.pendingLocalEditDocumentVersions.delete(document.version)) {
+        await this.refreshDocument(document);
+    }
+
+    private async refreshDocument(
+        document: vscode.TextDocument,
+        options?: { ignorePendingLocalEditDocumentVersion?: boolean },
+    ): Promise<void> {
+        if (!options?.ignorePendingLocalEditDocumentVersion && this.pendingLocalEditDocumentVersions.delete(document.version)) {
             return;
         }
 
@@ -371,14 +378,19 @@ export class FocusTreePreview extends PreviewBase {
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
                 this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-                await super.onDocumentChange(updatedDocument);
+                await this.panel.webview.postMessage({
+                    command: 'deleteFocusApplied',
+                    focusIds,
+                    documentVersion: updatedDocument.version,
+                });
+                void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
             }
 
             return true;
         }
 
         if (msg.command === 'createFocusTemplateAtPosition') {
-            const { edit, error, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
+            const { edit, error, placeholderFocusId, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
                 document,
                 this.relativeFilePath,
                 msg.treeEditKey,
@@ -403,7 +415,15 @@ export class FocusTreePreview extends PreviewBase {
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
                 this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-                await super.onDocumentChange(updatedDocument);
+                await this.panel.webview.postMessage({
+                    command: 'createFocusTemplateApplied',
+                    treeEditKey: msg.treeEditKey,
+                    focusId: placeholderFocusId,
+                    targetAbsoluteX: msg.targetAbsoluteX,
+                    targetAbsoluteY: msg.targetAbsoluteY,
+                    documentVersion: updatedDocument.version,
+                });
+                void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
                 if (placeholderRange) {
                     await vscode.window.showTextDocument(updatedDocument, {
                         selection: new vscode.Range(

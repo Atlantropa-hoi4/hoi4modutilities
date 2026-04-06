@@ -21,7 +21,7 @@ import {
 } from "../src/previewdef/focustree/conditionpresets";
 import { getCachedFocusTreeLayoutPlan, invalidateCachedFocusTreeLayoutPlan } from "../src/previewdef/focustree/layoutplan";
 import { collectCompletedFocusIds } from "../src/previewdef/focustree/conditionexprs";
-import { shouldHydrateFocus as shouldHydrateFocusValue } from "../src/previewdef/focustree/focushydration";
+import { applyLocalFocusDeletion, createPlaceholderFocus } from "../src/previewdef/focustree/localpreview";
 import { getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
@@ -125,7 +125,6 @@ let currentGridLeftPadding = 0;
 let currentGridTopPadding = 0;
 let currentCanvasWidth = 1;
 let currentCanvasHeight = 1;
-let pendingFocusHydrationFrame: number | undefined = undefined;
 type FocusSelectionRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type ActiveFocusSelectionMarquee = {
     startClientX: number;
@@ -1721,6 +1720,55 @@ function updateFocusExclusiveLinkAfterApply(sourceFocusId: string, targetFocusId
     invalidateCachedFocusTreeLayoutPlan(currentRenderedFocusTree);
 }
 
+function updateFocusTemplateCreateAfterApply(
+    treeEditKey: string,
+    focusId: string,
+    targetAbsoluteX: number,
+    targetAbsoluteY: number,
+) {
+    const targetTree = focusTrees.find(focusTree => focusTree.createTemplate?.editKey === treeEditKey);
+    if (!targetTree || !focusId || targetTree.focuses[focusId]) {
+        return;
+    }
+
+    targetTree.focuses[focusId] = createPlaceholderFocus(
+        targetTree,
+        focusId,
+        targetAbsoluteX,
+        targetAbsoluteY,
+        (window as any).focusPositionActiveFile ?? targetTree.createTemplate?.sourceFile ?? '',
+    );
+    invalidateCachedFocusTreeLayoutPlan(targetTree);
+    if (currentRenderedFocusTree?.id === targetTree.id) {
+        setCurrentSelectedFocusIds([focusId]);
+    }
+}
+
+function updateDeleteFocusAfterApply(focusIds: readonly string[]) {
+    const deletedFocusIds = Array.from(new Set(focusIds.filter(Boolean)));
+    if (deletedFocusIds.length === 0) {
+        return;
+    }
+
+    const deletedSet = new Set(deletedFocusIds);
+    focusTrees.forEach(focusTree => {
+        if (!deletedFocusIds.some(focusId => !!focusTree.focuses[focusId])) {
+            return;
+        }
+
+        applyLocalFocusDeletion(focusTree, deletedFocusIds);
+        invalidateCachedFocusTreeLayoutPlan(focusTree);
+    });
+
+    setCurrentSelectedFocusIds(Array.from(currentSelectedFocusIds).filter(focusId => !deletedSet.has(focusId)));
+    if (pendingFocusLinkParentId && deletedSet.has(pendingFocusLinkParentId)) {
+        clearPendingFocusLink();
+    }
+    if (hoveredRelationFocusId && deletedSet.has(hoveredRelationFocusId)) {
+        hoveredRelationFocusId = undefined;
+    }
+}
+
 async function buildContent() {
     const checkedFocusesExprs = getCheckedFocusConditionExprs();
     clearCheckedFocuses();
@@ -1773,7 +1821,7 @@ async function buildContent() {
         id: 'focus-gridbox',
         styleTable,
         items: arrayToMap(focusGridBoxItems, 'id'),
-        onRenderItem: item => Promise.resolve(renderFocusShellHtml(focusTree.focuses[item.id])),
+        onRenderItem: item => Promise.resolve(renderCurrentFocusHtml(focusTree, item.id) ?? ''),
         cornerPosition: 0.5,
     });
 
@@ -1787,7 +1835,8 @@ async function buildContent() {
     focustreeplaceholder.style.minHeight = `${minimumCanvasHeight}px`;
     contentElement.style.minHeight = `${minimumCanvasHeight}px`;
     rebuildRenderedFocusElementCache();
-    hydrateVisibleFocusElements({ rebindDragHandlers: false });
+    clearCheckedFocuses();
+    setupCheckedFocuses(Object.values(focusTree.focuses), currentCompletableFocusIds);
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
     inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, renderExprs);
 
@@ -1924,13 +1973,6 @@ function renderWarningsPanel(focusTree: FocusTree) {
     });
 }
 
-function markRenderedFocusHydrationState(content: string, hydrated: boolean): string {
-    return content.replace(
-        'data-focus-source-file=',
-        `data-focus-hydrated="${hydrated ? 'true' : 'false'}" data-focus-source-file=`,
-    );
-}
-
 function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTable): string {
     for (const icon of focus.icon) {
         if (applyCondition(icon.condition, exprs)) {
@@ -1940,22 +1982,6 @@ function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTab
     }
 
     return styleTable.name('focus-icon-' + normalizeForStyle('-empty'));
-}
-
-function renderFocusShellHtml(focus: Focus): string {
-    const sourceFile = focus.layout?.sourceFile ?? focus.file;
-    const navigationFileAttribute = focus.file === (window as any).focusPositionActiveFile
-        ? ''
-        : ` file="${escapeHtmlAttribute(focus.file)}"`;
-    return `<div
-    class="navigator"
-    start="${focus.token?.start}"
-    end="${focus.token?.end}"${navigationFileAttribute}
-    data-focus-id="${escapeHtmlAttribute(focus.id)}"
-    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-hydrated="false"
-    data-focus-source-file="${escapeHtmlAttribute(sourceFile)}"
-    style="width:100%;height:100%;display:block;"></div>`;
 }
 
 function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string | undefined {
@@ -1972,94 +1998,9 @@ function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string |
     }
 
     const iconClass = getFocusIcon(focus, currentRenderedExprs, new StyleTable());
-    return markRenderedFocusHydrationState(
-        template
-            .replace('{{position}}', `${position.x}, ${position.y}`)
-            .replace('{{iconClass}}', iconClass),
-        true,
-    );
-}
-
-function shouldHydrateFocusElement(element: HTMLElement): boolean {
-    const rect = element.getBoundingClientRect();
-    return shouldHydrateFocusValue({
-        alreadyHydrated: element.dataset.focusHydrated === 'true',
-        isSelected: isFocusSelected(element.dataset.focusId),
-        rect: {
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-            left: rect.left,
-        },
-        viewport: {
-            width: window.innerWidth,
-            height: window.innerHeight,
-        },
-    });
-}
-
-function hydrateVisibleFocusElements(options?: { rebindDragHandlers?: boolean }) {
-    if (!currentRenderedFocusTree) {
-        return;
-    }
-
-    const hydratedFocusIds: string[] = [];
-    currentRenderedFocusElementsList.forEach(element => {
-        if (!shouldHydrateFocusElement(element)) {
-            return;
-        }
-
-        const focusId = element.dataset.focusId;
-        if (!focusId) {
-            return;
-        }
-
-        const wrapper = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
-        const nextHtml = renderCurrentFocusHtml(currentRenderedFocusTree!, focusId);
-        if (!wrapper || !nextHtml) {
-            return;
-        }
-
-        wrapper.innerHTML = nextHtml;
-        hydratedFocusIds.push(focusId);
-    });
-
-    if (hydratedFocusIds.length === 0) {
-        return;
-    }
-
-    rebuildRenderedFocusElementCache();
-    if (options?.rebindDragHandlers && focusPositionEditMode) {
-        bindFocusPositionDragHandlers();
-    }
-    subscribeNavigators();
-    setupCheckedFocuses(
-        hydratedFocusIds
-            .map(focusId => currentRenderedFocusTree!.focuses[focusId])
-            .filter((focus): focus is Focus => !!focus),
-        currentCompletableFocusIds,
-    );
-    updateFocusPositionEditUi();
-}
-
-function scheduleVisibleFocusHydration(force = false) {
-    if (force) {
-        if (pendingFocusHydrationFrame !== undefined) {
-            window.cancelAnimationFrame(pendingFocusHydrationFrame);
-            pendingFocusHydrationFrame = undefined;
-        }
-        hydrateVisibleFocusElements({ rebindDragHandlers: false });
-        return;
-    }
-
-    if (pendingFocusHydrationFrame !== undefined) {
-        return;
-    }
-
-    pendingFocusHydrationFrame = window.requestAnimationFrame(() => {
-        pendingFocusHydrationFrame = undefined;
-        hydrateVisibleFocusElements({ rebindDragHandlers: true });
-    });
+    return template
+        .replace('{{position}}', `${position.x}, ${position.y}`)
+        .replace('{{iconClass}}', iconClass);
 }
 
 function clearCheckedFocuses() {
@@ -2297,7 +2238,6 @@ function applyIncrementalCurrentTreeUpdate(
     }
 
     updateFocusPositionEditUi();
-    scheduleVisibleFocusHydration();
     retriggerSearch();
     return true;
 }
@@ -2332,16 +2272,20 @@ window.addEventListener('load', tryRun(async function() {
             documentVersion?: number;
             name?: string;
             focusId?: string;
+            treeEditKey?: string;
             focusTreeEditKey?: string;
             targetLocalX?: number;
             targetLocalY?: number;
             targetX?: number;
             targetY?: number;
+            targetAbsoluteX?: number;
+            targetAbsoluteY?: number;
             parentFocusId?: string;
             parentFocusIds?: string[];
             childFocusId?: string;
             sourceFocusId?: string;
             targetFocusId?: string;
+            focusIds?: string[];
             focusTrees?: FocusTree[];
             renderedFocus?: Record<string, string>;
             renderedInlayWindows?: Record<string, string>;
@@ -2395,13 +2339,27 @@ window.addEventListener('load', tryRun(async function() {
         }
 
         if (message.command !== 'focusPositionEditApplied'
+            && message.command !== 'createFocusTemplateApplied'
             && message.command !== 'continuousFocusPositionEditApplied'
+            && message.command !== 'deleteFocusApplied'
             && message.command !== 'focusLinkEditApplied'
             && message.command !== 'focusExclusiveLinkEditApplied') {
             return;
         }
 
         focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+        if (message.command === 'createFocusTemplateApplied'
+            && message.treeEditKey !== undefined
+            && message.focusId !== undefined
+            && message.targetAbsoluteX !== undefined
+            && message.targetAbsoluteY !== undefined) {
+            updateFocusTemplateCreateAfterApply(
+                message.treeEditKey,
+                message.focusId,
+                message.targetAbsoluteX,
+                message.targetAbsoluteY,
+            );
+        }
         if (message.command === 'focusPositionEditApplied'
             && message.focusId !== undefined
             && message.targetLocalX !== undefined
@@ -2430,6 +2388,10 @@ window.addEventListener('load', tryRun(async function() {
             && message.targetFocusId !== undefined) {
             updateFocusExclusiveLinkAfterApply(message.sourceFocusId, message.targetFocusId);
         }
+        if (message.command === 'deleteFocusApplied'
+            && Array.isArray(message.focusIds)) {
+            updateDeleteFocusAfterApply(message.focusIds);
+        }
 
         void rebuildContentSafely();
     });
@@ -2439,12 +2401,6 @@ window.addEventListener('load', tryRun(async function() {
         setupFocusSelectionMarqueeHandler();
         setupFocusTemplateCreateHandler();
         setupBlankCanvasPanFallback();
-        window.addEventListener('scroll', () => {
-            scheduleVisibleFocusHydration();
-        }, { passive: true });
-        window.addEventListener('resize', () => {
-            scheduleVisibleFocusHydration();
-        });
 
         const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
         if (focusesElement) {
