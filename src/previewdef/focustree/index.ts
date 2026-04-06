@@ -11,6 +11,7 @@ import { localize } from '../../util/i18n';
 import { contextContainer } from '../../context';
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './conditionpresets';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
+import { error } from '../../util/debug';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
@@ -69,12 +70,12 @@ export class FocusTreePreview extends PreviewBase {
 
         const requestId = this.startRefreshRequest();
         const requestDocumentVersion = document.version;
-        if (!this.webviewReady) {
-            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-            return;
-        }
-
         try {
+            if (!this.webviewReady) {
+                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
+                return;
+            }
+
             const loader = this.createSnapshotLoader(document.getText());
             const payload = await buildFocusTreeRenderPayload(loader, document.version, this.persistedConditionPresetsByTree);
             this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
@@ -102,9 +103,15 @@ export class FocusTreePreview extends PreviewBase {
                 command: 'focusTreeContentUpdated',
                 ...payload,
             });
-        } catch {
+        } catch (e) {
+            error(e);
             this.webviewReady = false;
-            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
+            const content = await this.getContent(document);
+            if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
+                return;
+            }
+
+            this.panel.webview.html = content;
         }
     }
 

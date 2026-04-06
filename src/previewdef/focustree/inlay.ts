@@ -6,7 +6,7 @@ import { getSpriteTypes } from "../../hoiformat/spritetype";
 import { countryScope } from "../../hoiformat/scope";
 import { hoiFileExpiryToken, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from "../../util/fileloader";
 import { PromiseCache } from "../../util/cache";
-import { getGfxContainerFile } from "../../util/gfxindex";
+import { tryGetGfxContainerFile } from "../../util/gfxindex";
 import { localize } from "../../util/i18n";
 import type {
     FocusInlayGfxOption,
@@ -305,6 +305,10 @@ export function resolveInlaysForTree(refs: FocusTreeInlayRef[], allInlays: Focus
 
 export async function resolveInlayGuiWindows(inlays: FocusTreeInlay[]): Promise<{ guiFiles: string[], warnings: FocusWarning[] }> {
     const warnings: FocusWarning[] = [];
+    if (inlays.length === 0 || !inlays.some(inlay => !!inlay.windowName)) {
+        return { guiFiles: [], warnings };
+    }
+
     const guiWindows = await scriptedGuiWindowsCache.get();
 
     for (const inlay of inlays) {
@@ -377,39 +381,21 @@ function collectContainerWindowRecursive(containerWindow: HOIPartial<ContainerWi
 }
 
 export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ resolvedFiles: string[] }> {
-    const unresolvedByName = new Map<string, FocusInlayGfxOption[]>();
+    if (inlays.length === 0) {
+        return { resolvedFiles: [] };
+    }
+
     const resolvedFiles = new Set<string>();
 
     for (const inlay of inlays) {
         for (const slot of inlay.scriptedImages) {
             for (const option of slot.gfxOptions) {
-                const resolved = await getGfxContainerFile(option.gfxName);
+                const resolved = tryGetGfxContainerFile(option.gfxName);
                 if (resolved) {
                     option.gfxFile = resolved;
                     resolvedFiles.add(resolved);
-                } else if (option.gfxName) {
-                    const unresolved = unresolvedByName.get(option.gfxName) ?? [];
-                    unresolved.push(option);
-                    unresolvedByName.set(option.gfxName, unresolved);
                 }
             }
-        }
-    }
-
-    if (unresolvedByName.size === 0) {
-        return { resolvedFiles: Array.from(resolvedFiles) };
-    }
-
-    const fallbackMap = await getCachedInterfaceGfxMap();
-    for (const [gfxName, options] of unresolvedByName.entries()) {
-        const resolved = fallbackMap[gfxName];
-        if (!resolved) {
-            continue;
-        }
-
-        resolvedFiles.add(resolved);
-        for (const option of options) {
-            option.gfxFile = resolved;
         }
     }
 
@@ -441,10 +427,6 @@ async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
     }
 
     return { gfxFiles, spriteNamesByFile, spriteToFile };
-}
-
-async function getCachedInterfaceGfxMap(): Promise<Record<string, string>> {
-    return (await interfaceGfxCache.get()).spriteToFile;
 }
 
 export async function getCachedInterfaceGfxFiles(): Promise<string[]> {

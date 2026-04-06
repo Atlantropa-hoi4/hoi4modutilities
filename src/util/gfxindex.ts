@@ -41,7 +41,15 @@ export async function getGfxContainerFile(gfxName: string | undefined): Promise<
     }
 
     await Promise.all([ensureGlobalGfxIndex(), ensureWorkspaceGfxIndex()]);
-    return (globalGfxIndex[gfxName] ?? workspaceGfxIndex[gfxName])?.file;
+    return tryGetGfxContainerFile(gfxName);
+}
+
+export function tryGetGfxContainerFile(gfxName: string | undefined): string | undefined {
+    if (!gfxIndex || !gfxName) {
+        return undefined;
+    }
+
+    return workspaceGfxIndex[gfxName]?.file ?? globalGfxIndex[gfxName]?.file;
 }
 
 export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Promise<string[]> {

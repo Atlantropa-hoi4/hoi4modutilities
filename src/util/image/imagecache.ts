@@ -55,6 +55,17 @@ export async function getSpriteByGfxName(name: string, gfxFilePath: string | str
     return undefined;
 }
 
+export async function getSpriteByGfxNameFromResolvedFiles(name: string, gfxFilePaths: readonly string[]): Promise<Sprite | undefined> {
+    for (const gfxFilePath of gfxFilePaths) {
+        const result = await spriteCache.get(gfxFilePath + '?' + name);
+        if (result !== undefined) {
+            return result;
+        }
+    }
+
+    return undefined;
+}
+
 async function spriteCacheExpiryToken(key: string, spritePromise: Promise<Sprite | undefined>): Promise<string> {
     const [gfxFilePath] = key.split('?');
     const gfxToken = await hoiFileExpiryToken(gfxFilePath);

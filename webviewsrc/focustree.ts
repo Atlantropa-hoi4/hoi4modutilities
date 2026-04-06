@@ -22,7 +22,7 @@ import {
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
-import { clampFocusTreeIndex as clampFocusTreeIndexValue } from "../src/previewdef/focustree/selectionstate";
+import { clampFocusTreeIndex as clampFocusTreeIndexValue, resolveFocusTreeSelection as resolveFocusTreeSelectionValue } from "../src/previewdef/focustree/selectionstate";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -66,19 +66,21 @@ function search(searchContent: string, navigate: boolean = true) {
 const useConditionInFocus: boolean = (window as any).useConditionInFocus;
 let focusTrees: FocusTree[] = (window as any).focusTrees;
 type PendingFocusLinkType = 'prerequisite' | 'exclusive';
+const restoredState = getState();
 
-let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
+let selectedExprs: ConditionItem[] = restoredState.selectedExprs ?? [];
 let conditionPresetsByTree: FocusConditionPresetsByTree = normalizeConditionPresetsByTree(
-    getState().conditionPresetsByTree ?? (window as any).persistedConditionPresetsByTree ?? {},
+    restoredState.conditionPresetsByTree ?? (window as any).persistedConditionPresetsByTree ?? {},
 );
-let selectedFocusTreeIndex: number = Math.max(0, Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0));
-let selectedFocusIdsByTree: Record<string, string[]> = getState().selectedFocusIdsByTree ?? {};
+let selectedFocusTreeIndex: number = restoredState.selectedFocusTreeIndex ?? 0;
+let selectedFocusTreeId: string | undefined = restoredState.selectedFocusTreeId;
+let selectedFocusIdsByTree: Record<string, string[]> = restoredState.selectedFocusIdsByTree ?? {};
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let conditionPresetsDropdown: DivDropdown | undefined = undefined;
 let inlayWindows: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
-let focusPositionEditMode: boolean = !!getState().focusPositionEditMode;
+let focusPositionEditMode: boolean = !!restoredState.focusPositionEditMode;
 let currentRenderedFocusTree: FocusTree | undefined = undefined;
 let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedFocusElements: Record<string, HTMLElement> = {};
@@ -163,21 +165,36 @@ function rebuildRenderedFocusElementCache() {
 }
 
 function getCurrentSelectionTreeId(): string | undefined {
-    return currentRenderedFocusTree?.id ?? focusTrees[selectedFocusTreeIndex]?.id;
+    return currentRenderedFocusTree?.id ?? selectedFocusTreeId ?? focusTrees[selectedFocusTreeIndex]?.id;
 }
 
 function clampFocusTreeIndex(index: number): number {
     return clampFocusTreeIndexValue(index, focusTrees.length);
 }
 
+function persistSelectedFocusTreeState() {
+    setState({
+        selectedFocusTreeIndex,
+        selectedFocusTreeId,
+    });
+}
+
 function ensureSelectedFocusTreeIndex(): number {
-    const clampedIndex = clampFocusTreeIndex(selectedFocusTreeIndex);
-    if (selectedFocusTreeIndex !== clampedIndex) {
-        selectedFocusTreeIndex = clampedIndex;
-        setState({ selectedFocusTreeIndex: clampedIndex });
+    const resolvedSelection = resolveFocusTreeSelectionValue(focusTrees, selectedFocusTreeId, selectedFocusTreeIndex);
+    if (selectedFocusTreeIndex !== resolvedSelection.selectedFocusTreeIndex
+        || selectedFocusTreeId !== resolvedSelection.selectedFocusTreeId) {
+        selectedFocusTreeIndex = resolvedSelection.selectedFocusTreeIndex;
+        selectedFocusTreeId = resolvedSelection.selectedFocusTreeId;
+        persistSelectedFocusTreeState();
     }
 
     return selectedFocusTreeIndex;
+}
+
+function setSelectedFocusTreeByIndex(index: number) {
+    selectedFocusTreeIndex = clampFocusTreeIndex(index);
+    selectedFocusTreeId = focusTrees[selectedFocusTreeIndex]?.id;
+    persistSelectedFocusTreeState();
 }
 
 function conditionItemToExprKey(expr: ConditionItem): string {
@@ -1731,20 +1748,6 @@ async function buildContent() {
     calculateFocusAllowed(focusTree, allowBranchOptionsValue);
     let renderExprs = exprs;
     let focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
-    if (useConditionInFocus && focusGridBoxItems.length === 0 && focuses.length > 0 && selectedExprs.length > 0) {
-        setSelectedExprsFromExprKeys([]);
-        if (conditions) {
-            suppressConditionSelectionChange = true;
-            conditions.selectedValues$.next([]);
-            suppressConditionSelectionChange = false;
-        }
-        refreshConditionPresetUi(focusTree);
-
-        exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs];
-        renderExprs = exprs;
-        Object.keys(focusPosition).forEach(key => delete focusPosition[key]);
-        focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
-    }
     currentRenderedFocusTree = focusTree;
     if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
         clearPendingFocusLink();
@@ -2156,13 +2159,12 @@ function replaceFocusTreeDynamicStyles(dynamicStyleCss: string | undefined) {
 
 function refreshFocusTreeSelectorOptions() {
     const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
+    ensureSelectedFocusTreeIndex();
     if (!focusesElement) {
-        selectedFocusTreeIndex = clampFocusTreeIndex(selectedFocusTreeIndex);
         return;
     }
 
     focusesElement.innerHTML = focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('');
-    selectedFocusTreeIndex = clampFocusTreeIndex(selectedFocusTreeIndex);
     focusesElement.value = selectedFocusTreeIndex.toString();
 }
 
@@ -2223,6 +2225,13 @@ function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | und
 }
 
 let retriggerSearch: () => void = () => {};
+const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }) => {
+    await buildContent();
+    if (options?.restoreScroll) {
+        scrollToState();
+    }
+    retriggerSearch();
+});
 
 window.addEventListener('load', tryRun(async function() {
     window.addEventListener('message', event => {
@@ -2254,9 +2263,7 @@ window.addEventListener('load', tryRun(async function() {
                 return;
             }
             updateSelectedFocusTree(false);
-            void buildContent().then(() => {
-                retriggerSearch();
-            });
+            void rebuildContentSafely();
             return;
         }
 
@@ -2315,225 +2322,218 @@ window.addEventListener('load', tryRun(async function() {
             updateFocusExclusiveLinkAfterApply(message.sourceFocusId, message.targetFocusId);
         }
 
-        void buildContent().then(() => {
-            retriggerSearch();
-        });
+        void rebuildContentSafely();
     });
 
-    setupFocusPositionDragHandlers();
-    setupFocusSelectionMarqueeHandler();
-    setupFocusTemplateCreateHandler();
-    setupBlankCanvasPanFallback();
+    try {
+        setupFocusPositionDragHandlers();
+        setupFocusSelectionMarqueeHandler();
+        setupFocusTemplateCreateHandler();
+        setupBlankCanvasPanFallback();
 
-    const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
-    if (focusesElement) {
-        focusesElement.value = selectedFocusTreeIndex.toString();
-        focusesElement.addEventListener('change', async () => {
-            selectedFocusTreeIndex = clampFocusTreeIndex(parseInt(focusesElement.value, 10));
-            setState({ selectedFocusTreeIndex });
-            updateSelectedFocusTree(true);
-            await buildContent();
-            retriggerSearch();
-        });
-    }
-
-    const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
-    if (inlayWindowsElement) {
-        inlayWindows = new DivDropdown(inlayWindowsElement);
-        let previousSelection = inlayWindows.selectedValues$.value[0];
-        inlayWindows.selectedValues$.subscribe(async selection => {
-            const focusTree = focusTrees[selectedFocusTreeIndex];
-            const nextSelection = selection[0];
-            if (previousSelection === nextSelection) {
-                return;
-            }
-
-            previousSelection = nextSelection;
-            setSelectedInlayWindowId(focusTree, nextSelection);
-            await buildContent();
-            retriggerSearch();
-        });
-    }
-
-    if (!useConditionInFocus) {
-        const hiddenBranches = getState().hiddenBranches || {};
-        for (const key in hiddenBranches) {
-            showBranch(false, key);
-        }
-
-        const allowBranchesElement = document.getElementById('allowbranch') as HTMLDivElement | null;
-        if (allowBranchesElement) {
-            allowBranches = new DivDropdown(allowBranchesElement, true);
-            allowBranches.selectAll();
-
-            const allValues = allowBranches.selectedValues$.value;
-            allowBranches.selectedValues$.next(allValues.filter(v => !hiddenBranches[v]));
-
-            let oldSelection = allowBranches.selectedValues$.value;
-            allowBranches.selectedValues$.subscribe(selection => {
-                const showBranches = difference(selection, oldSelection);
-                showBranches.forEach(s => showBranch(true, s));
-                const hideBranches = difference(oldSelection, selection);
-                hideBranches.forEach(s => showBranch(false, s));
-                oldSelection = selection;
-
-                const hiddenBranches = difference(allValues, selection);
-                setState({ hiddenBranches });
+        const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
+        if (focusesElement) {
+            ensureSelectedFocusTreeIndex();
+            focusesElement.value = selectedFocusTreeIndex.toString();
+            focusesElement.addEventListener('change', async () => {
+                setSelectedFocusTreeByIndex(parseInt(focusesElement.value, 10));
+                updateSelectedFocusTree(true);
+                await rebuildContentSafely();
             });
         }
-    }
 
-    const searchbox = document.getElementById('searchbox') as HTMLInputElement;
-    let currentNavigatedIndex = 0;
-    let oldSearchboxValue: string = getState().searchboxValue || '';
-    let searchedFocus: HTMLDivElement[] = search(oldSearchboxValue, false);
-
-    searchbox.value = oldSearchboxValue;
-
-    const searchboxChangeFunc = function(this: HTMLInputElement) {
-        const searchboxValue = this.value.toLowerCase();
-        if (oldSearchboxValue !== searchboxValue) {
-            currentNavigatedIndex = 0;
-            searchedFocus = search(searchboxValue);
-            oldSearchboxValue = searchboxValue;
-            setState({ searchboxValue });
-        }
-    };
-
-    searchbox.addEventListener('change', searchboxChangeFunc);
-    searchbox.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            const visibleSearchedFocus = searchedFocus.filter(f => f.style.display !== 'none');
-            if (visibleSearchedFocus.length > 0) {
-                currentNavigatedIndex = (currentNavigatedIndex + (e.shiftKey ? visibleSearchedFocus.length - 1 : 1)) % visibleSearchedFocus.length;
-                visibleSearchedFocus[currentNavigatedIndex].scrollIntoView({ block: "center", inline: "center" });
-            }
-        } else {
-            searchboxChangeFunc.apply(this);
-        }
-    });
-    searchbox.addEventListener('keyup', searchboxChangeFunc);
-    searchbox.addEventListener('paste', searchboxChangeFunc);
-    searchbox.addEventListener('cut', searchboxChangeFunc);
-
-    retriggerSearch = () => { searchedFocus = search(oldSearchboxValue, false); };
-
-    if (useConditionInFocus) {
-        const conditionPresetsElement = document.getElementById('condition-presets') as HTMLDivElement | null;
-        if (conditionPresetsElement) {
-            conditionPresetsDropdown = new DivDropdown(conditionPresetsElement);
-            conditionPresetsDropdown.selectedValues$.subscribe(async selection => {
-                if (suppressConditionPresetSelectionChange) {
-                    return;
-                }
-
+        const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
+        if (inlayWindowsElement) {
+            inlayWindows = new DivDropdown(inlayWindowsElement);
+            let previousSelection = inlayWindows.selectedValues$.value[0];
+            inlayWindows.selectedValues$.subscribe(async selection => {
                 const focusTree = getCurrentFocusTree();
                 const nextSelection = selection[0];
-                if (!focusTree) {
-                    return;
-                }
-                if (!nextSelection || nextSelection === '__custom__') {
-                    refreshConditionPresetUi(focusTree);
+                if (!focusTree || previousSelection === nextSelection) {
                     return;
                 }
 
-                const preset = getConditionPresetsForTree(focusTree.id).find(currentPreset => currentPreset.id === nextSelection);
-                if (!preset) {
-                    refreshConditionPresetUi(focusTree);
-                    return;
-                }
-
-                const filteredExprKeys = filterConditionPresetExprKeys(preset.exprKeys, getTreeConditionExprKeys(focusTree));
-                setSelectedExprsFromExprKeys(filteredExprKeys);
-                if (conditions) {
-                    suppressConditionSelectionChange = true;
-                    conditions.selectedValues$.next(filteredExprKeys);
-                    suppressConditionSelectionChange = false;
-                }
-                refreshConditionPresetUi(focusTree);
-                await buildContent();
-                retriggerSearch();
+                previousSelection = nextSelection;
+                setSelectedInlayWindowId(focusTree, nextSelection);
+                await rebuildContentSafely();
             });
         }
 
-        const saveConditionPresetButton = document.getElementById('save-condition-preset') as HTMLButtonElement | null;
-        saveConditionPresetButton?.addEventListener('click', () => {
-            const focusTree = getCurrentFocusTree();
-            if (!focusTree) {
-                return;
+        if (!useConditionInFocus) {
+            const hiddenBranches = getState().hiddenBranches || {};
+            for (const key in hiddenBranches) {
+                showBranch(false, key);
             }
 
-            pendingConditionPresetTargetTreeId = focusTree.id;
-            pendingConditionPresetExprKeys = getSelectedExprKeys();
-            vscode.postMessage({
-                command: 'promptFocusConditionPresetName',
-                initialValue: getSelectedConditionPreset(focusTree)?.name ?? '',
-            });
-        });
+            const allowBranchesElement = document.getElementById('allowbranch') as HTMLDivElement | null;
+            if (allowBranchesElement) {
+                allowBranches = new DivDropdown(allowBranchesElement, true);
+                allowBranches.selectAll();
 
-        const deleteConditionPresetButton = document.getElementById('delete-condition-preset') as HTMLButtonElement | null;
-        deleteConditionPresetButton?.addEventListener('click', async () => {
-            const focusTree = getCurrentFocusTree();
-            const selectedPreset = focusTree ? getSelectedConditionPreset(focusTree) : undefined;
-            if (!focusTree || !selectedPreset) {
-                return;
+                const allValues = allowBranches.selectedValues$.value;
+                allowBranches.selectedValues$.next(allValues.filter(v => !hiddenBranches[v]));
+
+                let oldSelection = allowBranches.selectedValues$.value;
+                allowBranches.selectedValues$.subscribe(selection => {
+                    const showBranches = difference(selection, oldSelection);
+                    showBranches.forEach(s => showBranch(true, s));
+                    const hideBranches = difference(oldSelection, selection);
+                    hideBranches.forEach(s => showBranch(false, s));
+                    oldSelection = selection;
+
+                    const hiddenBranches = difference(allValues, selection);
+                    setState({ hiddenBranches });
+                });
             }
+        }
 
-            setConditionPresetsForTree(
-                focusTree.id,
-                getConditionPresetsForTree(focusTree.id).filter(preset => preset.id !== selectedPreset.id),
-            );
-            refreshConditionPresetUi(focusTree);
-            await buildContent();
-            retriggerSearch();
-        });
+        const searchbox = document.getElementById('searchbox') as HTMLInputElement;
+        let currentNavigatedIndex = 0;
+        let oldSearchboxValue: string = getState().searchboxValue || '';
+        let searchedFocus: HTMLDivElement[] = search(oldSearchboxValue, false);
 
-        const conditionsElement = document.getElementById('conditions') as HTMLDivElement | null;
-        if (conditionsElement) {
-            conditions = new DivDropdown(conditionsElement, true);
-            conditions.selectedValues$.subscribe(async (selection) => {
-                if (suppressConditionSelectionChange) {
-                    return;
+        searchbox.value = oldSearchboxValue;
+
+        const searchboxChangeFunc = function(this: HTMLInputElement) {
+            const searchboxValue = this.value.toLowerCase();
+            if (oldSearchboxValue !== searchboxValue) {
+                currentNavigatedIndex = 0;
+                searchedFocus = search(searchboxValue);
+                oldSearchboxValue = searchboxValue;
+                setState({ searchboxValue });
+            }
+        };
+
+        searchbox.addEventListener('change', searchboxChangeFunc);
+        searchbox.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const visibleSearchedFocus = searchedFocus.filter(f => f.style.display !== 'none');
+                if (visibleSearchedFocus.length > 0) {
+                    currentNavigatedIndex = (currentNavigatedIndex + (e.shiftKey ? visibleSearchedFocus.length - 1 : 1)) % visibleSearchedFocus.length;
+                    visibleSearchedFocus[currentNavigatedIndex].scrollIntoView({ block: "center", inline: "center" });
                 }
+            } else {
+                searchboxChangeFunc.apply(this);
+            }
+        });
+        searchbox.addEventListener('keyup', searchboxChangeFunc);
+        searchbox.addEventListener('paste', searchboxChangeFunc);
+        searchbox.addEventListener('cut', searchboxChangeFunc);
 
+        retriggerSearch = () => { searchedFocus = search(oldSearchboxValue, false); };
+
+        if (useConditionInFocus) {
+            const conditionPresetsElement = document.getElementById('condition-presets') as HTMLDivElement | null;
+            if (conditionPresetsElement) {
+                conditionPresetsDropdown = new DivDropdown(conditionPresetsElement);
+                conditionPresetsDropdown.selectedValues$.subscribe(async selection => {
+                    if (suppressConditionPresetSelectionChange) {
+                        return;
+                    }
+
+                    const focusTree = getCurrentFocusTree();
+                    const nextSelection = selection[0];
+                    if (!focusTree) {
+                        return;
+                    }
+                    if (!nextSelection || nextSelection === '__custom__') {
+                        refreshConditionPresetUi(focusTree);
+                        return;
+                    }
+
+                    const preset = getConditionPresetsForTree(focusTree.id).find(currentPreset => currentPreset.id === nextSelection);
+                    if (!preset) {
+                        refreshConditionPresetUi(focusTree);
+                        return;
+                    }
+
+                    const filteredExprKeys = filterConditionPresetExprKeys(preset.exprKeys, getTreeConditionExprKeys(focusTree));
+                    setSelectedExprsFromExprKeys(filteredExprKeys);
+                    if (conditions) {
+                        suppressConditionSelectionChange = true;
+                        conditions.selectedValues$.next(filteredExprKeys);
+                        suppressConditionSelectionChange = false;
+                    }
+                    refreshConditionPresetUi(focusTree);
+                    await rebuildContentSafely();
+                });
+            }
+
+            const saveConditionPresetButton = document.getElementById('save-condition-preset') as HTMLButtonElement | null;
+            saveConditionPresetButton?.addEventListener('click', () => {
                 const focusTree = getCurrentFocusTree();
                 if (!focusTree) {
                     return;
                 }
 
-                setSelectedExprsFromExprKeys(selection);
-                refreshConditionPresetUi(focusTree);
+                pendingConditionPresetTargetTreeId = focusTree.id;
+                pendingConditionPresetExprKeys = getSelectedExprKeys();
+                vscode.postMessage({
+                    command: 'promptFocusConditionPresetName',
+                    initialValue: getSelectedConditionPreset(focusTree)?.name ?? '',
+                });
+            });
 
-                await buildContent();
-                retriggerSearch();
+            const deleteConditionPresetButton = document.getElementById('delete-condition-preset') as HTMLButtonElement | null;
+            deleteConditionPresetButton?.addEventListener('click', async () => {
+                const focusTree = getCurrentFocusTree();
+                const selectedPreset = focusTree ? getSelectedConditionPreset(focusTree) : undefined;
+                if (!focusTree || !selectedPreset) {
+                    return;
+                }
+
+                setConditionPresetsForTree(
+                    focusTree.id,
+                    getConditionPresetsForTree(focusTree.id).filter(preset => preset.id !== selectedPreset.id),
+                );
+                refreshConditionPresetUi(focusTree);
+                await rebuildContentSafely();
+            });
+
+            const conditionsElement = document.getElementById('conditions') as HTMLDivElement | null;
+            if (conditionsElement) {
+                conditions = new DivDropdown(conditionsElement, true);
+                conditions.selectedValues$.subscribe(async (selection) => {
+                    if (suppressConditionSelectionChange) {
+                        return;
+                    }
+
+                    const focusTree = getCurrentFocusTree();
+                    if (!focusTree) {
+                        return;
+                    }
+
+                    setSelectedExprsFromExprKeys(selection);
+                    refreshConditionPresetUi(focusTree);
+
+                    await rebuildContentSafely();
+                });
+            }
+        }
+
+        const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
+        enableZoom(contentElement, 0, focusToolbarHeight);
+        setPreviewPanDisabled(focusPositionEditMode);
+
+        const focusPositionEditButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
+        focusPositionEditButton?.addEventListener('click', async () => {
+            setFocusPositionEditMode(!focusPositionEditMode);
+            await rebuildContentSafely();
+        });
+
+        const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
+        if (showWarnings) {
+            const warnings = document.getElementById('warnings-container') as HTMLDivElement;
+            showWarnings.addEventListener('click', () => {
+                const visible = warnings.style.display === 'block';
+                document.body.style.overflow = visible ? '' : 'hidden';
+                warnings.style.display = visible ? 'none' : 'block';
             });
         }
 
+        updateSelectedFocusTree(false);
+        await rebuildContentSafely({ restoreScroll: true });
+    } finally {
+        vscode.postMessage({ command: 'focusTreeWebviewReady' });
     }
-
-    const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
-    enableZoom(contentElement, 0, focusToolbarHeight);
-    setPreviewPanDisabled(focusPositionEditMode);
-
-    const focusPositionEditButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
-    focusPositionEditButton?.addEventListener('click', async () => {
-        setFocusPositionEditMode(!focusPositionEditMode);
-        await buildContent();
-        retriggerSearch();
-    });
-
-    const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
-    if (showWarnings) {
-        const warnings = document.getElementById('warnings-container') as HTMLDivElement;
-        showWarnings.addEventListener('click', () => {
-            const visible = warnings.style.display === 'block';
-            document.body.style.overflow = visible ? '' : 'hidden';
-            warnings.style.display = visible ? 'none' : 'block';
-        });
-    }
-
-    updateSelectedFocusTree(false);
-    await buildContent();
-    scrollToState();
-    vscode.postMessage({ command: 'focusTreeWebviewReady' });
 }));

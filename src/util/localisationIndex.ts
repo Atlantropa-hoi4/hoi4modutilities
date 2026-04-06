@@ -68,6 +68,14 @@ export async function getLocalisedTextQuick(localisationKey: string | undefined)
     return getLocalisedText(localisationKey, vscode.env.language);
 }
 
+export function getLocalisedTextQuickIfReady(localisationKey: string | undefined): string | undefined {
+    const previewLocalisation = vscode.workspace.getConfiguration('hoi4ModUtilities').previewLocalisation;
+    if (previewLocalisation) {
+        return getLocalisedTextIfReady(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language);
+    }
+    return getLocalisedTextIfReady(localisationKey, vscode.env.language);
+}
+
 export async function getLocalisedText(localisationKey: string | undefined, language: string): Promise<string | undefined> {
     if (!localisationKey) {
         return localisationKey;
@@ -79,18 +87,39 @@ export async function getLocalisedText(localisationKey: string | undefined, lang
 
     await Promise.all([ensureGlobalLocalisationIndex(), ensureWorkspaceLocalisationIndex()]);
 
-    const langKey = localeMapping[language.toLowerCase()] || 'l_english'; // use mapping to get language suffix
-    const defaultLangKey = 'l_english';
+    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex);
+}
 
-    let text = globalLocalisationIndex[langKey]?.[localisationKey] ||
-        workspaceLocalisationIndex[langKey]?.[localisationKey];
-
-    if (!text) {
-        text = globalLocalisationIndex[defaultLangKey]?.[localisationKey] ||
-            workspaceLocalisationIndex[defaultLangKey]?.[localisationKey];
+export function getLocalisedTextIfReady(localisationKey: string | undefined, language: string): string | undefined {
+    if (!localisationKey) {
+        return localisationKey;
     }
 
-    return text ?? localisationKey;
+    if (!localisationIndex) {
+        return localisationKey ?? '';
+    }
+
+    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex);
+}
+
+export function resolveLocalisedTextFromIndex(
+    localisationKey: string | undefined,
+    language: string,
+    globalIndex: LocalisationData,
+    workspaceIndex: LocalisationData,
+): string | undefined {
+    if (!localisationKey) {
+        return localisationKey;
+    }
+
+    const langKey = localeMapping[language.toLowerCase()] || 'l_english';
+    const defaultLangKey = 'l_english';
+
+    return globalIndex[langKey]?.[localisationKey]
+        || workspaceIndex[langKey]?.[localisationKey]
+        || globalIndex[defaultLangKey]?.[localisationKey]
+        || workspaceIndex[defaultLangKey]?.[localisationKey]
+        || localisationKey;
 }
 
 async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<void> {

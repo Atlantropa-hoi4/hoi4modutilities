@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { FocusTree, Focus } from './schema';
-import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
+import { getSpriteByGfxName, getSpriteByGfxNameFromResolvedFiles, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
 import { forceError, NumberPosition } from '../../util/common';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
@@ -11,7 +11,7 @@ import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { useConditionInFocus } from '../../util/featureflags';
-import { getLocalisedTextQuick } from "../../util/localisationIndex";
+import { getLocalisedTextQuickIfReady } from "../../util/localisationIndex";
 import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
@@ -598,10 +598,10 @@ async function renderFocus(
 
     let textContent = focus.id;
     if (localisationIndex) {
-        let localizedText = await getLocalisedTextQuick(focus.id);
+        let localizedText = getLocalisedTextQuickIfReady(focus.id);
         if (localizedText === focus.id || !localizedText) {
             if (focus.text) {
-                localizedText = await getLocalisedTextQuick(focus.text);
+                localizedText = getLocalisedTextQuickIfReady(focus.text);
                 if (localizedText !== focus.text && localizedText !== null) {
                     textContent += `<br/>${localizedText}`;
                 }
@@ -670,7 +670,7 @@ async function renderFocus(
 }
 
 export async function getFocusIcon(name: string, gfxFiles: string[]): Promise<Image | undefined> {
-    const sprite = await getSpriteByGfxName(name, gfxFiles);
+    const sprite = await getSpriteByGfxNameFromResolvedFiles(name, gfxFiles);
     if (sprite !== undefined) {
         return sprite.image;
     }
