@@ -187,7 +187,9 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             WebviewType.Preview,
             localize('preview.viewtitle', "HOI4: {0}", filename),
             vscode.ViewColumn.Beside,
-            getWebviewPanelOptions()
+            getWebviewPanelOptions({
+                retainContextWhenHidden: true,
+            })
         );
 
         if (contextContainer.current) {

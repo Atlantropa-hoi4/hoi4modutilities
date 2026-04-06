@@ -18,6 +18,7 @@ import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 import { fitFocusIconToBounds } from './focusiconlayout';
+import { FocusConditionPresetsByTree } from './conditionpresets';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
@@ -39,15 +40,22 @@ export interface FocusTreeRenderPayload {
     focusToolbarHeight: number;
     focusPositionDocumentVersion: number;
     focusPositionActiveFile: string;
+    conditionPresetsByTree: FocusConditionPresetsByTree;
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
 }
 
-export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
+export async function renderFocusTreeFile(
+    loader: FocusTreeLoader,
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
-        const renderState = await buildFocusTreeRenderState(loader, documentVersion);
+        const renderState = await buildFocusTreeRenderState(loader, documentVersion, conditionPresetsByTree);
         if (renderState.payload.focusTrees.length === 0) {
             const baseContent = localize('focustree.nofocustree', 'No focus tree.');
             return html(webview, baseContent, [setPreviewFileUriScript], []);
@@ -87,6 +95,7 @@ function attributeEscape(value: string): string {
 export async function buildFocusTreeRenderPayload(
     loader: FocusTreeLoader,
     documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
 ): Promise<FocusTreeRenderPayload> {
     const session = new LoaderSession(false);
     const loadResult = await loader.load(session);
@@ -141,6 +150,7 @@ export async function buildFocusTreeRenderPayload(
         focusToolbarHeight,
         focusPositionDocumentVersion: documentVersion,
         focusPositionActiveFile: loader.file,
+        conditionPresetsByTree,
         hasFocusSelector: focusTrees.length > 1,
         hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
     };
@@ -149,8 +159,9 @@ export async function buildFocusTreeRenderPayload(
 async function buildFocusTreeRenderState(
     loader: FocusTreeLoader,
     documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree,
 ): Promise<{ payload: FocusTreeRenderPayload; body: string; scripts: string[] }> {
-    const payload = await buildFocusTreeRenderPayload(loader, documentVersion);
+    const payload = await buildFocusTreeRenderPayload(loader, documentVersion, conditionPresetsByTree);
     const scripts = buildFocusTreeBootstrapScripts(payload);
     scripts.push(i18nTableAsScript());
     return {
@@ -173,6 +184,7 @@ function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string
         'window.focusToolbarHeight = ' + payload.focusToolbarHeight,
         'window.focusPositionDocumentVersion = ' + JSON.stringify(payload.focusPositionDocumentVersion),
         'window.focusPositionActiveFile = ' + JSON.stringify(payload.focusPositionActiveFile),
+        'window.persistedConditionPresetsByTree = ' + JSON.stringify(payload.conditionPresetsByTree),
     ];
 }
 
@@ -187,8 +199,13 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             background: rgba(128, 128, 128, 0.2);
             text-align: center;
             pointer-events: none;
-            z-index: 0;
+            z-index: 1;
         `)}">Continuous focuses</div>`;
+
+    styleTable.raw('#focustreeplaceholder', 'pointer-events: none;');
+    styleTable.raw('#focustreeplaceholder [data-focus-id], #focustreeplaceholder [data-focus-id] *, #focustreeplaceholder .navigator, #focustreeplaceholder .navigator *', 'pointer-events: auto;');
+    styleTable.raw('#inlaywindowplaceholder', 'pointer-events: none;');
+    styleTable.raw('#inlaywindowplaceholder .navigator, #inlaywindowplaceholder .navigator *, #inlaywindowplaceholder button, #inlaywindowplaceholder button *', 'pointer-events: auto;');
 
     const shellMarkup =
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `

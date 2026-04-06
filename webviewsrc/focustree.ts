@@ -11,7 +11,14 @@ import { toNumberLike } from "../src/hoiformat/schema";
 import { Checkbox } from "./util/checkbox";
 import { feLocalize } from "./util/i18n";
 import { vscode } from "./util/vscode";
-import { FocusConditionPreset, filterConditionPresetExprKeys, findMatchingConditionPreset, normalizeConditionExprKeys } from "../src/previewdef/focustree/conditionpresets";
+import {
+    FocusConditionPreset,
+    FocusConditionPresetsByTree,
+    filterConditionPresetExprKeys,
+    findMatchingConditionPreset,
+    normalizeConditionExprKeys,
+    normalizeConditionPresetsByTree,
+} from "../src/previewdef/focustree/conditionpresets";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
@@ -61,7 +68,9 @@ let focusTrees: FocusTree[] = (window as any).focusTrees;
 type PendingFocusLinkType = 'prerequisite' | 'exclusive';
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
-let conditionPresetsByTree: Record<string, FocusConditionPreset[]> = getState().conditionPresetsByTree ?? {};
+let conditionPresetsByTree: FocusConditionPresetsByTree = normalizeConditionPresetsByTree(
+    getState().conditionPresetsByTree ?? (window as any).persistedConditionPresetsByTree ?? {},
+);
 let selectedFocusTreeIndex: number = Math.max(0, Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0));
 let selectedFocusIdsByTree: Record<string, string[]> = getState().selectedFocusIdsByTree ?? {};
 let allowBranches: DivDropdown | undefined = undefined;
@@ -220,6 +229,16 @@ function getConditionPresetsForTree(treeId: string): FocusConditionPreset[] {
     return conditionPresetsByTree[treeId] ?? [];
 }
 
+function persistConditionPresets() {
+    const normalizedConditionPresetsByTree = normalizeConditionPresetsByTree(conditionPresetsByTree);
+    conditionPresetsByTree = normalizedConditionPresetsByTree;
+    setState({ conditionPresetsByTree: normalizedConditionPresetsByTree });
+    vscode.postMessage({
+        command: 'persistFocusConditionPresets',
+        presetsByTree: normalizedConditionPresetsByTree,
+    });
+}
+
 function setConditionPresetsForTree(treeId: string, presets: FocusConditionPreset[]) {
     const nextConditionPresetsByTree = { ...conditionPresetsByTree };
     if (presets.length === 0) {
@@ -229,7 +248,7 @@ function setConditionPresetsForTree(treeId: string, presets: FocusConditionPrese
     }
 
     conditionPresetsByTree = nextConditionPresetsByTree;
-    setState({ conditionPresetsByTree });
+    persistConditionPresets();
 }
 
 function getSelectedExprKeys(): string[] {

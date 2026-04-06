@@ -5,6 +5,8 @@ const {
     filterConditionPresetExprKeys,
     findMatchingConditionPreset,
     areConditionExprKeySetsEqual,
+    normalizeConditionPresets,
+    normalizeConditionPresetsByTree,
 } = require('../../src/previewdef/focustree/conditionpresets') as typeof import('../../src/previewdef/focustree/conditionpresets');
 
 describe('focus tree condition presets', () => {
@@ -41,6 +43,44 @@ describe('focus tree condition presets', () => {
         assert.strictEqual(
             areConditionExprKeySetsEqual(['root!|a', 'root!|b'], ['root!|a']),
             false,
+        );
+    });
+
+    it('normalizes persisted preset lists and skips invalid or duplicate ids', () => {
+        assert.deepStrictEqual(
+            normalizeConditionPresets([
+                { id: ' preset-a ', name: ' Path A ', exprKeys: ['root!|b', 'root!|a', 'root!|b'] },
+                { id: '', name: 'Invalid', exprKeys: ['root!|c'] },
+                { id: 'preset-a', name: 'Duplicate', exprKeys: ['root!|z'] },
+            ]),
+            [
+                {
+                    id: 'preset-a',
+                    name: 'Path A',
+                    exprKeys: ['root!|a', 'root!|b'],
+                },
+            ],
+        );
+    });
+
+    it('normalizes persisted presets by tree and drops empty trees', () => {
+        assert.deepStrictEqual(
+            normalizeConditionPresetsByTree({
+                tree_a: [
+                    { id: 'first', name: 'First', exprKeys: ['root!|b', 'root!|a'] },
+                ],
+                '   ': [
+                    { id: 'ignored', name: 'Ignored', exprKeys: ['root!|c'] },
+                ],
+                tree_b: [
+                    { id: '', name: 'Bad', exprKeys: [] },
+                ],
+            }),
+            {
+                tree_a: [
+                    { id: 'first', name: 'First', exprKeys: ['root!|a', 'root!|b'] },
+                ],
+            },
         );
     });
 });

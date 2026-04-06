@@ -8,6 +8,10 @@ import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccomm
 import { FocusPositionEditMessage } from './positioneditcommon';
 import { buildContinuousFocusPositionWorkspaceEdit, buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
+import { contextContainer } from '../../context';
+import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './conditionpresets';
+
+const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -22,6 +26,7 @@ function canPreviewFocusTree(document: vscode.TextDocument) {
 export class FocusTreePreview extends PreviewBase {
     private focusTreeLoader: FocusTreeLoader;
     private relativeFilePath: string;
+    private persistedConditionPresetsByTree: FocusConditionPresetsByTree;
     private pendingLocalEditDocumentVersions = new Set<number>();
     private webviewReady = false;
     private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
@@ -31,11 +36,18 @@ export class FocusTreePreview extends PreviewBase {
         super(uri, panel);
         this.relativeFilePath = getRelativePathInWorkspace(this.uri);
         this.focusTreeLoader = new FocusTreeLoader(this.relativeFilePath);
+        this.persistedConditionPresetsByTree = this.getStoredConditionPresetsByTree();
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
         const loader = this.createSnapshotLoader(document.getText());
-        const result = await renderFocusTreeFile(loader, document.uri, this.panel.webview, document.version);
+        const result = await renderFocusTreeFile(
+            loader,
+            document.uri,
+            this.panel.webview,
+            document.version,
+            this.persistedConditionPresetsByTree,
+        );
         this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
         return result;
     }
@@ -58,7 +70,7 @@ export class FocusTreePreview extends PreviewBase {
 
         try {
             const loader = this.createSnapshotLoader(document.getText());
-            const payload = await buildFocusTreeRenderPayload(loader, document.version);
+            const payload = await buildFocusTreeRenderPayload(loader, document.version, this.persistedConditionPresetsByTree);
             this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
             if (!this.isRefreshRequestCurrent(requestId)) {
                 return;
@@ -135,6 +147,12 @@ export class FocusTreePreview extends PreviewBase {
                 command: 'focusConditionPresetNameResolved',
                 name,
             });
+            return true;
+        }
+
+        if (command === 'persistFocusConditionPresets') {
+            this.persistedConditionPresetsByTree = normalizeConditionPresetsByTree((msg as any).presetsByTree);
+            await this.storeConditionPresetsByTree(this.persistedConditionPresetsByTree);
             return true;
         }
 
@@ -383,6 +401,31 @@ export class FocusTreePreview extends PreviewBase {
         }
 
         return false;
+    }
+
+    private getConditionPresetsStateKey(): string {
+        return `${focusConditionPresetsStateKeyPrefix}${this.relativeFilePath}`;
+    }
+
+    private getStoredConditionPresetsByTree(): FocusConditionPresetsByTree {
+        const workspaceState = contextContainer.current?.workspaceState;
+        if (!workspaceState) {
+            return {};
+        }
+
+        return normalizeConditionPresetsByTree(
+            workspaceState.get(this.getConditionPresetsStateKey()) as FocusConditionPresetsByTree | undefined,
+        );
+    }
+
+    private async storeConditionPresetsByTree(conditionPresetsByTree: FocusConditionPresetsByTree): Promise<void> {
+        const workspaceState = contextContainer.current?.workspaceState;
+        if (!workspaceState) {
+            return;
+        }
+
+        const hasEntries = Object.keys(conditionPresetsByTree).length > 0;
+        await workspaceState.update(this.getConditionPresetsStateKey(), hasEntries ? conditionPresetsByTree : undefined);
     }
 }
 
