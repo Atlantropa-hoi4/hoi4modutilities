@@ -1,19 +1,22 @@
-# Focus Tree Preview Icon GFX Regression 2026-04-06
+# Focus Tree Inlay Preview Regression 2026-04-06
 
 ## Plan
-- [x] Inspect the icon GFX resolution path and pinpoint the recent focustree regression
-- [x] Restore focus icon GFX resolution without reintroducing index-blocking behavior
-- [x] Re-run compile and icon-related unit tests, then record the result
+- [x] Inspect the inlay preview load/render path and confirm why the window does not resolve
+- [x] Restore inlay GUI/GFX resolution without reintroducing full index blocking on the hot path
+- [x] Re-run compile and targeted focustree tests, then record the result
 
 ## Notes
-- Current issue: focus tree icon GFX no longer display in the preview.
-- Root cause: the recent non-blocking loader change stopped passing cached `interface/*.gfx` fallback scanning into `resolveFocusIconGfxFiles`, so unresolved icon names never gained the extra container files needed by the renderer.
+- Current issue: the Focus Tree preview's Inlay Window surface appears non-functional.
+- Root causes:
+  - `src/previewdef/focustree/inlay.ts` limited GUI window discovery to `interface/scripted_gui/**/*.gui`, so inlay windows defined in other `interface/**/*.gui` files were invisible to the preview resolver.
+  - The recent inlay GFX fast path only used indexed lookups and no longer fell back to cached `interface/*.gfx` scans for unresolved scripted-image names.
 
 ## Review
-- `src/previewdef/focustree/loader.ts` now wires `resolveFocusIconGfxFiles` back to the cached `interface/*.gfx` fallback scan helpers, while still using `tryGetGfxContainerFile` for the fast path. That restores resilient icon container discovery without forcing the preview to wait on the full GFX index first.
-- The quick-path loader behavior from the previous performance work stays intact: ready index hits are still used immediately, and only unresolved names consult the cached interface sprite scan.
+- Inlay GUI discovery now scans `interface/**/*.gui` and only reports matched `.gui` files back as preview dependencies, so the resolver can find inlay windows outside the `scripted_gui` subfolder without bloating dependency tracking.
+- Inlay scripted-image GFX resolution now follows the same indexed-hit plus unresolved-only fallback scan pattern as focus icons, restoring non-indexed `GFX_*` inlay assets without reintroducing a full blocking scan on the hot path.
+- The new `inlayshared` helper keeps the lookup logic pure enough for unit tests, so future inlay regressions can be caught without pulling in the VS Code runtime.
 
 ## Verification
 - `npm run compile-ts` passed.
-- `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-focusicongfx.test.js out\\test\\unit\\focustree-focusiconlayout.test.js out\\test\\unit\\focustree-schema.test.js` passed with 12 tests.
+- `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-inlay.test.js out\\test\\unit\\focustree-focusicongfx.test.js out\\test\\unit\\focustree-schema.test.js` passed with 11 tests.
 - `npm run package` passed and produced `hoi4modutilities-0.13.22.vsix`.

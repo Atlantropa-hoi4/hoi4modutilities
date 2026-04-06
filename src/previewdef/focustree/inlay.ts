@@ -8,6 +8,7 @@ import { hoiFileExpiryToken, listFilesFromModOrHOI4, readFileFromModOrHOI4 } fro
 import { PromiseCache } from "../../util/cache";
 import { tryGetGfxContainerFile } from "../../util/gfxindex";
 import { localize } from "../../util/i18n";
+import { resolveInlayGfxNames, resolveInlayGuiWindowLookup } from "./inlayshared";
 import type {
     FocusInlayGfxOption,
     FocusInlayImageSlot,
@@ -34,11 +35,10 @@ interface ScriptedGuiWindowsCache {
 interface InterfaceGfxCache {
     gfxFiles: string[];
     spriteNamesByFile: Record<string, string[]>;
-    spriteToFile: Record<string, string>;
 }
 
 const focusInlayWindowsFolder = "common/focus_inlay_windows";
-const scriptedGuiFolder = "interface/scripted_gui";
+const interfaceGuiFolder = "interface";
 const interfaceFolder = "interface";
 
 const focusInlayWindowsCache = new PromiseCache<ParsedInlayFileCache>({
@@ -49,7 +49,7 @@ const focusInlayWindowsCache = new PromiseCache<ParsedInlayFileCache>({
 
 const scriptedGuiWindowsCache = new PromiseCache<ScriptedGuiWindowsCache>({
     factory: buildScriptedGuiWindowsCache,
-    expireWhenChange: () => getFolderFilesExpiryToken(scriptedGuiFolder, ".gui"),
+    expireWhenChange: () => getFolderFilesExpiryToken(interfaceGuiFolder, ".gui"),
     life: 10 * 60 * 1000,
 });
 
@@ -310,32 +310,11 @@ export async function resolveInlayGuiWindows(inlays: FocusTreeInlay[]): Promise<
     }
 
     const guiWindows = await scriptedGuiWindowsCache.get();
-
-    for (const inlay of inlays) {
-        if (!inlay.windowName) {
-            continue;
-        }
-
-        const matched = guiWindows.windowsByName[inlay.windowName];
-        if (!matched) {
-            warnings.push(createParseWarning({
-                code: 'inlay-gui-window-missing',
-                text: localize("TODO", "Can't resolve scripted GUI window {0} for inlay {1}.", inlay.windowName, inlay.id),
-                source: inlay.id,
-                navigations: inlay.token ? [{ file: inlay.file, start: inlay.token.start, end: inlay.token.end }] : undefined,
-            }));
-            continue;
-        }
-
-        inlay.guiFile = matched.file;
-        inlay.guiWindow = matched.window;
-    }
-
-    return { guiFiles: guiWindows.guiFiles, warnings };
+    return resolveInlayGuiWindowLookup(inlays, guiWindows.windowsByName);
 }
 
 async function listGuiFiles(): Promise<string[]> {
-    return await listFolderFiles(scriptedGuiFolder, ".gui");
+    return await listFolderFiles(interfaceGuiFolder, ".gui");
 }
 
 async function buildScriptedGuiWindowsCache(): Promise<ScriptedGuiWindowsCache> {
@@ -385,27 +364,51 @@ export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ 
         return { resolvedFiles: [] };
     }
 
-    const resolvedFiles = new Set<string>();
-
+    const optionsByName = new Map<string, FocusInlayGfxOption[]>();
     for (const inlay of inlays) {
         for (const slot of inlay.scriptedImages) {
             for (const option of slot.gfxOptions) {
-                const resolved = tryGetGfxContainerFile(option.gfxName);
-                if (resolved) {
-                    option.gfxFile = resolved;
-                    resolvedFiles.add(resolved);
+                if (!option.gfxName) {
+                    continue;
                 }
+
+                const options = optionsByName.get(option.gfxName) ?? [];
+                options.push(option);
+                optionsByName.set(option.gfxName, options);
             }
+        }
+    }
+
+    if (optionsByName.size === 0) {
+        return { resolvedFiles: [] };
+    }
+
+    const resolvedByName = await resolveInlayGfxNames(
+        Array.from(optionsByName.keys()),
+        {
+            resolveIndexedFile: async gfxName => tryGetGfxContainerFile(gfxName),
+            listInterfaceGfxFiles: getCachedInterfaceGfxFiles,
+            readSpriteNames: getCachedInterfaceGfxSpriteNames,
+        },
+    );
+    const resolvedFiles = new Set<string>();
+    for (const [gfxName, options] of optionsByName.entries()) {
+        const resolved = resolvedByName[gfxName];
+        if (!resolved) {
+            continue;
+        }
+
+        resolvedFiles.add(resolved);
+        for (const option of options) {
+            option.gfxFile = resolved;
         }
     }
 
     return { resolvedFiles: Array.from(resolvedFiles) };
 }
-
 async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
     const gfxFiles = await listFolderFiles(interfaceFolder, ".gfx");
     const spriteNamesByFile: Record<string, string[]> = {};
-    const spriteToFile: Record<string, string> = {};
 
     for (const candidateFile of gfxFiles) {
         try {
@@ -416,17 +419,12 @@ async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
             ));
             const spriteNames = spriteTypes.map(spriteType => spriteType.name);
             spriteNamesByFile[candidateFile] = spriteNames;
-            for (const spriteType of spriteTypes) {
-                if (!(spriteType.name in spriteToFile)) {
-                    spriteToFile[spriteType.name] = candidateFile;
-                }
-            }
         } catch {
             // Ignore unreadable GFX files in the fallback scan.
         }
     }
 
-    return { gfxFiles, spriteNamesByFile, spriteToFile };
+    return { gfxFiles, spriteNamesByFile };
 }
 
 export async function getCachedInterfaceGfxFiles(): Promise<string[]> {
