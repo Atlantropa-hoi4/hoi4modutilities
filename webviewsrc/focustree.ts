@@ -2166,14 +2166,35 @@ function replaceFocusTreeDynamicStyles(dynamicStyleCss: string | undefined) {
 }
 
 function refreshFocusTreeSelectorOptions() {
+    const selectorContainer = document.getElementById('focus-tree-selector-container') as HTMLDivElement | null;
     const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
     ensureSelectedFocusTreeIndex();
+    if (selectorContainer) {
+        selectorContainer.style.display = focusTrees.length > 1 ? 'flex' : 'none';
+    }
     if (!focusesElement) {
         return;
     }
 
     focusesElement.innerHTML = focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('');
     focusesElement.value = selectedFocusTreeIndex.toString();
+}
+
+function refreshWarningsButtonVisibility() {
+    const showWarningsButton = document.getElementById('show-warnings') as HTMLButtonElement | null;
+    if (!showWarningsButton) {
+        return;
+    }
+
+    const hasWarnings = focusTrees.some(focusTree => focusTree.warnings.length > 0);
+    showWarningsButton.style.display = hasWarnings ? '' : 'none';
+    if (!hasWarnings) {
+        const warnings = document.getElementById('warnings-container') as HTMLDivElement | null;
+        if (warnings) {
+            warnings.style.display = 'none';
+        }
+        document.body.style.overflow = '';
+    }
 }
 
 function applyFocusTreePatches(focusTreePatches: Array<{ treeId: string; tree: FocusTree }> | undefined) {
@@ -2236,6 +2257,7 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
     if (!message.focusTrees && message.focusTreePatches) {
         refreshFocusTreeSelectorOptions();
     }
+    refreshWarningsButtonVisibility();
     if (message.gridBox) {
         (window as any).gridBox = message.gridBox;
     }

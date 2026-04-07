@@ -84,26 +84,47 @@ export async function renderFocusTreeFile(
             return html(webview, baseContent, [setPreviewFileUriScript], []);
         }
 
-        return html(
-            webview,
-            renderState.body,
-            [
-                setPreviewFileUriScript,
-                ...renderState.scripts.map(c => ({ content: c })),
-                'common.js',
-                'focustree.js',
-            ],
-            [
-                'codicon.css',
-                'common.css',
-                { nonce: renderState.payload.styleNonce },
-            ],
-        );
+        return renderFocusTreeHtmlFromPayload(uri, webview, renderState.payload);
 
     } catch (e) {
         const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
         return html(webview, baseContent, [setPreviewFileUriScript], []);
     }
+}
+
+export function renderFocusTreeShellHtml(
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): string {
+    const payload = createEmptyFocusTreeRenderPayload(documentVersion, conditionPresetsByTree);
+    return renderFocusTreeHtmlFromPayload(uri, webview, payload);
+}
+
+export function renderFocusTreeHtmlFromPayload(
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    payload: FocusTreeRenderPayload,
+): string {
+    const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
+    const scripts = buildFocusTreeBootstrapScripts(payload);
+    scripts.push(i18nTableAsScript());
+    return html(
+        webview,
+        renderFocusTreeBody(payload),
+        [
+            setPreviewFileUriScript,
+            ...scripts.map(c => ({ content: c })),
+            'common.js',
+            'focustree.js',
+        ],
+        [
+            'codicon.css',
+            'common.css',
+            { nonce: payload.styleNonce },
+        ],
+    );
 }
 
 const leftPaddingBase = 50;
@@ -279,6 +300,33 @@ function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string
     ];
 }
 
+function createEmptyFocusTreeRenderPayload(
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree,
+): FocusTreeRenderPayload {
+    return {
+        focusTrees: [],
+        renderedFocus: {},
+        renderedInlayWindows: {},
+        gridBox: {
+            position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
+            format: toStringAsSymbolIgnoreCase('up'),
+            size: { width: toNumberLike(defaultXGridSize), height: undefined },
+            slotsize: { width: toNumberLike(defaultXGridSize), height: toNumberLike(defaultYGridSize) },
+        } as HOIPartial<GridBoxType>,
+        dynamicStyleCss: '',
+        styleNonce: Math.random().toString(36).slice(2),
+        xGridSize: defaultXGridSize,
+        yGridSize: defaultYGridSize,
+        focusToolbarHeight,
+        focusPositionDocumentVersion: documentVersion,
+        focusPositionActiveFile: '',
+        conditionPresetsByTree,
+        hasFocusSelector: false,
+        hasWarningsButton: false,
+    };
+}
+
 function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     const styleTable = new StyleTable();
     const continuousFocusContent =
@@ -313,7 +361,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
-        renderToolBar(payload.focusTrees, styleTable);
+        renderToolBar(payload, styleTable);
     const shellCss = styleTable.toStyleContent();
 
     return (
@@ -398,12 +446,13 @@ function renderWarningContainer(styleTable: StyleTable) {
     </div>`;
 }
 
-function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string {
+function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable): string {
+    const focusTrees = payload.focusTrees;
     const toolbarGroupStyle = (marginRight: string = '10px') => styleTable.style('toolbarGroup', () => `display:flex; align-items:center; margin-right:${marginRight}; min-height:24px;`);
     const toolbarLabelStyle = (extra: string = '') => styleTable.style('toolbarLabel', () => `margin-right:5px; display:flex; align-items:center;${extra}`);
 
-    const focuses = focusTrees.length <= 1 ? '' : `
-        <div class="${toolbarGroupStyle()}">
+    const focuses = `
+        <div id="focus-tree-selector-container" class="${toolbarGroupStyle()}" style="${payload.hasFocusSelector ? 'display:flex;' : 'display:none;'}">
             <label for="focuses" class="${toolbarLabelStyle()}">${localize('focustree.focustree', 'Focus tree: ')}</label>
             <div class="select-container">
                 <select id="focuses" class="select multiple-select" tabindex="0" role="combobox">
@@ -481,8 +530,8 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             ><i class="codicon codicon-trash"></i></button>
         </div>`;
 
-    const warningsButton = focusTrees.every(ft => ft.warnings.length === 0) ? '' : `
-        <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}">
+    const warningsButton = `
+        <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}" style="${payload.hasWarningsButton ? '' : 'display:none;'}">
             <i class="codicon codicon-warning"></i>
         </button>`;
 

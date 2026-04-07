@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import {
     buildFocusTreeRenderBaseState,
     buildFocusTreeRenderPayloadFromBaseState,
-    renderFocusTreeFile,
+    renderFocusTreeHtmlFromPayload,
+    renderFocusTreeShellHtml,
 } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
@@ -23,6 +24,7 @@ import {
 } from './renderpayloadpatch';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
+const inlineInitialRenderTextLengthThreshold = 40_000;
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -45,9 +47,9 @@ export class FocusTreePreview extends PreviewBase {
     private persistedConditionPresetsByTree: FocusConditionPresetsByTree;
     private pendingLocalEditDocumentVersions = new Set<number>();
     private webviewReady = false;
-    private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
     private latestRefreshRequestId = 0;
     private lastRenderPayload: FocusTreeRenderStateSnapshot | undefined;
+    private pendingInitialHydrationAfterReady = false;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -57,16 +59,25 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
-        const loader = this.createSnapshotLoader(document.getText());
-        const result = await renderFocusTreeFile(
-            loader,
+        const content = document.getText();
+        if (content.length <= inlineInitialRenderTextLengthThreshold) {
+            const loader = this.createSnapshotLoader(content);
+            const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
+            const { payload } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
+            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+            this.lastRenderPayload = createFocusTreeRenderStateSnapshot(payload);
+            this.pendingInitialHydrationAfterReady = false;
+            return renderFocusTreeHtmlFromPayload(document.uri, this.panel.webview, payload);
+        }
+
+        this.lastRenderPayload = undefined;
+        this.pendingInitialHydrationAfterReady = true;
+        return renderFocusTreeShellHtml(
             document.uri,
             this.panel.webview,
             document.version,
             this.persistedConditionPresetsByTree,
         );
-        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-        return result;
     }
 
     public override getDocumentChangeDebounceMs(): number {
@@ -101,23 +112,6 @@ export class FocusTreePreview extends PreviewBase {
                 return;
             }
 
-            const nextStructure = {
-                hasFocusSelector: baseState.hasFocusSelector,
-                hasWarningsButton: baseState.hasWarningsButton,
-            };
-            const structureChanged = !this.lastRenderStructure
-                || this.lastRenderStructure.hasFocusSelector !== nextStructure.hasFocusSelector
-                || this.lastRenderStructure.hasWarningsButton !== nextStructure.hasWarningsButton
-                || baseState.focusTrees.length === 0;
-            if (structureChanged) {
-                this.lastRenderStructure = nextStructure;
-                this.lastRenderPayload = undefined;
-                this.webviewReady = false;
-                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-                return;
-            }
-
-            this.lastRenderStructure = nextStructure;
             const patchPlanStartedAt = Date.now();
             const patchPlan = createFocusTreeRenderPatch(this.lastRenderPayload, baseState);
             const patchPlanDurationMs = Date.now() - patchPlanStartedAt;
@@ -139,6 +133,7 @@ export class FocusTreePreview extends PreviewBase {
                     yGridSize: payload.yGridSize,
                     documentVersion: payload.focusPositionDocumentVersion,
                 });
+                this.pendingInitialHydrationAfterReady = false;
                 debug('[focustree] refresh timings', {
                     mode: 'full-message',
                     documentVersion: payload.focusPositionDocumentVersion,
@@ -159,6 +154,7 @@ export class FocusTreePreview extends PreviewBase {
                 command: 'focusTreeContentUpdated',
                 ...patchPlan.patch,
             });
+            this.pendingInitialHydrationAfterReady = false;
             debug('[focustree] refresh timings', {
                 mode: 'patch',
                 documentVersion: patchPlan.patch.documentVersion,
@@ -173,6 +169,7 @@ export class FocusTreePreview extends PreviewBase {
             error(e);
             this.webviewReady = false;
             this.lastRenderPayload = undefined;
+            this.pendingInitialHydrationAfterReady = false;
             const content = await this.getContent(document);
             if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
                 return;
@@ -202,6 +199,7 @@ export class FocusTreePreview extends PreviewBase {
         requestId: number,
         requestDocumentVersion: number,
     ): Promise<void> {
+        this.webviewReady = false;
         const content = await this.getContent(document);
         if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
             return;
@@ -214,6 +212,12 @@ export class FocusTreePreview extends PreviewBase {
         const command = (msg as any).command as string | undefined;
         if (command === 'focusTreeWebviewReady') {
             this.webviewReady = true;
+            if (this.pendingInitialHydrationAfterReady) {
+                const document = getDocumentByUri(this.uri);
+                if (document) {
+                    void this.refreshDocument(document);
+                }
+            }
             return true;
         }
 

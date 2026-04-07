@@ -70,6 +70,9 @@
 - `src/previewdef/focustree/webviewupdate.ts`는 host가 보내는 `structurallyChangedTreeIds`를 그대로 사용해 current tree rebuild 여부를 결정하도록 단순화되었습니다. client-side `isEqual()` deep compare는 제거되었습니다.
 - `webviewsrc/focustree.ts`는 증분 focus HTML 교체 후 전체 `rebuildRenderedFocusElementCache()`와 전체 checkbox/drag 재바인딩을 하지 않고, 변경된 focus id에 대해서만 navigator/checkbox/drag binding을 다시 적용합니다. `renderCurrentFocusHtml()`의 icon class 계산도 `new StyleTable()` 생성 없이 고정 class name으로 바뀌었습니다.
 - `webviewsrc/util/common.ts`의 `subscribeNavigators()`는 이제 전체 document 대신 특정 subtree만 다시 스캔할 수 있어, 부분 DOM 교체 시 전체 navigator 재검색 비용을 줄입니다.
+- 추가 후속 수정: `src/previewdef/focustree/index.ts`와 `src/previewdef/focustree/contentbuilder.ts`는 이제 preview 첫 open에서 full payload를 기다리지 않고 즉시 shell HTML을 띄운 뒤, webview `focusTreeWebviewReady` 이후 실제 payload를 메시지로 채웁니다. 따라서 사용자는 더 이상 첫 render 동안 `Loading...`에 묶이지 않고, 초기 bootstrap 지연이 host-side payload 생성 시간과 분리됩니다.
+- 작은 파일 회귀 보정: shell-first 초기 open 경로가 작은 focustree에도 같은 고정 bootstrap 비용을 추가하고 있었기 때문에, 초기 로드는 하이브리드로 조정했습니다. 이제 `src/previewdef/focustree/index.ts`는 문서 텍스트가 작은 경우 inline full render를 바로 사용하고, 충분히 큰 경우에만 shell hydration을 사용합니다.
+- 추가 후속 수정: focustree toolbar는 selector/warnings DOM을 항상 가진 정적 shell로 바뀌었습니다. `webviewsrc/focustree.ts`는 tree 개수와 warning 유무에 따라 해당 컨트롤의 표시만 토글하므로, 이후 full payload 갱신도 HTML 전체 재로드 없이 처리됩니다.
 - 남은 범위: inlay HTML 변화나 icon/style dependency 변화는 아직 full fallback입니다. P4에서 대형 fixture로 timing 로그를 보며 이 fallback 비중이 실제 병목인지 재측정이 필요합니다.
 
 ## Verification
