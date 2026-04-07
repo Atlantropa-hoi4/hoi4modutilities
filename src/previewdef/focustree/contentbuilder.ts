@@ -283,6 +283,25 @@ export function renderFocusTreeFocusHtmlMap(
     return renderedFocus;
 }
 
+export async function renderFocusTreeInlayHtmlMap(
+    baseState: FocusTreeRenderBaseState,
+    inlayIds: readonly string[],
+): Promise<Record<string, string>> {
+    const styleTable = new StyleTable();
+    await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+    const renderedInlayWindows: Record<string, string> = {};
+    for (const inlayId of inlayIds) {
+        const inlay = baseState.allInlays.find(currentInlay => currentInlay.id === inlayId);
+        if (!inlay) {
+            continue;
+        }
+
+        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+    }
+
+    return renderedInlayWindows;
+}
+
 function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string[] {
     return [
         'window.focusTrees = ' + JSON.stringify(payload.focusTrees),

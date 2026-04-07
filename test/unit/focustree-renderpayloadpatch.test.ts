@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import {
-    createFocusTreeRenderPatch,
-    createFocusTreeRenderStateSnapshot,
+    createFocusTreeRenderCache,
+    createFocusTreeRenderUpdate,
 } from '../../src/previewdef/focustree/renderpayloadpatch';
 
 describe('focus tree render payload patching', () => {
@@ -44,8 +44,8 @@ describe('focus tree render payload patching', () => {
         },
     });
 
-    it('emits a patch when tree order is stable and only one tree or html fragment changed', () => {
-        const previous = createFocusTreeRenderStateSnapshot({
+    it('emits a slot-based partial update when tree order is stable and one tree changed', async () => {
+        const previous = createFocusTreeRenderCache({
             focusTrees: [
                 createTree('tree_a', 'FOCUS_A'),
                 createTree('tree_b', 'FOCUS_B'),
@@ -109,18 +109,24 @@ describe('focus tree render payload patching', () => {
             loadDurationMs: 1,
         } as any;
 
-        const result = createFocusTreeRenderPatch(previous, next);
+        const result = await createFocusTreeRenderUpdate(previous, next);
 
-        assert.strictEqual(result.mode, 'patch');
-        assert.deepStrictEqual(result.patch.focusTreePatches?.map(patch => patch.treeId), ['tree_b']);
-        assert.strictEqual(result.patch.structurallyChangedTreeIds, undefined);
-        assert.match(result.patch.renderedFocusPatch?.FOCUS_B ?? '', /common\/national_focus\/other\.txt/);
-        assert.strictEqual(result.patch.documentVersion, 4);
-        assert.strictEqual(result.patch.dynamicStyleCss, '.a {}');
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+
+        assert.deepStrictEqual(result.update.focusTreePatches?.map(patch => patch.treeId), ['tree_b']);
+        assert.deepStrictEqual(result.update.changedTreeIds, ['tree_b']);
+        assert.strictEqual(result.update.structurallyChangedTreeIds, undefined);
+        assert.match(result.update.renderedFocusPatch?.FOCUS_B ?? '', /common\/national_focus\/other\.txt/);
+        assert.strictEqual(result.update.documentVersion, 4);
+        assert.deepStrictEqual(result.update.changedSlots, ['treeDefinitions', 'selector', 'warnings', 'treeBody']);
+        assert.strictEqual(result.update.snapshotVersion, previous.snapshotVersion + 1);
     });
 
-    it('marks structural tree changes so the webview can rebuild only the affected selection', () => {
-        const previous = createFocusTreeRenderStateSnapshot({
+    it('marks structural tree changes so the webview can rebuild only the affected selection', async () => {
+        const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
             renderedFocus: {
                 FOCUS_A: '<div>A</div>',
@@ -149,7 +155,7 @@ describe('focus tree render payload patching', () => {
                 FOCUS_A: nextFocus,
             },
         };
-        const result = createFocusTreeRenderPatch(previous, {
+        const result = await createFocusTreeRenderUpdate(previous, {
             focusTrees: [nextTree],
             focusById: { FOCUS_A: nextFocus },
             allFocuses: [nextFocus],
@@ -166,12 +172,17 @@ describe('focus tree render payload patching', () => {
             loadDurationMs: 1,
         } as any);
 
-        assert.strictEqual(result.mode, 'patch');
-        assert.deepStrictEqual(result.patch.structurallyChangedTreeIds, ['tree_a']);
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+
+        assert.deepStrictEqual(result.update.structurallyChangedTreeIds, ['tree_a']);
+        assert.deepStrictEqual(result.update.changedSlots, ['treeDefinitions', 'selector', 'warnings']);
     });
 
-    it('falls back to a full payload when tree order changes', () => {
-        const previous = createFocusTreeRenderStateSnapshot({
+    it('falls back to a full snapshot when tree order changes', async () => {
+        const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A'), createTree('tree_b', 'FOCUS_B')],
             renderedFocus: {},
             renderedInlayWindows: {},
@@ -205,8 +216,8 @@ describe('focus tree render payload patching', () => {
             loadDurationMs: 1,
         } as any;
 
-        const result = createFocusTreeRenderPatch(previous, next);
+        const result = await createFocusTreeRenderUpdate(previous, next);
 
-        assert.strictEqual(result.mode, 'full');
+        assert.strictEqual(result.kind, 'full');
     });
 });

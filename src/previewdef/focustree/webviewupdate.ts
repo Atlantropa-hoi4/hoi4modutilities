@@ -1,10 +1,25 @@
 import { FocusTree } from "./schema";
 
+export type FocusTreeContentSlot =
+    | 'treeDefinitions'
+    | 'selector'
+    | 'warnings'
+    | 'treeBody'
+    | 'inlays'
+    | 'layout'
+    | 'styleDeps';
+
 export interface FocusTreeContentUpdateMessage {
-    mode?: 'full' | 'patch';
+    snapshotVersion: number;
+    documentVersion: number;
+    selectedTreeId?: string;
+    changedSlots: FocusTreeContentSlot[];
+    changedTreeIds?: string[];
+    structurallyChangedTreeIds?: string[];
+    changedFocusIds?: string[];
+    changedInlayWindowIds?: string[];
     focusTrees?: FocusTree[];
     focusTreePatches?: Array<{ treeId: string; tree: FocusTree }>;
-    structurallyChangedTreeIds?: string[];
     renderedFocus?: Record<string, string>;
     renderedFocusPatch?: Record<string, string>;
     removedRenderedFocusIds?: string[];
@@ -12,6 +27,7 @@ export interface FocusTreeContentUpdateMessage {
     renderedInlayWindowPatch?: Record<string, string>;
     removedRenderedInlayWindowIds?: string[];
     gridBox?: unknown;
+    dynamicStyleCss?: string;
     xGridSize?: number;
     yGridSize?: number;
 }
@@ -29,12 +45,8 @@ export function getFocusTreeContentUpdateDecision(
     nextCurrentTree: FocusTree | undefined,
     message: FocusTreeContentUpdateMessage,
 ): FocusTreeContentUpdateDecision {
-    const requiresFullRebuild = message.mode === 'full'
-        || !!message.focusTrees
-        || message.gridBox !== undefined
-        || message.xGridSize !== undefined
-        || message.yGridSize !== undefined;
-    if (requiresFullRebuild || !previousCurrentTree || !nextCurrentTree) {
+    const changedSlots = new Set(message.changedSlots);
+    if (!previousCurrentTree || !nextCurrentTree || changedSlots.has('layout')) {
         return {
             shouldRefreshSelectedTreeUi: !!nextCurrentTree,
             shouldRebuildContent: true,
@@ -46,19 +58,9 @@ export function getFocusTreeContentUpdateDecision(
 
     const currentTreeId = nextCurrentTree.id;
     const selectedTreePatched = previousCurrentTree.id !== nextCurrentTree.id
+        || !!message.changedTreeIds?.includes(currentTreeId)
         || !!message.focusTreePatches?.some(patch => patch.treeId === currentTreeId);
     const selectedTreeStructureChanged = !!message.structurallyChangedTreeIds?.includes(currentTreeId);
-    const changedCurrentTreeFocusIds = getIntersectingIds(
-        Object.keys(previousCurrentTree.focuses),
-        Object.keys(message.renderedFocusPatch ?? {}),
-        message.removedRenderedFocusIds,
-    );
-    const changedCurrentTreeInlayIds = getIntersectingIds(
-        previousCurrentTree.inlayWindows.map(inlay => inlay.id),
-        Object.keys(message.renderedInlayWindowPatch ?? {}),
-        message.removedRenderedInlayWindowIds,
-    );
-
     if (selectedTreeStructureChanged) {
         return {
             shouldRefreshSelectedTreeUi: true,
@@ -69,9 +71,20 @@ export function getFocusTreeContentUpdateDecision(
         };
     }
 
-    const shouldRefreshCurrentTreeInlay = changedCurrentTreeInlayIds.length > 0;
+    const changedCurrentTreeFocusIds = getIntersectingIds(
+        Object.keys(nextCurrentTree.focuses),
+        message.changedFocusIds ?? Object.keys(message.renderedFocusPatch ?? {}),
+        message.removedRenderedFocusIds,
+    );
+    const changedCurrentTreeInlayIds = getIntersectingIds(
+        nextCurrentTree.inlayWindows.map(inlay => inlay.id),
+        message.changedInlayWindowIds ?? Object.keys(message.renderedInlayWindowPatch ?? {}),
+        message.removedRenderedInlayWindowIds,
+    );
+
+    const shouldRefreshCurrentTreeInlay = changedSlots.has('inlays') && changedCurrentTreeInlayIds.length > 0;
     const shouldApplyIncrementalUpdate = selectedTreePatched
-        || changedCurrentTreeFocusIds.length > 0
+        || (changedSlots.has('treeBody') && changedCurrentTreeFocusIds.length > 0)
         || shouldRefreshCurrentTreeInlay;
 
     return {

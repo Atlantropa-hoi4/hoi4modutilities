@@ -95,6 +95,7 @@ let currentRenderedExprs: ConditionItem[] = [];
 let currentCompletableFocusIds: ReadonlySet<string> = new Set();
 type FocusPositionDragBinding = { element: HTMLElement; eventName: 'mousedown' | 'pointerdown'; handler: EventListener };
 let focusPositionDragBindings: Record<string, FocusPositionDragBinding> = {};
+let focusTreeSnapshotVersion: number = 0;
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
@@ -225,6 +226,23 @@ function setSelectedFocusTreeByIndex(index: number) {
     selectedFocusTreeIndex = clampFocusTreeIndex(index);
     selectedFocusTreeId = focusTrees[selectedFocusTreeIndex]?.id;
     persistSelectedFocusTreeState();
+}
+
+function setSelectedFocusTreeById(treeId: string | undefined) {
+    if (!treeId) {
+        ensureSelectedFocusTreeIndex();
+        return;
+    }
+
+    const nextIndex = focusTrees.findIndex(focusTree => focusTree.id === treeId);
+    if (nextIndex >= 0) {
+        selectedFocusTreeIndex = nextIndex;
+        selectedFocusTreeId = treeId;
+        persistSelectedFocusTreeState();
+        return;
+    }
+
+    ensureSelectedFocusTreeIndex();
 }
 
 function conditionItemToExprKey(expr: ConditionItem): string {
@@ -2233,44 +2251,56 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
     dynamicStyleCss?: string;
     documentVersion?: number;
 }) {
+    if (message.snapshotVersion < focusTreeSnapshotVersion) {
+        return false;
+    }
     if (message.documentVersion !== undefined && message.documentVersion < focusPositionDocumentVersion) {
         return false;
     }
 
-    if (message.focusTrees) {
-        focusTrees = message.focusTrees;
-        (window as any).focusTrees = message.focusTrees;
-        refreshFocusTreeSelectorOptions();
-    } else if (message.focusTreePatches) {
-        applyFocusTreePatches(message.focusTreePatches);
+    const changedSlots = new Set(message.changedSlots ?? []);
+    const previousSelectedTreeId = getCurrentSelectionTreeId();
+    if (changedSlots.has('treeDefinitions')) {
+        if (message.focusTrees) {
+            focusTrees = message.focusTrees;
+            (window as any).focusTrees = message.focusTrees;
+        } else if (message.focusTreePatches) {
+            applyFocusTreePatches(message.focusTreePatches);
+        }
+        setSelectedFocusTreeById(previousSelectedTreeId ?? message.selectedTreeId);
     }
-    if (message.renderedFocus) {
+    if (changedSlots.has('treeBody') && message.renderedFocus) {
         (window as any).renderedFocus = message.renderedFocus;
-    } else {
+    } else if (changedSlots.has('treeBody')) {
         applyStringMapPatch('renderedFocus', message.renderedFocusPatch, message.removedRenderedFocusIds);
     }
-    if (message.renderedInlayWindows) {
+    if (changedSlots.has('inlays') && message.renderedInlayWindows) {
         (window as any).renderedInlayWindows = message.renderedInlayWindows;
-    } else {
+    } else if (changedSlots.has('inlays')) {
         applyStringMapPatch('renderedInlayWindows', message.renderedInlayWindowPatch, message.removedRenderedInlayWindowIds);
     }
-    if (!message.focusTrees && message.focusTreePatches) {
+    if (changedSlots.has('selector')) {
         refreshFocusTreeSelectorOptions();
     }
-    refreshWarningsButtonVisibility();
-    if (message.gridBox) {
+    if (changedSlots.has('warnings')) {
+        refreshWarningsButtonVisibility();
+    }
+    if (changedSlots.has('layout') && message.gridBox) {
         (window as any).gridBox = message.gridBox;
     }
-    if (message.xGridSize !== undefined) {
+    if (changedSlots.has('layout') && message.xGridSize !== undefined) {
         xGridSize = message.xGridSize;
         (window as any).xGridSize = message.xGridSize;
     }
-    if (message.yGridSize !== undefined) {
+    if (changedSlots.has('layout') && message.yGridSize !== undefined) {
         yGridSize = message.yGridSize;
         (window as any).yGridSize = message.yGridSize;
     }
 
-    replaceFocusTreeDynamicStyles(message.dynamicStyleCss);
+    if (changedSlots.has('styleDeps')) {
+        replaceFocusTreeDynamicStyles(message.dynamicStyleCss);
+    }
+    focusTreeSnapshotVersion = message.snapshotVersion;
     focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
     return true;
 }
@@ -2341,6 +2371,7 @@ window.addEventListener('load', tryRun(async function() {
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;
+            snapshotVersion?: number;
             documentVersion?: number;
             name?: string;
             focusId?: string;
@@ -2358,38 +2389,91 @@ window.addEventListener('load', tryRun(async function() {
             sourceFocusId?: string;
             targetFocusId?: string;
             focusIds?: string[];
+            changedSlots?: string[];
+            changedTreeIds?: string[];
             focusTrees?: FocusTree[];
             structurallyChangedTreeIds?: string[];
+            changedFocusIds?: string[];
+            changedInlayWindowIds?: string[];
             renderedFocus?: Record<string, string>;
+            renderedFocusPatch?: Record<string, string>;
+            removedRenderedFocusIds?: string[];
             renderedInlayWindows?: Record<string, string>;
+            renderedInlayWindowPatch?: Record<string, string>;
+            removedRenderedInlayWindowIds?: string[];
             gridBox?: any;
             dynamicStyleCss?: string;
             xGridSize?: number;
             yGridSize?: number;
         };
         if (message.command === 'focusTreeContentUpdated') {
+            const contentUpdateMessage = message as FocusTreeContentUpdateMessage;
+            const updateStartedAt = performance.now();
             const previousCurrentTree = getCurrentFocusTree();
-            if (!applyFocusTreeContentUpdate(message)) {
+            if (!applyFocusTreeContentUpdate(contentUpdateMessage)) {
                 return;
             }
+            const applyDurationMs = performance.now() - updateStartedAt;
 
             const nextCurrentTree = getCurrentFocusTree();
-            const updateDecision = getFocusTreeContentUpdateDecision(previousCurrentTree, nextCurrentTree, message);
+            const updateDecision = getFocusTreeContentUpdateDecision(previousCurrentTree, nextCurrentTree, contentUpdateMessage);
             if (updateDecision.shouldRefreshSelectedTreeUi) {
                 updateSelectedFocusTree(false);
             }
 
             if (updateDecision.shouldRebuildContent) {
-                void rebuildContentSafely();
+                const rebuildStartedAt = performance.now();
+                const rebuildPromise = rebuildContentSafely();
+                void rebuildPromise?.finally(() => {
+                    console.debug('[focustree] webview timings', {
+                        snapshotVersion: contentUpdateMessage.snapshotVersion,
+                        documentVersion: contentUpdateMessage.documentVersion,
+                        changedSlots: contentUpdateMessage.changedSlots,
+                        applyMs: applyDurationMs,
+                        rebuildMs: performance.now() - rebuildStartedAt,
+                        rebindMs: 0,
+                    });
+                });
                 return;
             }
 
             if (updateDecision.shouldApplyIncrementalUpdate && nextCurrentTree) {
+                const rebindStartedAt = performance.now();
                 const appliedIncrementally = applyIncrementalCurrentTreeUpdate(nextCurrentTree, updateDecision);
                 if (!appliedIncrementally) {
-                    void rebuildContentSafely();
+                    const rebuildStartedAt = performance.now();
+                    const rebuildPromise = rebuildContentSafely();
+                    void rebuildPromise?.finally(() => {
+                        console.debug('[focustree] webview timings', {
+                            snapshotVersion: contentUpdateMessage.snapshotVersion,
+                            documentVersion: contentUpdateMessage.documentVersion,
+                            changedSlots: contentUpdateMessage.changedSlots,
+                            applyMs: applyDurationMs,
+                            rebuildMs: performance.now() - rebuildStartedAt,
+                            rebindMs: performance.now() - rebindStartedAt,
+                        });
+                    });
+                    return;
                 }
+                console.debug('[focustree] webview timings', {
+                    snapshotVersion: contentUpdateMessage.snapshotVersion,
+                    documentVersion: contentUpdateMessage.documentVersion,
+                    changedSlots: contentUpdateMessage.changedSlots,
+                    applyMs: applyDurationMs,
+                    rebuildMs: 0,
+                    rebindMs: performance.now() - rebindStartedAt,
+                });
+                return;
             }
+
+            console.debug('[focustree] webview timings', {
+                snapshotVersion: contentUpdateMessage.snapshotVersion,
+                documentVersion: contentUpdateMessage.documentVersion,
+                changedSlots: contentUpdateMessage.changedSlots,
+                applyMs: applyDurationMs,
+                rebuildMs: 0,
+                rebindMs: 0,
+            });
             return;
         }
 

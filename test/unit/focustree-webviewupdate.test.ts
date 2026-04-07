@@ -36,8 +36,12 @@ describe('focustree webview update decisions', () => {
     it('skips all content work when only another tree changed', () => {
         const currentTree = createTree();
         const result = getFocusTreeContentUpdateDecision(currentTree as any, currentTree as any, {
-            mode: 'patch',
+            snapshotVersion: 2,
+            documentVersion: 3,
+            changedSlots: ['treeDefinitions', 'treeBody'],
+            changedTreeIds: ['tree_b'],
             focusTreePatches: [{ treeId: 'tree_b', tree: { id: 'tree_b' } as any }],
+            changedFocusIds: ['FOCUS_B'],
             renderedFocusPatch: { FOCUS_B: '<div>B</div>' },
         });
 
@@ -63,7 +67,10 @@ describe('focustree webview update decisions', () => {
         });
 
         const result = getFocusTreeContentUpdateDecision(previousTree as any, nextTree as any, {
-            mode: 'patch',
+            snapshotVersion: 2,
+            documentVersion: 3,
+            changedSlots: ['treeDefinitions', 'warnings'],
+            changedTreeIds: ['tree_a'],
             focusTreePatches: [{ treeId: 'tree_a', tree: nextTree as any }],
         });
 
@@ -88,7 +95,10 @@ describe('focustree webview update decisions', () => {
         });
 
         const result = getFocusTreeContentUpdateDecision(previousTree as any, nextTree as any, {
-            mode: 'patch',
+            snapshotVersion: 2,
+            documentVersion: 3,
+            changedSlots: ['treeDefinitions'],
+            changedTreeIds: ['tree_a'],
             focusTreePatches: [{ treeId: 'tree_a', tree: nextTree as any }],
             structurallyChangedTreeIds: ['tree_a'],
         });
@@ -105,7 +115,10 @@ describe('focustree webview update decisions', () => {
     it('allows incremental focus html updates when only rendered focus markup changed', () => {
         const currentTree = createTree();
         const result = getFocusTreeContentUpdateDecision(currentTree as any, currentTree as any, {
-            mode: 'patch',
+            snapshotVersion: 2,
+            documentVersion: 3,
+            changedSlots: ['treeBody'],
+            changedFocusIds: ['FOCUS_A'],
             renderedFocusPatch: {
                 FOCUS_A: '<div>updated</div>',
             },

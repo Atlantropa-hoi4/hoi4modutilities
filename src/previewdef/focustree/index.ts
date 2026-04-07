@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
 import {
+    renderFocusTreeShellHtml,
     buildFocusTreeRenderBaseState,
     buildFocusTreeRenderPayloadFromBaseState,
-    renderFocusTreeHtmlFromPayload,
-    renderFocusTreeShellHtml,
 } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
@@ -18,13 +17,13 @@ import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { debug, error } from '../../util/debug';
 import {
-    createFocusTreeRenderPatch,
-    createFocusTreeRenderStateSnapshot,
-    FocusTreeRenderStateSnapshot,
+    createFocusTreeRenderCache,
+    createFocusTreeRenderUpdate,
+    createFullFocusTreeRenderUpdate,
+    FocusTreeRenderCache,
 } from './renderpayloadpatch';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
-const inlineInitialRenderTextLengthThreshold = 40_000;
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -48,8 +47,7 @@ export class FocusTreePreview extends PreviewBase {
     private pendingLocalEditDocumentVersions = new Set<number>();
     private webviewReady = false;
     private latestRefreshRequestId = 0;
-    private lastRenderPayload: FocusTreeRenderStateSnapshot | undefined;
-    private pendingInitialHydrationAfterReady = false;
+    private lastRenderCache: FocusTreeRenderCache | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -59,19 +57,7 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
-        const content = document.getText();
-        if (content.length <= inlineInitialRenderTextLengthThreshold) {
-            const loader = this.createSnapshotLoader(content);
-            const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
-            const { payload } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
-            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-            this.lastRenderPayload = createFocusTreeRenderStateSnapshot(payload);
-            this.pendingInitialHydrationAfterReady = false;
-            return renderFocusTreeHtmlFromPayload(document.uri, this.panel.webview, payload);
-        }
-
-        this.lastRenderPayload = undefined;
-        this.pendingInitialHydrationAfterReady = true;
+        this.lastRenderCache = undefined;
         return renderFocusTreeShellHtml(
             document.uri,
             this.panel.webview,
@@ -100,11 +86,6 @@ export class FocusTreePreview extends PreviewBase {
         const requestDocumentVersion = document.version;
         const refreshStartedAt = Date.now();
         try {
-            if (!this.webviewReady) {
-                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-                return;
-            }
-
             const loader = this.createSnapshotLoader(document.getText());
             const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
             this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
@@ -112,64 +93,62 @@ export class FocusTreePreview extends PreviewBase {
                 return;
             }
 
-            const patchPlanStartedAt = Date.now();
-            const patchPlan = createFocusTreeRenderPatch(this.lastRenderPayload, baseState);
-            const patchPlanDurationMs = Date.now() - patchPlanStartedAt;
-            if (patchPlan.mode === 'full') {
-                const fullPayloadStartedAt = Date.now();
+            if (!this.webviewReady) {
+                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
+                return;
+            }
+
+            const diffStartedAt = Date.now();
+            const updatePlan = await createFocusTreeRenderUpdate(this.lastRenderCache, baseState);
+            const diffDurationMs = Date.now() - diffStartedAt;
+            if (updatePlan.kind === 'full') {
+                const htmlBuildStartedAt = Date.now();
                 const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
-                this.lastRenderPayload = createFocusTreeRenderStateSnapshot(payload);
-                const payloadBuildDurationMs = Date.now() - fullPayloadStartedAt;
+                const { update, cache } = createFullFocusTreeRenderUpdate(payload, this.lastRenderCache);
+                this.lastRenderCache = cache;
+                const htmlBuildDurationMs = Date.now() - htmlBuildStartedAt;
                 const postMessageStartedAt = Date.now();
                 await this.panel.webview.postMessage({
                     command: 'focusTreeContentUpdated',
-                    mode: 'full',
-                    focusTrees: payload.focusTrees,
-                    renderedFocus: payload.renderedFocus,
-                    renderedInlayWindows: payload.renderedInlayWindows,
-                    gridBox: payload.gridBox,
-                    dynamicStyleCss: payload.dynamicStyleCss,
-                    xGridSize: payload.xGridSize,
-                    yGridSize: payload.yGridSize,
-                    documentVersion: payload.focusPositionDocumentVersion,
+                    ...update,
                 });
-                this.pendingInitialHydrationAfterReady = false;
                 debug('[focustree] refresh timings', {
-                    mode: 'full-message',
                     documentVersion: payload.focusPositionDocumentVersion,
+                    snapshotVersion: update.snapshotVersion,
                     loadMs: baseState.loadDurationMs,
-                    patchPlanMs: patchPlanDurationMs,
-                    payloadBuildMs: payloadBuildDurationMs,
+                    diffMs: diffDurationMs,
+                    htmlBuildMs: htmlBuildDurationMs,
                     focusRenderMs: metrics.focusRenderDurationMs,
                     inlayRenderMs: metrics.inlayRenderDurationMs,
                     postMessageMs: Date.now() - postMessageStartedAt,
+                    changedSlots: update.changedSlots,
                     totalMs: Date.now() - refreshStartedAt,
                 });
                 return;
             }
 
-            this.lastRenderPayload = patchPlan.snapshot;
+            this.lastRenderCache = updatePlan.cache;
             const postMessageStartedAt = Date.now();
             await this.panel.webview.postMessage({
                 command: 'focusTreeContentUpdated',
-                ...patchPlan.patch,
+                ...updatePlan.update,
             });
-            this.pendingInitialHydrationAfterReady = false;
             debug('[focustree] refresh timings', {
-                mode: 'patch',
-                documentVersion: patchPlan.patch.documentVersion,
+                documentVersion: updatePlan.update.documentVersion,
+                snapshotVersion: updatePlan.update.snapshotVersion,
                 loadMs: baseState.loadDurationMs,
-                patchPlanMs: patchPlanDurationMs,
-                changedTreeCount: patchPlan.changedTreeCount,
-                changedFocusCount: patchPlan.changedFocusCount,
+                diffMs: diffDurationMs,
+                changedTreeCount: updatePlan.changedTreeCount,
+                changedFocusCount: updatePlan.changedFocusCount,
+                changedInlayCount: updatePlan.changedInlayCount,
+                changedSlots: updatePlan.update.changedSlots,
                 postMessageMs: Date.now() - postMessageStartedAt,
                 totalMs: Date.now() - refreshStartedAt,
             });
         } catch (e) {
             error(e);
             this.webviewReady = false;
-            this.lastRenderPayload = undefined;
-            this.pendingInitialHydrationAfterReady = false;
+            this.lastRenderCache = undefined;
             const content = await this.getContent(document);
             if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
                 return;
@@ -200,6 +179,7 @@ export class FocusTreePreview extends PreviewBase {
         requestDocumentVersion: number,
     ): Promise<void> {
         this.webviewReady = false;
+        this.lastRenderCache = undefined;
         const content = await this.getContent(document);
         if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
             return;
@@ -212,11 +192,9 @@ export class FocusTreePreview extends PreviewBase {
         const command = (msg as any).command as string | undefined;
         if (command === 'focusTreeWebviewReady') {
             this.webviewReady = true;
-            if (this.pendingInitialHydrationAfterReady) {
-                const document = getDocumentByUri(this.uri);
-                if (document) {
-                    void this.refreshDocument(document);
-                }
+            const document = getDocumentByUri(this.uri);
+            if (document) {
+                void this.refreshDocument(document);
             }
             return true;
         }

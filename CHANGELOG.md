@@ -4,7 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.22] - 2026/04/06 - Latest
+## [0.13.23] - 2026/04/08 - Latest
+
+### Changed
+* Unify Focus Tree preview startup and refresh around a single shell bootstrap plus snapshot-update protocol, removing the old small-file inline render heuristic and the separate `mode=full|patch` message split.
+* Refactor Focus Tree host/webview updates to use explicit changed-slot metadata with snapshot versions, reducing duplicated refresh logic and keeping selection state stable across tree-list updates.
+
+### Fixed
+* Narrow incremental Focus Tree DOM work to changed nodes only while preserving targeted selector and warnings refreshes, and add host/webview timing logs that separate load, diff, render, apply, rebuild, and rebind phases.
+
+## [0.13.22] - 2026/04/06
 
 ### Fixed
 * Cache Focus Preview inlay-window, scripted GUI, and interface GFX fallback discovery so repeated preview loads no longer rescan and reparse those folders on every render.

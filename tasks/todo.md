@@ -79,3 +79,28 @@
 - `npm run compile-ts` passed.
 - `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-renderpayloadpatch.test.js out\\test\\unit\\focustree-webviewupdate.test.js` passed with 7 tests.
 - `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-localpreview.test.js out\\test\\unit\\focustree-layoutplan.test.js out\\test\\unit\\focustree-renderpayloadpatch.test.js out\\test\\unit\\focustree-webviewupdate.test.js` passed with 12 tests.
+
+# FocusTree Preview Refactor 2026-04-08
+
+## Plan
+- [x] host/webview 간 초기 로드와 갱신이 공유할 unified render session / update contract를 도입한다
+- [x] 텍스트 길이 heuristic과 shell/full 이원 초기 로드를 제거하고 항상 같은 bootstrap + snapshot update 경로를 사용한다
+- [x] slot 단위 변경 집합(`treeBody`, `selector`, `warnings`, `inlays`, `styleDeps`)으로 host patch 계산을 단순화한다
+- [x] webview가 changed slots와 changed focus ids만 적용하도록 갱신 로직과 rebind 범위를 정리한다
+- [x] focustree patch/update 테스트를 새 계약 기준으로 갱신하고 compile/test로 회귀를 검증한다
+
+## Notes
+- Target: 최근 누적된 `shell-first`, `small-doc inline`, `mode=full|patch`, host/client 이중 diff를 하나의 세션 모델로 정리한다.
+- Constraint: 외부 preview 동작과 편집 기능은 유지하면서 내부 render/update 타입과 흐름만 단순화한다.
+
+## Review
+- `src/previewdef/focustree/index.ts`는 이제 preview 첫 open과 이후 refresh 모두 정적 shell HTML 뒤에 동일한 snapshot update 메시지를 적용하는 구조로 통일되었습니다. 텍스트 길이 기반 inline/full 분기는 제거됐고, host는 `lastRenderCache`만 유지합니다.
+- `src/previewdef/focustree/renderpayloadpatch.ts`는 `FocusTreeRenderCache`와 `snapshotVersion` 기반 갱신 모델로 재구성됐습니다. webview로 내려가는 메시지는 더 이상 `mode=full|patch`에 의존하지 않고 `changedSlots`, `changedTreeIds`, `changedFocusIds`를 명시적으로 전달합니다.
+- `src/previewdef/focustree/webviewupdate.ts`는 새 slot 계약을 기준으로 selected tree rebuild 여부를 판단합니다. layout 변경만 전체 rebuild를 강제하고, 경고/selector/tree patch는 현재 선택 tree에 필요한 범위만 갱신합니다.
+- `webviewsrc/focustree.ts`는 snapshot version을 추적하고, tree id 기준으로 선택 상태를 유지하며, slot별로 `focusTrees`, `renderedFocus`, `renderedInlayWindows`, toolbar 상태를 적용합니다. 또한 host와 대응되는 `[focustree] webview timings` 로그로 `apply/rebuild/rebind` 비용을 분리합니다.
+- 회귀 방지 관점에서 `test/unit/focustree-renderpayloadpatch.test.ts`와 `test/unit/focustree-webviewupdate.test.ts`를 새 계약 기준으로 갱신했습니다.
+- 안전한 범위 유지: inlay HTML 변경은 이번 라운드에서도 full fallback으로 남겨 unit-testable patcher가 `vscode` 런타임에 묶이지 않도록 했습니다. 다음 성능 라운드에서 이 경로를 별도 경량 renderer로 떼는 것이 자연스러운 후속 작업입니다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-renderpayloadpatch.test.js out\\test\\unit\\focustree-webviewupdate.test.js out\\test\\unit\\focustree-localpreview.test.js out\\test\\unit\\focustree-layoutplan.test.js` passed with 12 tests.
