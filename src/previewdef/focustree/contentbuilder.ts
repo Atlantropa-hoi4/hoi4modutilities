@@ -11,22 +11,23 @@ import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { useConditionInFocus } from '../../util/featureflags';
-import { getLocalisedTextQuickIfReady } from "../../util/localisationIndex";
-import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 import { fitFocusIconToBounds } from './focusiconlayout';
 import { FocusConditionPresetsByTree } from './conditionpresets';
+import {
+    focusDefaultPlaceholderSize,
+    focusIconBottomGap,
+    focusIconSidePadding,
+    focusIconTopOffset,
+    focusTextMarginTop,
+    renderFocusHtmlTemplate,
+} from './focusrender';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
-const focusIconSidePadding = 12;
-const focusIconTopOffset = 10;
-const focusTextMarginTop = 85;
-const focusIconBottomGap = 4;
-const focusDefaultPlaceholderSize = 56;
 
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTree[];
@@ -43,6 +44,28 @@ export interface FocusTreeRenderPayload {
     conditionPresetsByTree: FocusConditionPresetsByTree;
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
+}
+
+export interface FocusTreeRenderBaseState {
+    focusTrees: FocusTree[];
+    allFocuses: Focus[];
+    allInlays: FocusTree["inlayWindows"][number][];
+    focusById: Record<string, Focus>;
+    gfxFiles: string[];
+    gridBox: HOIPartial<GridBoxType>;
+    xGridSize: number;
+    yGridSize: number;
+    focusPositionDocumentVersion: number;
+    focusPositionActiveFile: string;
+    conditionPresetsByTree: FocusConditionPresetsByTree;
+    hasFocusSelector: boolean;
+    hasWarningsButton: boolean;
+    loadDurationMs: number;
+}
+
+export interface FocusTreeRenderPayloadBuildMetrics {
+    focusRenderDurationMs: number;
+    inlayRenderDurationMs: number;
 }
 
 export async function renderFocusTreeFile(
@@ -88,22 +111,28 @@ const topPaddingBase = 50;
 const defaultXGridSize = 96;
 const defaultYGridSize = 130;
 
-function attributeEscape(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
 export async function buildFocusTreeRenderPayload(
     loader: FocusTreeLoader,
     documentVersion: number,
     conditionPresetsByTree: FocusConditionPresetsByTree = {},
 ): Promise<FocusTreeRenderPayload> {
+    const baseState = await buildFocusTreeRenderBaseState(loader, documentVersion, conditionPresetsByTree);
+    return (await buildFocusTreeRenderPayloadFromBaseState(baseState)).payload;
+}
+
+export async function buildFocusTreeRenderBaseState(
+    loader: FocusTreeLoader,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): Promise<FocusTreeRenderBaseState> {
     const session = new LoaderSession(false);
+    const loadStart = Date.now();
     const loadResult = await loader.load(session);
+    const loadDurationMs = Date.now() - loadStart;
     const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
     debug('Loader session focus tree', loadedLoaders);
 
     const focusTrees = loadResult.result.focusTrees;
-    const styleTable = new StyleTable();
     const xGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.x, defaultXGridSize);
     const yGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
@@ -115,44 +144,81 @@ export async function buildFocusTreeRenderPayload(
 
     const allFocuses: Focus[] = [];
     const allInlays: FocusTree["inlayWindows"][number][] = [];
+    const focusById: Record<string, Focus> = {};
     for (const tree of focusTrees) {
-        allFocuses.push(...Object.values(tree.focuses));
+        const treeFocuses = Object.values(tree.focuses);
+        treeFocuses.forEach(focus => {
+            focusById[focus.id] = focus;
+        });
+        allFocuses.push(...treeFocuses);
         allInlays.push(...tree.inlayWindows);
     }
 
-    await prepareFocusIconStyles(allFocuses, styleTable, loadResult.result.gfxFiles, xGridSize, yGridSize);
-    const renderedFocus: Record<string, string> = {};
-    for (const focus of allFocuses) {
-        renderedFocus[focus.id] = renderFocus(
-            focus,
-            styleTable,
-            loader.file,
-            xGridSize,
-            yGridSize,
-        ).replace(/\s\s+/g, ' ');
-    }
-
-    await prepareInlayGfxStyles(focusTrees, styleTable);
-    const renderedInlayWindows: Record<string, string> = {};
-    await Promise.all(allInlays.map(async (inlay) => {
-        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, loadResult.result.gfxFiles)).replace(/\s\s+/g, ' ');
-    }));
-
     return {
         focusTrees,
-        renderedFocus,
-        renderedInlayWindows,
+        allFocuses,
+        allInlays,
+        focusById,
+        gfxFiles: loadResult.result.gfxFiles,
         gridBox,
-        dynamicStyleCss: styleTable.toStyleContent(),
-        styleNonce: Math.random().toString(36).slice(2),
         xGridSize,
         yGridSize,
-        focusToolbarHeight,
         focusPositionDocumentVersion: documentVersion,
         focusPositionActiveFile: loader.file,
         conditionPresetsByTree,
         hasFocusSelector: focusTrees.length > 1,
         hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
+        loadDurationMs,
+    };
+}
+
+export async function buildFocusTreeRenderPayloadFromBaseState(
+    baseState: FocusTreeRenderBaseState,
+): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
+    const styleTable = new StyleTable();
+    const focusRenderStart = Date.now();
+    await prepareFocusIconStyles(baseState.allFocuses, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize);
+    const renderedFocus: Record<string, string> = {};
+    for (const focus of baseState.allFocuses) {
+        renderedFocus[focus.id] = renderFocusHtmlTemplate(
+            focus,
+            styleTable,
+            baseState.focusPositionActiveFile,
+            baseState.xGridSize,
+            baseState.yGridSize,
+        ).replace(/\s\s+/g, ' ');
+    }
+    const focusRenderDurationMs = Date.now() - focusRenderStart;
+
+    const inlayRenderStart = Date.now();
+    await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+    const renderedInlayWindows: Record<string, string> = {};
+    await Promise.all(baseState.allInlays.map(async (inlay) => {
+        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+    }));
+    const inlayRenderDurationMs = Date.now() - inlayRenderStart;
+
+    return {
+        payload: {
+        focusTrees: baseState.focusTrees,
+        renderedFocus,
+        renderedInlayWindows,
+        gridBox: baseState.gridBox,
+        dynamicStyleCss: styleTable.toStyleContent(),
+        styleNonce: Math.random().toString(36).slice(2),
+        xGridSize: baseState.xGridSize,
+        yGridSize: baseState.yGridSize,
+        focusToolbarHeight,
+        focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
+        focusPositionActiveFile: baseState.focusPositionActiveFile,
+        conditionPresetsByTree: baseState.conditionPresetsByTree,
+        hasFocusSelector: baseState.hasFocusSelector,
+        hasWarningsButton: baseState.hasWarningsButton,
+    },
+        metrics: {
+            focusRenderDurationMs,
+            inlayRenderDurationMs,
+        },
     };
 }
 
@@ -161,7 +227,8 @@ async function buildFocusTreeRenderState(
     documentVersion: number,
     conditionPresetsByTree: FocusConditionPresetsByTree,
 ): Promise<{ payload: FocusTreeRenderPayload; body: string; scripts: string[] }> {
-    const payload = await buildFocusTreeRenderPayload(loader, documentVersion, conditionPresetsByTree);
+    const baseState = await buildFocusTreeRenderBaseState(loader, documentVersion, conditionPresetsByTree);
+    const { payload } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
     const scripts = buildFocusTreeBootstrapScripts(payload);
     scripts.push(i18nTableAsScript());
     return {
@@ -169,6 +236,30 @@ async function buildFocusTreeRenderState(
         body: renderFocusTreeBody(payload),
         scripts,
     };
+}
+
+export function renderFocusTreeFocusHtmlMap(
+    baseState: FocusTreeRenderBaseState,
+    focusIds: readonly string[],
+): Record<string, string> {
+    const styleTable = new StyleTable();
+    const renderedFocus: Record<string, string> = {};
+    for (const focusId of focusIds) {
+        const focus = baseState.focusById[focusId];
+        if (!focus) {
+            continue;
+        }
+
+        renderedFocus[focus.id] = renderFocusHtmlTemplate(
+            focus,
+            styleTable,
+            baseState.focusPositionActiveFile,
+            baseState.xGridSize,
+            baseState.yGridSize,
+        ).replace(/\s\s+/g, ' ');
+    }
+
+    return renderedFocus;
 }
 
 function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string[] {
@@ -597,89 +688,6 @@ async function prepareFocusIconStyles(
         height: ${focusPlaceholderSize}px;
         background: grey;
     `);
-}
-
-function renderFocus(
-    focus: Focus,
-    styleTable: StyleTable,
-    file: string,
-    xGridSize: number,
-    yGridSize: number,
-): string {
-    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
-    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
-
-    let textContent = focus.id;
-    if (localisationIndex) {
-        let localizedText = getLocalisedTextQuickIfReady(focus.id);
-        if (localizedText === focus.id || !localizedText) {
-            if (focus.text) {
-                localizedText = getLocalisedTextQuickIfReady(focus.text);
-                if (localizedText !== focus.text && localizedText !== null) {
-                    textContent += `<br/>${localizedText}`;
-                }
-            }
-        } else {
-            textContent += `<br/>${localizedText}`;
-        }
-    }
-
-    return `<div
-    class="
-        navigator
-        ${styleTable.style('focus-common', () => `
-            width: 100%;
-            height: 100%;
-            text-align: center;
-            cursor: pointer;
-            position: relative;
-            overflow: visible;
-        `)}
-    "
-    start="${focus.token?.start}"
-    end="${focus.token?.end}"
-    ${file === focus.file ? '' : `file="${focus.file}"`}
-    data-focus-id="${attributeEscape(focus.id)}"
-    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}">
-        <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
-            <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
-        </div>
-        <div
-        class="${styleTable.style('focus-icon-slot', () => `
-            position: absolute;
-            left: ${focusIconSidePadding}px;
-            top: ${focusIconTopOffset}px;
-            width: ${maxFocusIconWidth}px;
-            height: ${maxFocusIconHeight}px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            pointer-events: none;
-        `)}">
-            <div
-            class="
-                {{iconClass}}
-                ${styleTable.style('focus-icon-image', () => `
-                    display: block;
-                    flex: none;
-                    background-repeat: no-repeat;
-                    background-position: center;
-                    background-size: 100% 100%;
-                    pointer-events: none;
-                `)}
-            "></div>
-        </div>
-        <span
-        class="${styleTable.style('focus-span', () => `
-            margin: 10px -400px;
-            margin-top: ${focusTextMarginTop}px;
-            text-align: center;
-            display: inline-block;
-        `)}">
-        ${textContent}
-        </span>
-    </div>`;
 }
 
 export async function getFocusIcon(name: string, gfxFiles: string[]): Promise<Image | undefined> {

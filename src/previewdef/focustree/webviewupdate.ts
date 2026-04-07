@@ -1,10 +1,10 @@
-import { isEqual } from "lodash";
 import { FocusTree } from "./schema";
 
 export interface FocusTreeContentUpdateMessage {
     mode?: 'full' | 'patch';
     focusTrees?: FocusTree[];
     focusTreePatches?: Array<{ treeId: string; tree: FocusTree }>;
+    structurallyChangedTreeIds?: string[];
     renderedFocus?: Record<string, string>;
     renderedFocusPatch?: Record<string, string>;
     removedRenderedFocusIds?: string[];
@@ -47,6 +47,7 @@ export function getFocusTreeContentUpdateDecision(
     const currentTreeId = nextCurrentTree.id;
     const selectedTreePatched = previousCurrentTree.id !== nextCurrentTree.id
         || !!message.focusTreePatches?.some(patch => patch.treeId === currentTreeId);
+    const selectedTreeStructureChanged = !!message.structurallyChangedTreeIds?.includes(currentTreeId);
     const changedCurrentTreeFocusIds = getIntersectingIds(
         Object.keys(previousCurrentTree.focuses),
         Object.keys(message.renderedFocusPatch ?? {}),
@@ -58,10 +59,7 @@ export function getFocusTreeContentUpdateDecision(
         message.removedRenderedInlayWindowIds,
     );
 
-    if (selectedTreePatched && !isEqual(
-        toIncrementalGridRenderModel(previousCurrentTree),
-        toIncrementalGridRenderModel(nextCurrentTree),
-    )) {
+    if (selectedTreeStructureChanged) {
         return {
             shouldRefreshSelectedTreeUi: true,
             shouldRebuildContent: true,
@@ -71,11 +69,7 @@ export function getFocusTreeContentUpdateDecision(
         };
     }
 
-    const shouldRefreshCurrentTreeInlay = changedCurrentTreeInlayIds.length > 0
-        || (selectedTreePatched && !isEqual(
-            toIncrementalInlayModel(previousCurrentTree),
-            toIncrementalInlayModel(nextCurrentTree),
-        ));
+    const shouldRefreshCurrentTreeInlay = changedCurrentTreeInlayIds.length > 0;
     const shouldApplyIncrementalUpdate = selectedTreePatched
         || changedCurrentTreeFocusIds.length > 0
         || shouldRefreshCurrentTreeInlay;
@@ -111,42 +105,4 @@ function getIntersectingIds(
         }
     });
     return Array.from(result);
-}
-
-function toIncrementalGridRenderModel(focusTree: FocusTree) {
-    return {
-        id: focusTree.id,
-        allowBranchOptions: focusTree.allowBranchOptions,
-        conditionExprs: focusTree.conditionExprs,
-        isSharedFocues: focusTree.isSharedFocues,
-        focuses: Object.fromEntries(
-            Object.entries(focusTree.focuses).map(([focusId, focus]) => [focusId, {
-                id: focus.id,
-                x: focus.x,
-                y: focus.y,
-                icon: focus.icon,
-                prerequisite: focus.prerequisite,
-                exclusive: focus.exclusive,
-                inAllowBranch: focus.inAllowBranch,
-                allowBranch: focus.allowBranch,
-                relativePositionId: focus.relativePositionId,
-                offset: focus.offset,
-            }]),
-        ),
-    };
-}
-
-function toIncrementalInlayModel(focusTree: FocusTree) {
-    return focusTree.inlayWindows.map(inlay => ({
-        id: inlay.id,
-        visible: inlay.visible,
-        scriptedImages: inlay.scriptedImages.map(slot => ({
-            id: slot.id,
-            gfxOptions: slot.gfxOptions.map(option => ({
-                gfxName: option.gfxName,
-                condition: option.condition,
-                gfxFile: option.gfxFile,
-            })),
-        })),
-    }));
 }

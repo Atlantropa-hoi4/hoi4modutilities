@@ -90,6 +90,7 @@ describe('focustree webview update decisions', () => {
         const result = getFocusTreeContentUpdateDecision(previousTree as any, nextTree as any, {
             mode: 'patch',
             focusTreePatches: [{ treeId: 'tree_a', tree: nextTree as any }],
+            structurallyChangedTreeIds: ['tree_a'],
         });
 
         assert.deepStrictEqual(result, {

@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
-import { buildFocusTreeRenderPayload, renderFocusTreeFile } from './contentbuilder';
+import {
+    buildFocusTreeRenderBaseState,
+    buildFocusTreeRenderPayloadFromBaseState,
+    renderFocusTreeFile,
+} from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
 import { PreviewProviderDef } from '../previewmanager';
@@ -11,8 +15,12 @@ import { localize } from '../../util/i18n';
 import { contextContainer } from '../../context';
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from './conditionpresets';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
-import { error } from '../../util/debug';
-import { createFocusTreeRenderPatch, FocusTreeRenderStateSnapshot } from './renderpayloadpatch';
+import { debug, error } from '../../util/debug';
+import {
+    createFocusTreeRenderPatch,
+    createFocusTreeRenderStateSnapshot,
+    FocusTreeRenderStateSnapshot,
+} from './renderpayloadpatch';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
@@ -79,6 +87,7 @@ export class FocusTreePreview extends PreviewBase {
 
         const requestId = this.startRefreshRequest();
         const requestDocumentVersion = document.version;
+        const refreshStartedAt = Date.now();
         try {
             if (!this.webviewReady) {
                 await this.applyFullRefresh(document, requestId, requestDocumentVersion);
@@ -86,38 +95,84 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const loader = this.createSnapshotLoader(document.getText());
-            const payload = await buildFocusTreeRenderPayload(loader, document.version, this.persistedConditionPresetsByTree);
+            const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
             this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
             if (!this.isRefreshRequestCurrent(requestId)) {
                 return;
             }
 
             const nextStructure = {
-                hasFocusSelector: payload.hasFocusSelector,
-                hasWarningsButton: payload.hasWarningsButton,
+                hasFocusSelector: baseState.hasFocusSelector,
+                hasWarningsButton: baseState.hasWarningsButton,
             };
             const structureChanged = !this.lastRenderStructure
                 || this.lastRenderStructure.hasFocusSelector !== nextStructure.hasFocusSelector
                 || this.lastRenderStructure.hasWarningsButton !== nextStructure.hasWarningsButton
-                || payload.focusTrees.length === 0;
+                || baseState.focusTrees.length === 0;
             if (structureChanged) {
                 this.lastRenderStructure = nextStructure;
-                this.lastRenderPayload = payload;
+                this.lastRenderPayload = undefined;
                 this.webviewReady = false;
                 await this.applyFullRefresh(document, requestId, requestDocumentVersion);
                 return;
             }
 
             this.lastRenderStructure = nextStructure;
-            const patch = createFocusTreeRenderPatch(this.lastRenderPayload, payload);
-            this.lastRenderPayload = payload;
+            const patchPlanStartedAt = Date.now();
+            const patchPlan = createFocusTreeRenderPatch(this.lastRenderPayload, baseState);
+            const patchPlanDurationMs = Date.now() - patchPlanStartedAt;
+            if (patchPlan.mode === 'full') {
+                const fullPayloadStartedAt = Date.now();
+                const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
+                this.lastRenderPayload = createFocusTreeRenderStateSnapshot(payload);
+                const payloadBuildDurationMs = Date.now() - fullPayloadStartedAt;
+                const postMessageStartedAt = Date.now();
+                await this.panel.webview.postMessage({
+                    command: 'focusTreeContentUpdated',
+                    mode: 'full',
+                    focusTrees: payload.focusTrees,
+                    renderedFocus: payload.renderedFocus,
+                    renderedInlayWindows: payload.renderedInlayWindows,
+                    gridBox: payload.gridBox,
+                    dynamicStyleCss: payload.dynamicStyleCss,
+                    xGridSize: payload.xGridSize,
+                    yGridSize: payload.yGridSize,
+                    documentVersion: payload.focusPositionDocumentVersion,
+                });
+                debug('[focustree] refresh timings', {
+                    mode: 'full-message',
+                    documentVersion: payload.focusPositionDocumentVersion,
+                    loadMs: baseState.loadDurationMs,
+                    patchPlanMs: patchPlanDurationMs,
+                    payloadBuildMs: payloadBuildDurationMs,
+                    focusRenderMs: metrics.focusRenderDurationMs,
+                    inlayRenderMs: metrics.inlayRenderDurationMs,
+                    postMessageMs: Date.now() - postMessageStartedAt,
+                    totalMs: Date.now() - refreshStartedAt,
+                });
+                return;
+            }
+
+            this.lastRenderPayload = patchPlan.snapshot;
+            const postMessageStartedAt = Date.now();
             await this.panel.webview.postMessage({
                 command: 'focusTreeContentUpdated',
-                ...patch,
+                ...patchPlan.patch,
+            });
+            debug('[focustree] refresh timings', {
+                mode: 'patch',
+                documentVersion: patchPlan.patch.documentVersion,
+                loadMs: baseState.loadDurationMs,
+                patchPlanMs: patchPlanDurationMs,
+                changedTreeCount: patchPlan.changedTreeCount,
+                changedFocusCount: patchPlan.changedFocusCount,
+                postMessageMs: Date.now() - postMessageStartedAt,
+                totalMs: Date.now() - refreshStartedAt,
             });
         } catch (e) {
             error(e);
             this.webviewReady = false;
+            this.lastRenderPayload = undefined;
             const content = await this.getContent(document);
             if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
                 return;

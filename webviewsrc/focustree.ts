@@ -93,7 +93,8 @@ let currentOccupiedFocusPositionKeys = new Set<string>();
 let currentSelectedFocusIds = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
 let currentCompletableFocusIds: ReadonlySet<string> = new Set();
-let focusPositionDragBindings: Array<{ element: HTMLElement; eventName: 'mousedown' | 'pointerdown'; handler: EventListener }> = [];
+type FocusPositionDragBinding = { element: HTMLElement; eventName: 'mousedown' | 'pointerdown'; handler: EventListener };
+let focusPositionDragBindings: Record<string, FocusPositionDragBinding> = {};
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
@@ -167,6 +168,30 @@ function rebuildRenderedFocusElementCache() {
         currentRenderedFocusElements[focusId] = element;
         currentRenderedFocusElementsList.push(element);
     });
+}
+
+function removeRenderedFocusElementFromList(element: HTMLElement | undefined) {
+    if (!element) {
+        return;
+    }
+
+    currentRenderedFocusElementsList = currentRenderedFocusElementsList.filter(existing => existing !== element);
+}
+
+function refreshRenderedFocusElementsForIds(focusIds: readonly string[]) {
+    for (const focusId of focusIds) {
+        removeRenderedFocusElementFromList(currentRenderedFocusElements[focusId]);
+        delete currentRenderedFocusElements[focusId];
+
+        const focusWrapper = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
+        const focusElement = focusWrapper?.querySelector<HTMLElement>('[data-focus-id]') ?? undefined;
+        if (!focusElement) {
+            continue;
+        }
+
+        currentRenderedFocusElements[focusId] = focusElement;
+        currentRenderedFocusElementsList.push(focusElement);
+    }
 }
 
 function getCurrentSelectionTreeId(): string | undefined {
@@ -1415,18 +1440,26 @@ function setupBlankCanvasPanFallback() {
     }, true);
 }
 
-function clearFocusPositionDragBindings() {
-    focusPositionDragBindings.forEach(binding => {
+function clearFocusPositionDragBindings(focusIds?: readonly string[]) {
+    const targetFocusIds = focusIds ?? Object.keys(focusPositionDragBindings);
+    for (const focusId of targetFocusIds) {
+        const binding = focusPositionDragBindings[focusId];
+        if (!binding) {
+            continue;
+        }
+
         binding.element.removeEventListener(binding.eventName, binding.handler, true);
-    });
-    focusPositionDragBindings = [];
+        delete focusPositionDragBindings[focusId];
+    }
 }
 
-function bindFocusPositionDragHandlers() {
-    clearFocusPositionDragBindings();
+function bindFocusPositionDragHandlers(focusIds?: readonly string[]) {
+    const targetFocusIds = focusIds ?? currentRenderedFocusElementsList.map(focusElement => focusElement.dataset.focusId).filter((focusId): focusId is string => !!focusId);
+    clearFocusPositionDragBindings(targetFocusIds);
 
-    currentRenderedFocusElementsList
-        .filter(focusElement => focusElement.dataset.focusEditable === 'true')
+    targetFocusIds
+        .map(focusId => currentRenderedFocusElements[focusId])
+        .filter((focusElement): focusElement is HTMLElement => !!focusElement && focusElement.dataset.focusEditable === 'true')
         .forEach(focusElement => {
         const handler = (event: MouseEvent) => {
             if (!focusPositionEditMode || event.button !== 0) {
@@ -1520,7 +1553,10 @@ function bindFocusPositionDragHandlers() {
         };
 
         focusElement.addEventListener('mousedown', handler, true);
-        focusPositionDragBindings.push({ element: focusElement, eventName: 'mousedown', handler: handler as EventListener });
+        const focusId = focusElement.dataset.focusId;
+        if (focusId) {
+            focusPositionDragBindings[focusId] = { element: focusElement, eventName: 'mousedown', handler: handler as EventListener };
+        }
     });
 
     const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
@@ -1625,7 +1661,11 @@ function bindFocusPositionDragHandlers() {
     };
 
     continuousFocusElement.addEventListener('pointerdown', handler, true);
-    focusPositionDragBindings.push({ element: continuousFocusElement, eventName: 'pointerdown', handler: handler as EventListener });
+    focusPositionDragBindings.__continuous__ = {
+        element: continuousFocusElement,
+        eventName: 'pointerdown',
+        handler: handler as EventListener,
+    };
 }
 
 function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, targetLocalY: number) {
@@ -1973,15 +2013,15 @@ function renderWarningsPanel(focusTree: FocusTree) {
     });
 }
 
-function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTable): string {
+function getFocusIconClassName(focus: Focus, exprs: ConditionItem[]): string {
     for (const icon of focus.icon) {
         if (applyCondition(icon.condition, exprs)) {
             const iconName = icon.icon;
-            return styleTable.name('focus-icon-' + normalizeForStyle(iconName ?? '-empty'));
+            return `st-focus-icon-${normalizeForStyle(iconName ?? '-empty')}`;
         }
     }
 
-    return styleTable.name('focus-icon-' + normalizeForStyle('-empty'));
+    return `st-focus-icon-${normalizeForStyle('-empty')}`;
 }
 
 function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string | undefined {
@@ -1997,17 +2037,18 @@ function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string |
         return undefined;
     }
 
-    const iconClass = getFocusIcon(focus, currentRenderedExprs, new StyleTable());
+    const iconClass = getFocusIconClassName(focus, currentRenderedExprs);
     return template
         .replace('{{position}}', `${position.x}, ${position.y}`)
         .replace('{{iconClass}}', iconClass);
 }
 
-function clearCheckedFocuses() {
-    for (const focusId in checkedFocuses) {
-        checkedFocuses[focusId].dispose();
+function clearCheckedFocuses(focusIds?: readonly string[]) {
+    const targetFocusIds = focusIds ?? Object.keys(checkedFocuses);
+    for (const focusId of targetFocusIds) {
+        checkedFocuses[focusId]?.dispose();
+        delete checkedFocuses[focusId];
     }
-    checkedFocuses = {};
 }
 
 function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<string>) {
@@ -2050,6 +2091,16 @@ function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<
             }
         }
     }
+}
+
+function syncCheckedFocusesForIds(focusTree: FocusTree, focusIds: readonly string[], completableFocusIds: ReadonlySet<string>) {
+    clearCheckedFocuses(focusIds);
+    setupCheckedFocuses(
+        focusIds
+            .map(focusId => focusTree.focuses[focusId])
+            .filter((focus): focus is Focus => !!focus),
+        completableFocusIds,
+    );
 }
 
 function dedupeConditionExprs(exprs: ConditionItem[]): ConditionItem[] {
@@ -2218,13 +2269,12 @@ function applyIncrementalCurrentTreeUpdate(
             }
 
             focusElement.innerHTML = nextHtml;
+            subscribeNavigators(focusElement);
         }
 
-        rebuildRenderedFocusElementCache();
-        bindFocusPositionDragHandlers();
-        subscribeNavigators();
-        clearCheckedFocuses();
-        setupCheckedFocuses(Object.values(focusTree.focuses), currentCompletableFocusIds);
+        refreshRenderedFocusElementsForIds(decision.changedCurrentTreeFocusIds);
+        bindFocusPositionDragHandlers(decision.changedCurrentTreeFocusIds);
+        syncCheckedFocusesForIds(focusTree, decision.changedCurrentTreeFocusIds, currentCompletableFocusIds);
     }
 
     if (decision.shouldRefreshCurrentTreeInlay) {
@@ -2234,7 +2284,7 @@ function applyIncrementalCurrentTreeUpdate(
         }
 
         inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, currentRenderedExprs);
-        subscribeNavigators();
+        subscribeNavigators(inlayWindowPlaceholder);
     }
 
     updateFocusPositionEditUi();
@@ -2287,6 +2337,7 @@ window.addEventListener('load', tryRun(async function() {
             targetFocusId?: string;
             focusIds?: string[];
             focusTrees?: FocusTree[];
+            structurallyChangedTreeIds?: string[];
             renderedFocus?: Record<string, string>;
             renderedInlayWindows?: Record<string, string>;
             gridBox?: any;

@@ -61,10 +61,10 @@ export function copyArray<T>(src: T[], dst: T[], offsetSrc: number, offsetDst: n
     }
 }
 
-export function subscribeNavigators() {
-    const navigators = document.getElementsByClassName("navigator");
-    for (let i = 0; i < navigators.length; i++) {
-        const navigator = navigators[i] as HTMLDivElement;
+export function subscribeNavigators(root: ParentNode = document) {
+    const navigators = root.querySelectorAll('.navigator');
+    for (const navigatorElement of Array.from(navigators)) {
+        const navigator = navigatorElement as HTMLDivElement;
         if (navigator.dataset.navigatorBound === 'true') {
             continue;
         }
