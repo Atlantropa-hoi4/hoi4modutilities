@@ -19,6 +19,7 @@ export interface FocusTreeRenderCache {
     focusPositionDocumentVersion: number;
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
+    deferredAssetLoad: boolean;
     treePatchSignatures: Record<string, string>;
     treeStructureSignatures: Record<string, string>;
     focusRenderSignatures: Record<string, string>;
@@ -65,6 +66,7 @@ export function createFocusTreeRenderCache(
         focusPositionDocumentVersion: payload.focusPositionDocumentVersion,
         hasFocusSelector: payload.hasFocusSelector,
         hasWarningsButton: payload.hasWarningsButton,
+        deferredAssetLoad: payload.deferredAssetLoad,
         ...metadata,
     };
 }
@@ -147,6 +149,7 @@ export async function createFocusTreeRenderUpdate(
         focusPositionDocumentVersion: nextBaseState.focusPositionDocumentVersion,
         hasFocusSelector: nextBaseState.hasFocusSelector,
         hasWarningsButton: nextBaseState.hasWarningsButton,
+        deferredAssetLoad: nextBaseState.deferredAssetLoad,
         ...nextMetadata,
     };
 
@@ -179,6 +182,7 @@ function shouldUseFullRender(
     if (previous.focusTrees.length !== nextBaseState.focusTrees.length
         || previous.hasFocusSelector !== nextBaseState.hasFocusSelector
         || previous.hasWarningsButton !== nextBaseState.hasWarningsButton
+        || previous.deferredAssetLoad !== nextBaseState.deferredAssetLoad
         || previous.xGridSize !== nextBaseState.xGridSize
         || previous.yGridSize !== nextBaseState.yGridSize
         || JSON.stringify(previous.gridBox) !== JSON.stringify(nextBaseState.gridBox)

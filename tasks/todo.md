@@ -176,3 +176,24 @@
 - `npm run test` passed.
 - `npm run test-ui` passed with the new focus preview smoke check included.
 - `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Root Load Refactor 2026-04-08
+
+## Plan
+- [x] focustree 첫 페인트 경로에서 구조 렌더와 무거운 자산 해석이 어떻게 섞여 있는지 다시 분리해 본다
+- [x] 첫 오픈은 빠른 구조 snapshot으로 띄우고 아이콘/inlay 자산은 후속 hydration으로 미루는 근본 개선을 구현한다
+- [x] focus preview가 계속 보이면서 점진적으로 보강되는지 build/test로 검증하고 결과를 남긴다
+
+## Review
+- `src/previewdef/focustree/loader.ts`는 이제 asset load mode를 받아서 첫 오픈의 deferred 경로에서는 구조 파싱, shared focus 해석, focus spacing만 우선 처리하고, icon fallback scan과 inlay GUI/GFX resolution은 뒤로 미룬다.
+- `src/previewdef/focustree/contentbuilder.ts`는 deferred base state일 때 실제 icon 이미지를 찾지 않고 placeholder 스타일만 만들어 첫 tree body를 바로 그린다. inlay HTML도 첫 페인트에서는 비워 둔 뒤, 후속 full hydration에서 실제 자산이 붙는다.
+- `src/previewdef/focustree/index.ts`는 초기 panel open에서 shell을 즉시 띄우고 deferred base-state preload를 시작한다. ready 후 첫 snapshot은 그 deferred 결과를 재사용하고, 바로 이어서 full asset refresh를 한 번 더 돌려 icons/inlays를 보강한다.
+- `src/previewdef/focustree/renderpayloadpatch.ts`는 `deferredAssetLoad` 상태를 cache에 포함해, placeholder 기반 첫 snapshot에서 full asset snapshot으로 넘어갈 때 style/inlay 차이를 안전하게 full refresh로 승격한다.
+- 이번 라운드의 핵심은 “초기 로딩이 느린 이유가 단순 중복 load만이 아니라, 첫 화면에 꼭 필요하지 않은 자산 해석까지 동기적으로 묶여 있었기 때문”이라는 점을 구조적으로 분리한 것이다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run lint` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed, including the focus preview smoke test.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.

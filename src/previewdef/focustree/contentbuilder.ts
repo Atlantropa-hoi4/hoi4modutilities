@@ -44,6 +44,7 @@ export interface FocusTreeRenderPayload {
     conditionPresetsByTree: FocusConditionPresetsByTree;
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
+    deferredAssetLoad: boolean;
 }
 
 export interface FocusTreeRenderBaseState {
@@ -61,6 +62,7 @@ export interface FocusTreeRenderBaseState {
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
     loadDurationMs: number;
+    deferredAssetLoad: boolean;
 }
 
 export interface FocusTreeRenderPayloadBuildMetrics {
@@ -189,6 +191,7 @@ export async function buildFocusTreeRenderBaseState(
         hasFocusSelector: focusTrees.length > 1,
         hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
         loadDurationMs,
+        deferredAssetLoad: !!loadResult.result.deferredAssetLoad,
     };
 }
 
@@ -197,7 +200,11 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
     const styleTable = new StyleTable();
     const focusRenderStart = Date.now();
-    await prepareFocusIconStyles(baseState.allFocuses, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize);
+    if (baseState.deferredAssetLoad) {
+        prepareDeferredFocusIconStyles(baseState.allFocuses, styleTable, baseState.xGridSize, baseState.yGridSize);
+    } else {
+        await prepareFocusIconStyles(baseState.allFocuses, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize);
+    }
     const renderedFocus: Record<string, string> = {};
     for (const focus of baseState.allFocuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
@@ -211,11 +218,13 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const focusRenderDurationMs = Date.now() - focusRenderStart;
 
     const inlayRenderStart = Date.now();
-    await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
     const renderedInlayWindows: Record<string, string> = {};
-    await Promise.all(baseState.allInlays.map(async (inlay) => {
-        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
-    }));
+    if (!baseState.deferredAssetLoad) {
+        await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+        await Promise.all(baseState.allInlays.map(async (inlay) => {
+            renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+        }));
+    }
     const inlayRenderDurationMs = Date.now() - inlayRenderStart;
 
     return {
@@ -234,6 +243,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
         conditionPresetsByTree: baseState.conditionPresetsByTree,
         hasFocusSelector: baseState.hasFocusSelector,
         hasWarningsButton: baseState.hasWarningsButton,
+        deferredAssetLoad: baseState.deferredAssetLoad,
     },
         metrics: {
             focusRenderDurationMs,
@@ -342,6 +352,7 @@ function createEmptyFocusTreeRenderPayload(
         conditionPresetsByTree,
         hasFocusSelector: false,
         hasWarningsButton: false,
+        deferredAssetLoad: false,
     };
 }
 
@@ -749,6 +760,34 @@ async function prepareFocusIconStyles(
             ${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
         `);
     }));
+
+    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
+        width: ${focusPlaceholderSize}px;
+        height: ${focusPlaceholderSize}px;
+        background: grey;
+    `);
+}
+
+function prepareDeferredFocusIconStyles(
+    focuses: readonly Focus[],
+    styleTable: StyleTable,
+    xGridSize: number,
+    yGridSize: number,
+): void {
+    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
+    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
+    const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
+    const uniqueIconNames = Array.from(new Set(
+        focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
+    ));
+
+    uniqueIconNames.forEach(iconName => {
+        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+            width: ${focusPlaceholderSize}px;
+            height: ${focusPlaceholderSize}px;
+            background: grey;
+        `);
+    });
 
     styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
         width: ${focusPlaceholderSize}px;

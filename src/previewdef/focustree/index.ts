@@ -23,6 +23,7 @@ import {
     createFullFocusTreeRenderUpdate,
     FocusTreeRenderCache,
 } from './renderpayloadpatch';
+import { FocusTreeAssetLoadMode } from './loader';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
@@ -50,6 +51,8 @@ export class FocusTreePreview extends PreviewBase {
     private latestRefreshRequestId = 0;
     private lastRenderCache: FocusTreeRenderCache | undefined;
     private pendingReadyBaseState: FocusTreeRenderBaseState | undefined;
+    private pendingReadyBaseStatePromise: { documentVersion: number; promise: Promise<FocusTreeRenderBaseState> } | undefined;
+    private deferredHydrationDocumentVersion: number | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -68,6 +71,21 @@ export class FocusTreePreview extends PreviewBase {
         );
     }
 
+    public override async initializePanelContent(document: vscode.TextDocument): Promise<void> {
+        this.webviewReady = false;
+        this.lastRenderCache = undefined;
+        this.pendingReadyBaseState = undefined;
+        this.pendingReadyBaseStatePromise = undefined;
+        this.panel.webview.html = renderFocusTreeShellHtml(
+            document.uri,
+            this.panel.webview,
+            document.version,
+            this.persistedConditionPresetsByTree,
+        );
+
+        this.primeDeferredInitialBaseState(document);
+    }
+
     public override getDocumentChangeDebounceMs(): number {
         return 150;
     }
@@ -78,7 +96,7 @@ export class FocusTreePreview extends PreviewBase {
 
     private async refreshDocument(
         document: vscode.TextDocument,
-        options?: { ignorePendingLocalEditDocumentVersion?: boolean },
+        options?: { ignorePendingLocalEditDocumentVersion?: boolean; forceFullAssetLoad?: boolean },
     ): Promise<void> {
         if (!options?.ignorePendingLocalEditDocumentVersion && this.pendingLocalEditDocumentVersions.delete(document.version)) {
             return;
@@ -88,21 +106,38 @@ export class FocusTreePreview extends PreviewBase {
         const requestDocumentVersion = document.version;
         const refreshStartedAt = Date.now();
         try {
-            const cachedBaseState = this.webviewReady
+            const cachedBaseState = !options?.forceFullAssetLoad && this.webviewReady
                 && this.pendingReadyBaseState?.focusPositionDocumentVersion === document.version
                 ? this.pendingReadyBaseState
                 : undefined;
-            this.pendingReadyBaseState = undefined;
+            if (cachedBaseState) {
+                this.pendingReadyBaseState = undefined;
+            }
 
             let baseState: FocusTreeRenderBaseState;
             if (cachedBaseState) {
                 baseState = cachedBaseState;
             } else {
-                const loader = this.createSnapshotLoader(document.getText());
-                baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
-                this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-                if (!this.isRefreshRequestCurrent(requestId)) {
-                    return;
+                const pendingBaseStatePromise = !options?.forceFullAssetLoad && this.webviewReady
+                    && this.pendingReadyBaseStatePromise?.documentVersion === document.version
+                    ? this.pendingReadyBaseStatePromise.promise
+                    : undefined;
+                if (pendingBaseStatePromise) {
+                    baseState = await pendingBaseStatePromise;
+                    if (!this.isRefreshRequestCurrent(requestId)) {
+                        return;
+                    }
+                    this.pendingReadyBaseStatePromise = undefined;
+                } else {
+                    const assetLoadMode: FocusTreeAssetLoadMode = options?.forceFullAssetLoad
+                        ? 'full'
+                        : this.webviewReady ? 'full' : 'deferred';
+                    const loader = this.createSnapshotLoader(document.getText(), assetLoadMode);
+                    baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
+                    this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+                    if (!this.isRefreshRequestCurrent(requestId)) {
+                        return;
+                    }
                 }
             }
 
@@ -136,8 +171,12 @@ export class FocusTreePreview extends PreviewBase {
                     inlayRenderMs: metrics.inlayRenderDurationMs,
                     postMessageMs: Date.now() - postMessageStartedAt,
                     changedSlots: update.changedSlots,
+                    deferredAssetLoad: baseState.deferredAssetLoad,
                     totalMs: Date.now() - refreshStartedAt,
                 });
+                if (baseState.deferredAssetLoad && !options?.forceFullAssetLoad) {
+                    this.scheduleDeferredHydrationRefresh(document);
+                }
                 return;
             }
 
@@ -156,14 +195,19 @@ export class FocusTreePreview extends PreviewBase {
                 changedFocusCount: updatePlan.changedFocusCount,
                 changedInlayCount: updatePlan.changedInlayCount,
                 changedSlots: updatePlan.update.changedSlots,
+                deferredAssetLoad: baseState.deferredAssetLoad,
                 postMessageMs: Date.now() - postMessageStartedAt,
                 totalMs: Date.now() - refreshStartedAt,
             });
+            if (baseState.deferredAssetLoad && !options?.forceFullAssetLoad) {
+                this.scheduleDeferredHydrationRefresh(document);
+            }
         } catch (e) {
             error(e);
             this.webviewReady = false;
             this.lastRenderCache = undefined;
             this.pendingReadyBaseState = undefined;
+            this.pendingReadyBaseStatePromise = undefined;
             const content = await this.getContent(document);
             if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
                 return;
@@ -173,10 +217,55 @@ export class FocusTreePreview extends PreviewBase {
         }
     }
 
-    private createSnapshotLoader(content: string): FocusTreeLoader {
-        const loader = this.focusTreeLoader.createSnapshotLoader(() => Promise.resolve(content));
+    private createSnapshotLoader(content: string, assetLoadMode: FocusTreeAssetLoadMode = 'full'): FocusTreeLoader {
+        const loader = this.focusTreeLoader.createSnapshotLoader(() => Promise.resolve(content), assetLoadMode);
         loader.onLoadDone(r => this.updateDependencies(r.dependencies));
         return loader;
+    }
+
+    private primeDeferredInitialBaseState(document: vscode.TextDocument): void {
+        const loader = this.createSnapshotLoader(document.getText(), 'deferred');
+        const promise = buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree)
+            .then(baseState => {
+                this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+                if (document.version === baseState.focusPositionDocumentVersion) {
+                    this.pendingReadyBaseState = baseState;
+                }
+                return baseState;
+            })
+            .catch(e => {
+                error(e);
+                throw e;
+            });
+
+        this.pendingReadyBaseStatePromise = {
+            documentVersion: document.version,
+            promise,
+        };
+    }
+
+    private scheduleDeferredHydrationRefresh(document: vscode.TextDocument): void {
+        if (this.deferredHydrationDocumentVersion === document.version) {
+            return;
+        }
+
+        this.deferredHydrationDocumentVersion = document.version;
+        setTimeout(() => {
+            void (async () => {
+                try {
+                    const latestDocument = getDocumentByUri(this.uri);
+                    if (!latestDocument || latestDocument.version !== document.version) {
+                        return;
+                    }
+
+                    await this.refreshDocument(latestDocument, { forceFullAssetLoad: true });
+                } finally {
+                    if (this.deferredHydrationDocumentVersion === document.version) {
+                        this.deferredHydrationDocumentVersion = undefined;
+                    }
+                }
+            })();
+        }, 0);
     }
 
     private startRefreshRequest(): number {
