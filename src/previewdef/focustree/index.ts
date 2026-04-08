@@ -96,7 +96,7 @@ export class FocusTreePreview extends PreviewBase {
 
     private async refreshDocument(
         document: vscode.TextDocument,
-        options?: { ignorePendingLocalEditDocumentVersion?: boolean; forceFullAssetLoad?: boolean },
+        options?: { ignorePendingLocalEditDocumentVersion?: boolean; forceFullAssetLoad?: boolean; forceFullSnapshot?: boolean },
     ): Promise<void> {
         if (!options?.ignorePendingLocalEditDocumentVersion && this.pendingLocalEditDocumentVersions.delete(document.version)) {
             return;
@@ -148,7 +148,9 @@ export class FocusTreePreview extends PreviewBase {
                 return;
             }
 
-            const updatePlan = await createFocusTreeRenderUpdate(this.lastRenderCache, baseState);
+            const updatePlan = options?.forceFullSnapshot
+                ? { kind: 'full' as const }
+                : await createFocusTreeRenderUpdate(this.lastRenderCache, baseState);
             const diffDurationMs = Date.now() - diffStartedAt;
             if (updatePlan.kind === 'full') {
                 const htmlBuildStartedAt = Date.now();
@@ -274,7 +276,11 @@ export class FocusTreePreview extends PreviewBase {
         }
 
         this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-        void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
+        void this.refreshDocument(updatedDocument, {
+            ignorePendingLocalEditDocumentVersion: true,
+            forceFullAssetLoad: true,
+            forceFullSnapshot: true,
+        });
         return updatedDocument.version;
     }
 

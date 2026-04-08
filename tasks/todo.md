@@ -216,3 +216,20 @@
 - `npm run compile-ts` passed.
 - `npm run test` passed.
 - `npm run test-ui` passed on rerun. 첫 시도는 VS Code test runtime mutex/launch race로 실패했지만, 같은 코드 상태에서 즉시 재실행 시 11 smoke tests가 모두 통과했다.
+
+# FocusTree Edit Reflection Regression 2026-04-08
+
+## Plan
+- [x] create focus와 prerequisite link가 host patch 계산에서 어떤 changed slot/structure signal을 내는지 확인한다
+- [x] 구조 변경이 incremental path에서 누락되지 않도록 patch/update 판단을 바로잡는다
+- [x] 관련 regression test를 추가하고 compile/test로 다시 검증한다
+
+## Review
+- `src/previewdef/focustree/index.ts`의 edit 후 reconcile 경로는 이제 `forceFullSnapshot: true`와 `forceFullAssetLoad: true`를 함께 사용한다. 즉 create, prerequisite link, exclusive link, delete, drag move 후에는 slot-based partial patch 판단을 거치지 않고 항상 authoritative full snapshot update를 다시 보낸다.
+- 이번 보정은 “edit 직후 반영”만큼은 로딩 최적화보다 정확성을 우선하도록 되돌린 것이다. 일반 문서 변경 refresh는 여전히 partial update 경로를 타지만, 사용자가 의도적으로 구조를 바꾸는 edit 액션은 전체 focustree snapshot을 다시 내려 주므로 create/link가 patch misclassification에 걸려 조용히 누락되는 경로를 차단한다.
+- 추가 진단 결과, 문제의 핵심은 개별 create/link 텍스트 편집 함수보다 그 뒤의 incremental update 가정이 더 공격적이었다는 쪽에 가까웠다. 그래서 edit 성공 후 경로만 별도로 full snapshot으로 분기하는 편이 최소 수정으로 가장 안전했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed.
