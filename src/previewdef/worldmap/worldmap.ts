@@ -65,7 +65,6 @@ export class WorldMap {
             [
                 { content: i18nTableAsScript() },
                 { content: 'window.__enableSupplyArea = ' + getConfiguration().enableSupplyArea + ';' },
-                'common.js',
                 'worldmap.js'
             ],
             ['common.css', 'codicon.css', { content: worldmapviewstyles }]

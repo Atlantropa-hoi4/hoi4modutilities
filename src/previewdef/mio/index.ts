@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { PreviewBase } from '../previewbase';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
 import { matchPathEnd } from '../../util/nodecommon';
@@ -56,8 +56,9 @@ class MioPreview extends PreviewBase {
     }
 }
 
-export const mioPreviewDef: PreviewProviderDef = {
+export const mioPreviewDef: PreviewDescriptor = {
+    kind: 'panel',
     type: 'mio',
     canPreview: canPreviewMio,
-    previewContructor: MioPreview,
+    createPreview: (uri, panel) => new MioPreview(uri, panel),
 };

@@ -21,7 +21,7 @@ export function areEqualWithinBudget(
         return true;
     }
 
-    if (left == null || right == null) {
+    if (left === null || left === undefined || right === null || right === undefined) {
         return false;
     }
 
@@ -64,7 +64,7 @@ export function areEqualWithinBudget(
                 continue;
             }
 
-            if (leftValue == null || rightValue == null) {
+            if (leftValue === null || leftValue === undefined || rightValue === null || rightValue === undefined) {
                 return false;
             }
 

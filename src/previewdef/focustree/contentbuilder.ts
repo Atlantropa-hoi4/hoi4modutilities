@@ -116,7 +116,6 @@ export function renderFocusTreeHtmlFromPayload(
         [
             setPreviewFileUriScript,
             ...scripts.map(c => ({ content: c })),
-            'common.js',
             'focustree.js',
         ],
         [

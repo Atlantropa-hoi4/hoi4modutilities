@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { renderEventFile } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { EventsLoader } from './loader';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
 import { eventTreePreview } from '../../util/featureflags';
@@ -60,8 +60,9 @@ class EventPreview extends PreviewBase {
     }
 }
 
-export const eventPreviewDef: PreviewProviderDef = {
+export const eventPreviewDef: PreviewDescriptor = {
+    kind: 'panel',
     type: 'event',
     canPreview: canPreviewEvent,
-    previewContructor: EventPreview,
+    createPreview: (uri, panel) => new EventPreview(uri, panel),
 };

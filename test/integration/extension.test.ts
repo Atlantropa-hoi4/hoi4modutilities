@@ -7,10 +7,15 @@ function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
     return vscode.window.tabGroups.all
         .flatMap(group => group.tabs)
         .some(tab => {
-            const labelMatches = !labelPrefix || tab.label.startsWith(labelPrefix);
+            const normalizedLabel = tab.label.toLowerCase();
+            const normalizedPrefix = labelPrefix?.toLowerCase();
+            const labelMatches = !labelPrefix
+                || normalizedLabel.startsWith(normalizedPrefix ?? '')
+                || (viewType === WebviewType.PreviewWorldMap && normalizedLabel.includes('world map'));
             return labelMatches && (
                 (tab.input instanceof vscode.TabInputWebview && tab.input.viewType === viewType)
                 || (viewType === WebviewType.Preview && tab.label.startsWith('HOI4: '))
+                || (viewType === WebviewType.PreviewWorldMap && normalizedLabel.includes('world map'))
             );
         });
 }

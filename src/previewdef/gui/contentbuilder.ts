@@ -39,7 +39,6 @@ export async function renderGuiFile(loader: GuiFileLoader, uri: vscode.Uri, webv
             [
                 setPreviewFileUriScript,
                 { content: 'window.containerWindowToggles = ' + JSON.stringify(makeToggleContainerWindowCheckboxes(containerWindows, styleTable)) + ';' },
-                'common.js',
                 'guipreview.js',
             ],
             [

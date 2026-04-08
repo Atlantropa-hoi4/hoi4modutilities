@@ -6,7 +6,7 @@ import {
 } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { FocusTreeLoader } from './loader';
 import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { FocusPositionEditMessage } from './positioneditcommon';
@@ -504,8 +504,12 @@ export class FocusTreePreview extends PreviewBase {
     }
 }
 
-export const focusTreePreviewDef: PreviewProviderDef = {
+export const focusTreePreviewDef: PreviewDescriptor = {
+    kind: 'panel',
     type: 'focustree',
     canPreview: canPreviewFocusTree,
-    previewContructor: FocusTreePreview,
+    createPreview: (uri, panel) => new FocusTreePreview(uri, panel),
+    panelOptions: {
+        retainContextWhenHidden: true,
+    },
 };

@@ -3,7 +3,6 @@ import * as path from 'path';
 import { debounceByInput } from './common';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
-import { sendEvent } from './telemetry';
 import { Logger } from "./logger";
 import { extractFocusIds } from "../previewdef/focustree/schema";
 import { parseHoi4File } from "../hoiformat/hoiparser";
@@ -15,6 +14,7 @@ import {
     FocusIndexState,
     removeFocusFileFromIndex,
 } from "./sharedFocusIndexState";
+import { IndexService } from '../services/indexService';
 
 export {
     applyFocusFileToIndex,
@@ -26,10 +26,29 @@ export {
 
 const globalFocusIndex: FocusIndexState = createEmptyFocusIndexState();
 let workspaceFocusIndex: FocusIndexState = createEmptyFocusIndexState();
-let globalFocusIndexTask: Promise<void> | undefined;
-let workspaceFocusIndexTask: Promise<void> | undefined;
-let globalFocusIndexReady = false;
-let workspaceFocusIndexReady = false;
+const sharedFocusIndexService = new IndexService<FocusIndexState>({
+    global: {
+        build: estimatedSize => buildGlobalFocusIndex(estimatedSize),
+        reset: () => {
+            for (const key of Object.keys(globalFocusIndex.byFile)) {
+                delete globalFocusIndex.byFile[key];
+            }
+            for (const key of Object.keys(globalFocusIndex.byId)) {
+                delete globalFocusIndex.byId[key];
+            }
+        },
+        statusMessage: 'Building Shared Focus index...',
+        telemetryEvent: 'sharedFocusIndex',
+    },
+    workspace: {
+        build: estimatedSize => buildWorkspaceFocusIndex(estimatedSize),
+        reset: () => {
+            workspaceFocusIndex = createEmptyFocusIndexState();
+        },
+        statusMessage: 'Building workspace Focus index...',
+        telemetryEvent: 'sharedFocusIndex.workspace',
+    },
+});
 
 export function registerSharedFocusIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
@@ -63,25 +82,7 @@ function ensureGlobalFocusIndex(): Promise<void> {
 }
 
 function ensureGlobalFocusIndexImpl(showStatusBar: boolean): Promise<void> {
-    if (globalFocusIndexReady) {
-        return Promise.resolve();
-    }
-    if (globalFocusIndexTask) {
-        return globalFocusIndexTask;
-    }
-
-    const estimatedSize: [number] = [0];
-    const buildTask = buildGlobalFocusIndex(estimatedSize);
-    if (showStatusBar) {
-        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.building', 'Building Shared Focus index...'), buildTask);
-    }
-    globalFocusIndexTask = buildTask.then(() => {
-        globalFocusIndexReady = true;
-        sendEvent('sharedFocusIndex', { size: estimatedSize[0].toString() });
-    }).finally(() => {
-        globalFocusIndexTask = undefined;
-    });
-    return globalFocusIndexTask;
+    return sharedFocusIndexService.ensure('global', { showStatusBar });
 }
 
 function ensureWorkspaceFocusIndex(): Promise<void> {
@@ -89,25 +90,7 @@ function ensureWorkspaceFocusIndex(): Promise<void> {
 }
 
 function ensureWorkspaceFocusIndexImpl(showStatusBar: boolean): Promise<void> {
-    if (workspaceFocusIndexReady) {
-        return Promise.resolve();
-    }
-    if (workspaceFocusIndexTask) {
-        return workspaceFocusIndexTask;
-    }
-
-    const estimatedSize: [number] = [0];
-    const buildTask = buildWorkspaceFocusIndex(estimatedSize);
-    if (showStatusBar) {
-        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('sharedFocusIndex.workspace.building', 'Building workspace Focus index...'), buildTask);
-    }
-    workspaceFocusIndexTask = buildTask.then(() => {
-        workspaceFocusIndexReady = true;
-        sendEvent('sharedFocusIndex.workspace', { size: estimatedSize[0].toString() });
-    }).finally(() => {
-        workspaceFocusIndexTask = undefined;
-    });
-    return workspaceFocusIndexTask;
+    return sharedFocusIndexService.ensure('workspace', { showStatusBar });
 }
 
 export async function prewarmSharedFocusIndex(): Promise<void> {
@@ -166,16 +149,15 @@ export async function findFileByFocusKey(key: string): Promise<string | undefine
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
-    workspaceFocusIndex = createEmptyFocusIndexState();
-    workspaceFocusIndexReady = false;
-    void ensureWorkspaceFocusIndex();
+    sharedFocusIndexService.invalidate('workspace');
+    void ensureWorkspaceFocusIndexImpl(false);
 }
 
 function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
     const file = e.document.uri;
@@ -195,7 +177,7 @@ const onChangeTextDocumentImpl = debounceByInput(
 );
 
 function onCloseTextDocument(document: vscode.TextDocument) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
     const file = document.uri;
@@ -206,7 +188,7 @@ function onCloseTextDocument(document: vscode.TextDocument) {
 }
 
 function onCreateFiles(e: vscode.FileCreateEvent) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
     for (const file of e.files) {
@@ -217,7 +199,7 @@ function onCreateFiles(e: vscode.FileCreateEvent) {
 }
 
 function onDeleteFiles(e: vscode.FileDeleteEvent) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
     for (const file of e.files) {
@@ -228,7 +210,7 @@ function onDeleteFiles(e: vscode.FileDeleteEvent) {
 }
 
 function onRenameFiles(e: vscode.FileRenameEvent) {
-    if (!workspaceFocusIndexReady) {
+    if (!sharedFocusIndexService.isReady('workspace')) {
         return;
     }
     onDeleteFiles({ files: e.files.map(f => f.oldUri) });

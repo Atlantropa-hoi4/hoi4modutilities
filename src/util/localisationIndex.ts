@@ -5,18 +5,34 @@ import { debounceByInput } from './common';
 import { localisationIndex } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
-import { sendEvent } from './telemetry';
 import { Logger } from "./logger";
 import { YAMLException } from "js-yaml";
+import { IndexService } from '../services/indexService';
 
 type LocalisationData = Record<string, Record<string, string>>;
 
 const globalLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationIndex: LocalisationData = {};
-let globalLocalisationIndexTask: Promise<void> | undefined;
-let workspaceLocalisationIndexTask: Promise<void> | undefined;
-let globalLocalisationIndexReady = false;
-let workspaceLocalisationIndexReady = false;
+const localisationIndexService = new IndexService<Record<string, string>>({
+    global: {
+        build: estimatedSize => buildGlobalLocalisationIndex(estimatedSize),
+        reset: () => {
+            for (const key of Object.keys(globalLocalisationIndex)) {
+                delete globalLocalisationIndex[key];
+            }
+        },
+        statusMessage: 'Building Localisation index...',
+        telemetryEvent: 'localisationIndex',
+    },
+    workspace: {
+        build: estimatedSize => buildWorkspaceLocalisationIndex(estimatedSize),
+        reset: () => {
+            workspaceLocalisationIndex = {};
+        },
+        statusMessage: 'Building workspace Localisation index...',
+        telemetryEvent: 'localisationIndex.workspace',
+    },
+});
 
 // Mapping of language ISO codes to yml file language suffixes
 const localeMapping: Record<string, string> = {
@@ -141,25 +157,7 @@ function ensureGlobalLocalisationIndex(): Promise<void> {
 }
 
 function ensureGlobalLocalisationIndexImpl(showStatusBar: boolean): Promise<void> {
-    if (globalLocalisationIndexReady) {
-        return Promise.resolve();
-    }
-    if (globalLocalisationIndexTask) {
-        return globalLocalisationIndexTask;
-    }
-
-    const estimatedSize: [number] = [0];
-    const buildTask = buildGlobalLocalisationIndex(estimatedSize);
-    if (showStatusBar) {
-        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.building', 'Building Localisation index...'), buildTask);
-    }
-    globalLocalisationIndexTask = buildTask.then(() => {
-        globalLocalisationIndexReady = true;
-        sendEvent('localisationIndex', { size: estimatedSize[0].toString() });
-    }).finally(() => {
-        globalLocalisationIndexTask = undefined;
-    });
-    return globalLocalisationIndexTask;
+    return localisationIndexService.ensure('global', { showStatusBar });
 }
 
 function ensureWorkspaceLocalisationIndex(): Promise<void> {
@@ -167,25 +165,7 @@ function ensureWorkspaceLocalisationIndex(): Promise<void> {
 }
 
 function ensureWorkspaceLocalisationIndexImpl(showStatusBar: boolean): Promise<void> {
-    if (workspaceLocalisationIndexReady) {
-        return Promise.resolve();
-    }
-    if (workspaceLocalisationIndexTask) {
-        return workspaceLocalisationIndexTask;
-    }
-
-    const estimatedSize: [number] = [0];
-    const buildTask = buildWorkspaceLocalisationIndex(estimatedSize);
-    if (showStatusBar) {
-        vscode.window.setStatusBarMessage('$(loading~spin) ' + localize('localisationIndex.workspace.building', 'Building workspace Localisation index...'), buildTask);
-    }
-    workspaceLocalisationIndexTask = buildTask.then(() => {
-        workspaceLocalisationIndexReady = true;
-        sendEvent('localisationIndex.workspace', { size: estimatedSize[0].toString() });
-    }).finally(() => {
-        workspaceLocalisationIndexTask = undefined;
-    });
-    return workspaceLocalisationIndexTask;
+    return localisationIndexService.ensure('workspace', { showStatusBar });
 }
 
 export async function prewarmLocalisationIndex(): Promise<void> {
@@ -287,16 +267,15 @@ function parseLocalisationFile(fileContent: string): Record<string, Record<strin
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
-    workspaceLocalisationIndex = {};
-    workspaceLocalisationIndexReady = false;
-    void ensureWorkspaceLocalisationIndex();
+    localisationIndexService.invalidate('workspace');
+    void ensureWorkspaceLocalisationIndexImpl(false);
 }
 
 function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
     const file = e.document.uri;
@@ -316,7 +295,7 @@ const onChangeTextDocumentImpl = debounceByInput(
 );
 
 function onCloseTextDocument(document: vscode.TextDocument) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
     const file = document.uri;
@@ -327,7 +306,7 @@ function onCloseTextDocument(document: vscode.TextDocument) {
 }
 
 function onCreateFiles(e: vscode.FileCreateEvent) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
     for (const file of e.files) {
@@ -338,7 +317,7 @@ function onCreateFiles(e: vscode.FileCreateEvent) {
 }
 
 function onDeleteFiles(e: vscode.FileDeleteEvent) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
     for (const file of e.files) {
@@ -349,7 +328,7 @@ function onDeleteFiles(e: vscode.FileDeleteEvent) {
 }
 
 function onRenameFiles(e: vscode.FileRenameEvent) {
-    if (!workspaceLocalisationIndexReady) {
+    if (!localisationIndexService.isReady('workspace')) {
         return;
     }
     onDeleteFiles({ files: e.files.map(f => f.oldUri) });

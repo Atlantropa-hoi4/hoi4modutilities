@@ -47,7 +47,6 @@ export async function renderTechnologyFile(loader: TechnologyTreeLoader, uri: vs
             baseContent,
             [
                 setPreviewFileUriScript,
-                'common.js',
                 'techtree.js',
             ],
             [

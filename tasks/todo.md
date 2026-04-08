@@ -104,3 +104,31 @@
 ## Verification
 - `npm run compile-ts` passed.
 - `node .\\node_modules\\mocha\\bin\\mocha --exit out\\test\\unit\\focustree-renderpayloadpatch.test.js out\\test\\unit\\focustree-webviewupdate.test.js out\\test\\unit\\focustree-localpreview.test.js out\\test\\unit\\focustree-layoutplan.test.js` passed with 12 tests.
+# Extension Modernization 2026-04-08
+
+## Plan
+- [x] 현재 activation / bootstrap / build / test / i18n / webview 경로를 현대화 배치 기준으로 재구성한다
+- [x] `package.json`과 빌드 스크립트를 esbuild 중심 구조, clean test harness, 최신 activation/l10n 설정으로 교체한다
+- [x] extension bootstrap과 preview/index 서비스 구성을 분리해 activate 경로와 preview update orchestration을 단순화한다
+- [x] runtime i18n과 webview shell/message 유틸을 표준화하고 불필요한 런타임 i18n 번들 의존을 제거한다
+- [x] lint/test/패키징 기준선을 복구하고 결과 및 남은 리스크를 review 섹션에 정리한다
+
+## Review
+- `package.json`은 이제 `extensionKind: ["workspace"]`, `l10n: "./l10n"`를 선언하고 `onStartupFinished` / `onLanguage:*` / `onCommand:*` activation을 제거한 contextual activation 구조로 정리되었다.
+- `scripts/build.mjs`와 `scripts/clean.mjs`, `tsconfig.test.json`을 추가해 webpack 기반 build를 esbuild 기반 build로 교체했고, `compile-ts`는 typecheck 전용, `compile-tests`는 clean 후 test output 전용으로 분리했다.
+- 런타임 localization은 `src/services/localizer.ts`를 중심으로 `vscode.l10n` 기반으로 옮겼고, 빌드 단계에서 `i18n/*.ts`로부터 `l10n/bundle.l10n*.json`을 생성해 extension host와 webview가 같은 번들을 쓰도록 통일했다.
+- `src/extension.ts`는 composition root로 축소했고, commands/editor/indexes/previews/telemetry 등록을 `src/services/` 아래 모듈로 분리했다.
+- `src/previewdef/previewmanager.ts`는 descriptor 기반 provider registry, typed update scheduler, typed dependency subscription으로 재구성되었고 preview별 panel options를 선언적으로 받는다.
+- focustree는 `retainContextWhenHidden`을 유지하고, 다른 일반 preview는 blanket context retention 없이 기본 panel 옵션을 사용하도록 정리했다.
+- GFX/localisation/shared focus index는 `src/services/indexService.ts`를 통해 lazy ensure/invalidate 패턴을 공유하게 되었고, activation 직후 전역 prewarm은 제거했다.
+- webview shell은 `src/util/html.ts`에서 공통 CSP, `lang`, body metadata를 일관되게 적용하며, shared `common.js` 전제 없이 entry별 self-contained bundle을 사용한다.
+- stale `out/` 산출물 때문에 unit test가 깨지던 문제는 `compile-tests` clean 경로로 복구했고, integration smoke는 world map tab 감지를 더 안정적인 조건으로 바꿨다.
+
+## Verification
+- `npm run compile-ts`
+- `npm run build`
+- `npm run lint`
+- `npm run test:unit`
+- `npm test`
+- `npm run test-ui`
+- `npm run package`

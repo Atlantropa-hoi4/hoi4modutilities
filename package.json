@@ -16,6 +16,9 @@
   "engines": {
     "vscode": "^1.110.0"
   },
+  "extensionKind": [
+    "workspace"
+  ],
   "categories": [
     "Other"
   ],
@@ -26,16 +29,6 @@
     "Heart of Iron"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onLanguage:plaintext",
-    "onLanguage:hoi4",
-    "onLanguage:paradox",
-    "onLanguage:yaml",
-    "onCommand:server.hoi4modutilities.preview",
-    "onCommand:server.hoi4modutilities.previewworld",
-    "onCommand:server.hoi4modutilities.scanreferences",
-    "onCommand:server.hoi4modutilities.selectmodfile",
-    "onCommand:server.hoi4modutilities.selecthoifolder",
     "onCustomEditor:server.hoi4modutilities.dds",
     "onCustomEditor:server.hoi4modutilities.tga",
     "onWebviewPanel:server.hoi4ftpreview",
@@ -47,12 +40,12 @@
     "workspaceContains:map/default.map"
   ],
   "main": "./dist/extension.js",
+  "l10n": "./l10n",
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true
     }
   },
-  "locale": "%hoi4modutilities.locale%",
   "contributes": {
     "configuration": [
       {
@@ -205,21 +198,22 @@
     }
   },
   "scripts": {
-    "clean": "rimraf dist out static",
+    "clean": "node ./scripts/clean.mjs all",
+    "clean:build": "node ./scripts/clean.mjs build",
+    "clean:out": "node ./scripts/clean.mjs out",
     "clean:test-ui": "rimraf .vscode-test",
-    "compile-ts": "tsc -p ./ --pretty false",
+    "build": "node ./scripts/build.mjs --mode=production",
+    "build:dev": "node ./scripts/build.mjs --mode=development",
+    "compile-ts": "tsc -p ./ --pretty false --noEmit",
+    "compile-tests": "npm run clean:out && tsc -p ./tsconfig.test.json --pretty false",
     "watch": "tsc -w -p ./",
-    "webpack": "webpack --mode development",
-    "webpack-dev": "webpack --mode development --watch --progress",
-    "package:dist": "webpack --mode production",
-    "vscode:prepublish": "npm run clean && npm run package:dist",
+    "vscode:prepublish": "npm run build",
     "lint": "eslint src webviewsrc test --ext .ts",
-    "test:unit": "mocha --exit --recursive \"out/test/unit/**/*.test.js\"",
-    "test": "npm run compile-ts && npm run lint && npm run test:unit",
-    "test-ui": "npm run compile-ts && npm run webpack && vscode-test --config .vscode-test.mjs",
+    "test:unit": "npm run compile-tests && mocha --exit --recursive \"out/test/unit/**/*.test.js\"",
+    "test": "npm run compile-ts && npm run build && npm run lint && npm run test:unit",
+    "test-ui": "npm run compile-ts && npm run build && npm run compile-tests && vscode-test --config .vscode-test.mjs",
     "package": "vsce package --no-dependencies",
-    "verify": "npm run test && npm run test-ui && npm run package",
-    "geni18n": "npm run compile-ts && node scripts/genzhi18n.js"
+    "verify": "npm run test && npm run test-ui && npm run package"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
@@ -234,6 +228,7 @@
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.25.3",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^8.57.1",
     "mocha": "^11.7.5",

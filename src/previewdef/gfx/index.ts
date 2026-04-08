@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { renderGfxFile } from './contentbuilder';
-import { PreviewProviderDef } from '../previewmanager';
+import { PreviewDescriptor } from '../descriptor';
 import { PreviewBase } from '../previewbase';
 
 function canPreviewGfx(document: vscode.TextDocument) {
@@ -14,8 +14,9 @@ class GfxPreview extends PreviewBase {
     }
 }
 
-export const gfxPreviewDef: PreviewProviderDef = {
+export const gfxPreviewDef: PreviewDescriptor = {
+    kind: 'panel',
     type: 'gfx',
     canPreview: canPreviewGfx,
-    previewContructor: GfxPreview,
+    createPreview: (uri, panel) => new GfxPreview(uri, panel),
 };

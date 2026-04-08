@@ -1,5 +1,3 @@
-import { __table } from '../../i18n/en';
-
 let table: Record<string, string> = {};
 
 try {
@@ -12,11 +10,8 @@ try {
     console.error(e);
 }
 
-export function feLocalize(key: keyof typeof __table | 'TODO', message: string, ...args: any[]): string {
-    if (key in table) {
-        message = table[key];
-    }
-
+export function feLocalize(_key: string, message: string, ...args: unknown[]): string {
+    const translatedMessage = table[message] ?? message;
     const regex = new RegExp('\\{(' + args.map((_, i) => i.toString()).join('|') + ')\\}', 'g');
-    return message.replace(regex, (_, group1) => args[parseInt(group1)]?.toString());
+    return translatedMessage.replace(regex, (_, group1) => args[parseInt(group1, 10)]?.toString() ?? '');
 }

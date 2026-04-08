@@ -63,7 +63,7 @@ export function html(webview: vscode.Webview, body: string, scripts: (string | D
 
     return `
 <!DOCTYPE html>
-<html>
+<html lang="${vscode.env.language}">
     <head>
         <meta charset="UTF-8">
         <meta http-equiv="Content-Security-Policy" content="
@@ -77,7 +77,7 @@ export function html(webview: vscode.Webview, body: string, scripts: (string | D
         ${preparedScripts.map(v => v[0]).join('')}
         ${preparedStyles.map(v => v[0]).join('')}
     </head>
-    <body>${body.replace(/\s\s+/g, ' ')}</body>
+    <body class="vscode-body" data-extension-id="${contextContainer.current?.extension.id ?? ''}">${body.replace(/\s\s+/g, ' ')}</body>
 </html>
 `;
 }
