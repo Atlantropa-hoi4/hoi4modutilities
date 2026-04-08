@@ -75,6 +75,18 @@ suite('extension smoke', () => {
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_technology.txt'), 30000);
     });
 
+    test('opens a focus preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'national_focus', 'preset-smoke.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: preset-smoke.txt'), 30000);
+    });
+
     test('opens a gui preview webview for a representative fixture', async () => {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
         assert.ok(workspaceRoot);

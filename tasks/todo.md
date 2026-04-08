@@ -156,3 +156,23 @@
 - `npm run test` passed.
 - `npm run test-ui` passed. 로그에 fixture 기반 missing HOI4 asset `UserError`는 남지만 smoke assertions는 모두 통과했다.
 - `npm run package` passed and produced `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Load Regression 2026-04-08
+
+## Plan
+- [x] 최근 focustree startup 변경으로 생긴 빈 캔버스 회귀를 실제 ready/update 경로 기준으로 좁힌다
+- [x] 초기 로드 성능 개선은 유지하면서 focustree 데이터가 다시 보이도록 startup 경로를 보정한다
+- [x] focus preview 회귀를 막는 검증을 보강하고 build/test로 다시 확인한다
+
+## Review
+- `src/previewdef/focustree/index.ts`는 shell-only 초기화로 완전히 건너뛰는 대신, webview ready 전에 계산한 `FocusTreeRenderBaseState`를 `pendingReadyBaseState`로 보관했다가 ready 직후 재사용하도록 바뀌었다. 그래서 첫 오픈에서 같은 focustree load를 두 번 하지 않으면서도, 기존 ready 이후 snapshot update 흐름은 그대로 유지된다.
+- 이번 회귀는 “pre-ready full load를 아예 생략”한 최신 수정이 focustree startup의 실제 기대 흐름과 어긋난 데 있었다. toolbar shell은 뜨지만 ready 뒤 첫 rebuild에 필요한 실제 snapshot 준비가 보장되지 않아, 사용자 입장에서는 중점 정보가 비어 보이는 상태가 만들어졌다.
+- `test/integration/extension.test.ts`에 representative focus fixture smoke를 추가해, 적어도 focus preview command가 실제로 열리는 경로가 앞으로 기본 UI smoke에서 빠지지 않게 했다.
+- 교훈적으로는 focustree startup 최적화에서 shell 렌더와 data snapshot 준비를 완전히 분리하기보다, pre-ready에서 이미 계산한 결과를 ready 후 재사용하는 편이 더 안전한 설계였다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run lint` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed with the new focus preview smoke check included.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.

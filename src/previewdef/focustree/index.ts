@@ -3,6 +3,7 @@ import {
     renderFocusTreeShellHtml,
     buildFocusTreeRenderBaseState,
     buildFocusTreeRenderPayloadFromBaseState,
+    FocusTreeRenderBaseState,
 } from './contentbuilder';
 import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
@@ -48,6 +49,7 @@ export class FocusTreePreview extends PreviewBase {
     private webviewReady = false;
     private latestRefreshRequestId = 0;
     private lastRenderCache: FocusTreeRenderCache | undefined;
+    private pendingReadyBaseState: FocusTreeRenderBaseState | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -84,22 +86,33 @@ export class FocusTreePreview extends PreviewBase {
 
         const requestId = this.startRefreshRequest();
         const requestDocumentVersion = document.version;
-
-        if (!this.webviewReady) {
-            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-            return;
-        }
-
         const refreshStartedAt = Date.now();
         try {
-            const loader = this.createSnapshotLoader(document.getText());
-            const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
-            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-            if (!this.isRefreshRequestCurrent(requestId)) {
-                return;
+            const cachedBaseState = this.webviewReady
+                && this.pendingReadyBaseState?.focusPositionDocumentVersion === document.version
+                ? this.pendingReadyBaseState
+                : undefined;
+            this.pendingReadyBaseState = undefined;
+
+            let baseState: FocusTreeRenderBaseState;
+            if (cachedBaseState) {
+                baseState = cachedBaseState;
+            } else {
+                const loader = this.createSnapshotLoader(document.getText());
+                baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
+                this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+                if (!this.isRefreshRequestCurrent(requestId)) {
+                    return;
+                }
             }
 
             const diffStartedAt = Date.now();
+            if (!this.webviewReady) {
+                this.pendingReadyBaseState = baseState;
+                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
+                return;
+            }
+
             const updatePlan = await createFocusTreeRenderUpdate(this.lastRenderCache, baseState);
             const diffDurationMs = Date.now() - diffStartedAt;
             if (updatePlan.kind === 'full') {
@@ -150,6 +163,7 @@ export class FocusTreePreview extends PreviewBase {
             error(e);
             this.webviewReady = false;
             this.lastRenderCache = undefined;
+            this.pendingReadyBaseState = undefined;
             const content = await this.getContent(document);
             if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
                 return;
