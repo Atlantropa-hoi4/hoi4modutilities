@@ -1,9 +1,9 @@
-import { State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory, Resource } from "../definitions";
-import { Enum, SchemaDef, CustomMap, DetailValue } from "../../../hoiformat/schema";
+import { State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory } from "../definitions";
+import { Enum, SchemaDef, CustomMap, DetailValue, Raw, forEachNodeValue, convertNodeToJson } from "../../../hoiformat/schema";
 import { readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
 import { error } from "../../../util/debug";
 import { LoadResult, FolderLoader, FileLoader, mergeInLoadResult, sortItems, mergeRegion, convertColor, LoadResultOD } from "./common";
-import { Token } from "../../../hoiformat/hoiparser";
+import { Node, Token } from "../../../hoiformat/hoiparser";
 import { arrayToMap, UserError } from "../../../util/common";
 import { DefaultMapLoader } from "./provincemap";
 import { localize } from "../../../util/i18n";
@@ -20,7 +20,7 @@ interface StateDefinition {
     name: string;
     manpower: number;
     state_category: string;
-    history: StateHistory;
+    history: Raw;
     provinces: Enum;
     impassable: boolean;
     resources: CustomMap<number>;
@@ -30,7 +30,7 @@ interface StateDefinition {
 interface StateHistory {
     owner: string;
     victory_points: Enum[];
-    add_core_of: string[];
+    cores: string[];
 }
 
 const stateFileSchema: SchemaDef<StateFile> = {
@@ -40,17 +40,7 @@ const stateFileSchema: SchemaDef<StateFile> = {
             name: "string",
             manpower: "number",
             state_category: "string",
-            history: {
-                owner: "string",
-                victory_points: {
-                    _innerType: "enum",
-                    _type: "array",
-                },
-                add_core_of: {
-                    _innerType: "string",
-                    _type: "array",
-                },
-            },
+            history: "raw",
             provinces: "enum",
             impassable: "boolean",
             resources: {
@@ -88,7 +78,10 @@ type StateLoaderResult = { states: State[], badStatesCount: number };
 export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundingBox[]> {
     private categoriesLoader: StateCategoriesLoader;
 
-    constructor(private defaultMapLoader: DefaultMapLoader, private resourcesLoader: ResourceDefinitionLoader) {
+    constructor(
+        private defaultMapLoader: DefaultMapLoader,
+        private resourcesLoader: ResourceDefinitionLoader,
+    ) {
         super('history/states', StateLoader);
         this.categoriesLoader = new StateCategoriesLoader();
         this.categoriesLoader.onProgress(e => this.onProgressEmitter.fire(e));
@@ -127,7 +120,7 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
                 if (!(state.category in stateCategories.result)) {
                     warnings.push({
                         source: [{ type: 'state', id: i }],
-                        relatedFiles: [ state.file ],
+                        relatedFiles: [state.file],
                         text: localize('worldmap.warnings.statecategorynotexist', "State category of state {0} is not defined: {1}.", i, state.category),
                     });
                 }
@@ -136,7 +129,7 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
                     if (state.resources[key] !== undefined && !(key in resources)) {
                         warnings.push({
                             source: [{ type: 'state', id: i }],
-                            relatedFiles: [ state.file ],
+                            relatedFiles: [state.file],
                             text: localize('worldmap.warnings.resourcenotexist', "Resource {0} used in state {1} is not defined.", key, i),
                         });
                     }
@@ -201,7 +194,7 @@ class StateCategoriesLoader extends FolderLoader<Record<string, StateCategory>, 
 
             categories[category.name] = category;
         }));
-    
+
         return {
             result: categories,
             dependencies: [this.folder + '/*'],
@@ -228,6 +221,54 @@ class StateCategoryLoader extends FileLoader<StateCategory[]> {
     }
 }
 
+function loadHistory(stateHistory: Raw | undefined, warnings: string[]) {
+    // Yes, I know there is a `extractEffectValue` function, but it can't process PREV.
+    const history: StateHistory = {
+        owner: "",
+        cores: [],
+        victory_points: []
+    };
+    if (stateHistory) {
+        let PREV = "";
+        const processNode = (processingNode: Node) => forEachNodeValue(processingNode, node => {
+            switch (node.name?.toLowerCase()) {
+                case "owner":
+                case "transfer_state_to":
+                    history.owner = convertNodeToJson(node, "string", {}) ?? "";
+                    break;
+                case "transfer_state":
+                    history.owner = (convertNodeToJson<string>(node, "string", {}) ?? "").replace("PREV", PREV);
+                    break;
+                case "victory_points":
+                    history.victory_points.push(convertNodeToJson(node, "enum", {}) ?? "");
+                    break;
+                case "add_core_of":
+                    history.cores.push(convertNodeToJson(node, "string", {}) ?? "")
+                    break;
+                case "remove_core_of":
+                    const of = convertNodeToJson(node, "string", {}) ?? "";
+                    history.cores = history.cores.filter(tag => tag !== of);
+                    break;
+                case "1936.1.1":
+                case "if":
+                    processNode(node);
+                    break;
+                default:
+                    if (node.name?.length === 3) {
+                        // tag
+                        PREV = node.name;
+                        processNode(node);
+                    }
+                    break;
+            }
+        });
+        processNode(stateHistory._raw);
+    } else {
+        warnings.push(localize('worldmap.warnings.statehistorymissing', "The state doesn't have history data."));
+    }
+    return history;
+}
+
 async function loadState(stateFile: string, globalWarnings: WorldMapWarning[]): Promise<StateNoBoundingBox[]> {
     try {
         const data = await readFileFromModOrHOI4AsJson<StateFile>(stateFile, stateFileSchema);
@@ -235,15 +276,16 @@ async function loadState(stateFile: string, globalWarnings: WorldMapWarning[]): 
 
         for (const state of data.state) {
             const warnings: string[] = [];
+            const history = loadHistory(state.history, warnings);
             const id = state.id ? state.id : (warnings.push(localize('worldmap.warnings.statenoid', "A state in {0} doesn't have id field.", stateFile)), -1);
             const name = state.name ? state.name : (warnings.push(localize('worldmap.warnings.statenoname', "The state doesn't have name field.")), '');
             const manpower = state.manpower ?? 0;
             const category = state.state_category ? state.state_category : (warnings.push(localize('worldmap.warnings.statenocategory', "The state doesn't have category field.")), '');
-            const owner = state.history?.owner;
+            const owner = history.owner;
             const provinces = state.provinces._values.map(v => parseInt(v));
-            const cores = state.history?.add_core_of.map(v => v).filter((v, i, a): v is string => v !== undefined && i === a.indexOf(v)) ?? [];
+            const cores = history.cores;
             const impassable = state.impassable ?? false;
-            const victoryPointsArray = state.history?.victory_points.filter(v => v._values.length >= 2).map(v => v._values.slice(0, 2).map(v => parseInt(v)) as [number, number]) ?? [];
+            const victoryPointsArray = history.victory_points.filter(v => v._values.length >= 2).map(v => v._values.slice(0, 2).map(v => parseInt(v)) as [number, number]) ?? [];
             const victoryPoints = arrayToMap(victoryPointsArray, "0", v => v[1]);
             const resources = arrayToMap(
                 Object.values(state.resources._map), '_key', v => v._value);
@@ -288,15 +330,15 @@ function sortStates(states: StateNoBoundingBox[], warnings: WorldMapWarning[]): 
         10000,
         (maxId) => { throw new UserError(localize('worldmap.warnings.stateidtoolarge', 'Max state id is too large: {0}', maxId)); },
         (newState, existingState, badId) => warnings.push({
-                source: [{ type: 'state', id: badId }],
-                relatedFiles: [newState.file, existingState.file],
-                text: localize('worldmap.warnings.stateidconflict', "There're more than one states using state id {0}.", newState.id),
-            }),
+            source: [{ type: 'state', id: badId }],
+            relatedFiles: [newState.file, existingState.file],
+            text: localize('worldmap.warnings.stateidconflict', "There're more than one states using state id {0}.", newState.id),
+        }),
         (startId, endId) => warnings.push({
-                source: [{ type: 'state', id: startId }],
-                relatedFiles: [],
-                text: localize('worldmap.warnings.statenotexist', "State with id {0} doesn't exist.", startId === endId ? startId : `${startId}-${endId}`),
-            }),
+            source: [{ type: 'state', id: startId }],
+            relatedFiles: [],
+            text: localize('worldmap.warnings.statenotexist', "State with id {0} doesn't exist.", startId === endId ? startId : `${startId}-${endId}`),
+        }),
     );
 
     return {
@@ -310,17 +352,17 @@ function calculateBoundingBox(noBoundingBoxState: StateNoBoundingBox, provinces:
         noBoundingBoxState,
         'provinces',
         provinces,
-        width, 
+        width,
         provinceId => warnings.push({
-                source: [{ type: 'state', id: noBoundingBoxState.id }],
-                relatedFiles: [noBoundingBoxState.file],
-                text: localize('worldmap.warnings.stateprovincenotexist', "Province {0} used in state {1} doesn't exist.", provinceId, noBoundingBoxState.id),
-            }),
+            source: [{ type: 'state', id: noBoundingBoxState.id }],
+            relatedFiles: [noBoundingBoxState.file],
+            text: localize('worldmap.warnings.stateprovincenotexist', "Province {0} used in state {1} doesn't exist.", provinceId, noBoundingBoxState.id),
+        }),
         () => warnings.push({
-                source: [{ type: 'state', id: noBoundingBoxState.id }],
-                relatedFiles: [noBoundingBoxState.file],
-                text: localize('worldmap.warnings.statenovalidprovinces', "State {0} in doesn't have valid provinces.", noBoundingBoxState.id),
-            })
+            source: [{ type: 'state', id: noBoundingBoxState.id }],
+            relatedFiles: [noBoundingBoxState.file],
+            text: localize('worldmap.warnings.statenovalidprovinces', "State {0} in doesn't have valid provinces.", noBoundingBoxState.id),
+        })
     );
 
     if (state.boundingBox.w > width / 2 || state.boundingBox.h > height / 2) {

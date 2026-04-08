@@ -30,16 +30,16 @@ export interface Token<T extends string = string> {
     end: number;
     type: T;
 }
-
-function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T, [string, number]>, errorMessagePrefix: string = ''): Tokenizer<T> {
+export
+    function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T, [string, number]>, errorMessagePrefix: string = ''): Tokenizer<T> {
     const types = Object.keys(tokenRegexStrings);
     const typeEntries = Object.entries<[string, number]>(tokenRegexStrings);
     typeEntries.sort((a, b) => a[1][1] - b[1][1]);
 
     const regex = new RegExp(
         '\\s*(?<result>' +
-            typeEntries.map(([n, [s]]) => `(?<${n}>${s})`).join('|')
-            + ')',
+        typeEntries.map(([n, [s]]) => `(?<${n}>${s})`).join('|')
+        + ')',
         'y');
     let prevPos = 0;
     let pos = 0;
@@ -47,7 +47,13 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
     let groups: RegExpExecArray | null = null;
 
     let sum = 0;
-    const lineLengthSums = input.split('\n').map(v => v.length).map(v => sum = (sum+ v + 1));
+    const lineLengthSums = input.split('\n').map(v => v.length).map(v => sum = (sum + v + 1));
+
+    /** 
+     * A trick for date.  
+     * Without it, `1936.1.1` will be tokenized as `1936.1` and `.1`.  
+     */
+    let prevIsDate = false;
 
     function nextGroups() {
         prevPos = pos;
@@ -56,21 +62,47 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
             if (groups === null) {
                 throwError("Invalid token");
             }
+            if (prevIsDate) {
+                prevIsDate = false;
+                continue;
+            }
 
-            const result = groups.groups!['result'];
+            let result = groups.groups!['result'];
             // input = input.substr(groups[0].length);
             pos += groups[0].length;
 
             const localGroups = groups;
             const type = types.find(t => localGroups.groups![t] !== undefined);
 
+            const start = pos - result.length;
+            if (type === 'number') {
+                if (result.match(/\d\d\d\d\.\d(\d|)/)) {
+                    prevIsDate = true;
+
+                    result += ".";
+                    pos++;
+
+                    while (input[pos].match(/\d/)) {
+                        result += input[pos];
+                        pos++;
+                    }
+
+                    token = {
+                        value: result,
+                        start,
+                        end: pos,
+                        type: "symbol" as T
+                    };
+                    continue;
+                }
+            }
             token = {
                 value: result,
-                start: pos - result.length,
+                start,
                 end: pos,
                 type: type as T,
             };
-        } while (token.type === 'comment');
+        } while (token === null || token.type === 'comment');
     }
 
     function peek(): Token<T> {
@@ -78,6 +110,9 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
             return token!;
         }
 
+        if (prevIsDate) {
+            nextGroups();
+        }
         nextGroups();
         return token!;
     }
@@ -91,28 +126,30 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
             ` at (${line + 1}, ${column + 1})`;
         throw new UserError(errorMessagePrefix + message + `${posString}: ` + (input + "(EOF)").substring(calculatePos, Math.min(calculatePos + 30, input.length + 5)));
     }
-    
+
+    const next = () => {
+        const result = peek();
+        groups = null;
+        return result;
+    };
     return {
         peek,
-        next: () => {
-            const result = peek();
-            groups = null;
-            return result;
-        },
+        next,
         throw: throwError,
     };
 }
 
 type HOITokenType = 'comment' | 'symbol' | 'operator' | 'string' | 'number' | 'unitnumber' | 'eof';
-const tokenRegexStrings: Record<HOITokenType, [string, number]> = {
-    comment: ['#.*(?:[\\r\\n]|$)', 0],
-    symbol: ['(?:\\d+\\.)?[a-zA-Z_@\\[\\]][\\w:\\._@\\[\\]\\-\\?\\^\\/\\u00A0-\\u024F|]*', 40],
-    operator: ['[={}<>;,]|>=|<=|!=', 10],
-    string: ['"(?:\\\\"|\\\\\\\\|[^"])*"', 10],
-    number: ['-?\\d*\\.\\d+|-?\\d+|0x\\d+', 50],
-    unitnumber: ['(?:-?\\d*\\.\\d+|-?\\d+)(?:%%?)', 49],
-    eof: ['$', 1000],
-};
+export
+    const tokenRegexStrings: Record<HOITokenType, [string, number]> = {
+        comment: ['#.*(?:[\\r\\n]|$)', 0],
+        symbol: ['(?:\\d+\\.)?[a-zA-Z_@\\[\\]][\\w:\\._@\\[\\]\\-\\?\\^\\/\\u00A0-\\u024F|]*', 40],
+        operator: ['[={}<>;,]|>=|<=|!=', 10],
+        string: ['"(?:\\\\"|\\\\\\\\|[^"])*"', 10],
+        number: ['-?\\d*\\.\\d+|-?\\d+|0x\\d+', 50],
+        unitnumber: ['(?:-?\\d*\\.\\d+|-?\\d+)(?:%%?)', 49],
+        eof: ['$', 1000],
+    };
 
 export function parseHoi4File(input: string, errorMessagePrefix: string = ''): Node {
     const tokens = tokenizer(input, tokenRegexStrings, errorMessagePrefix);
@@ -207,7 +244,7 @@ function parseNode(tokens: Tokenizer<HOITokenType>): Node {
     };
 }
 
-function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOITokenType>, Token<HOITokenType> ] {
+function parseNodeValue(tokens: Tokenizer<HOITokenType>): [NodeValue, Token<HOITokenType>, Token<HOITokenType>] {
     const nextToken = tokens.next();
     switch (nextToken.type) {
         case 'string':
@@ -245,7 +282,7 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOI
             }
             break;
     }
-    
+
     tokens.throw("Expect string, number, symbol, or {", true);
 }
 

@@ -68,4 +68,19 @@ describe('parser fixtures', () => {
         assert.strictEqual(scopeStack[1]?.scopeType, 'unknown');
         assert.strictEqual(scopeStack[1]?.scopeName, '{province_controllers^1234:capital:resistance_score}');
     });
+
+    it('parses date', () => {
+        const node = parseHoi4File(readFixture('parser', 'date.txt'));
+        const parsed = convertNodeToJson<{
+            '2026.4.7': {
+                date: string;
+            }
+        }>(node, {
+            '2026.4.7': {
+                date: 'string'
+            },
+        });
+
+        assert.strictEqual(parsed['2026.4.7']?.date, '2026-4-7')
+    });
 });

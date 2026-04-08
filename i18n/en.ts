@@ -218,6 +218,7 @@ const internalTable = /* SOT Do not remove this comment */{
     "worldmap.warnings.statecategoryconflict": "There're multiple state categories have name \"{0}\".",
     "worldmap.warnings.statecategorynotexist": "State category of state {0} is not defined: {1}.",
     "worldmap.warnings.statehassea": "Sea province {0} shouldn't belong to a state.",
+    "worldmap.warnings.statehistorymissing": "The state doesn't have history data.",
     "worldmap.warnings.stateidconflict": "There're more than one states using state id {0}.",
     "worldmap.warnings.stateidtoolarge": "Max state id is too large: {0}",
     "worldmap.warnings.stateinmultiplestrategicregions": "In state {0}, province {1} are not belong to same strategic region as other provinces.",

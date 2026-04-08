@@ -1,0 +1,4 @@
+# In HOI4's history/states, like 744-Xian.txt
+2026.4.7 = {
+    date = "2026-4-7"
+}
