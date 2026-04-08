@@ -251,3 +251,21 @@
 - `npm run compile-ts` passed.
 - `npm run test` passed.
 - `npm run test-ui` passed. 이 저장소 fixture 특성상 missing HOI4 asset `UserError`와 VS Code runtime mutex 로그는 여전히 출력되지만, smoke assertions는 11개 모두 녹색이었다.
+
+# FocusTree GitHub Baseline Investigation 2026-04-08
+
+## Plan
+- [x] GitHub 원격/태그/최근 이력을 확인해 focustree edit가 안정적이던 기준 버전을 찾는다
+- [x] 기준 버전과 현재 버전의 focustree host/webview edit 반영 흐름을 비교해 빠진 동작을 특정한다
+- [x] 필요한 부분만 최소 backport/adapt 하고 순차 검증으로 확인한다
+
+## Review
+- GitHub 기준선은 `v0.13.22`였다. 그 버전의 [src/previewdef/focustree/index.ts] 경로를 대조해 보니, 구조 편집 후에는 지금보다 단순한 full preview refresh 경로에 더 많이 의존하고 있었고, 최근 최적화 라운드에서 그 안정성이 약해진 상태였다.
+- 현재 `src/previewdef/focustree/index.ts`는 `reloadPreviewAfterStructuralEdit()`를 추가해 create/prerequisite/exclusive/delete 같은 구조 편집 뒤에는 full focustree HTML을 다시 생성해 panel에 교체한다. 이 경로는 `renderFocusTreeFile()`를 직접 써서 shell-ready-snapshot 체인이나 patch merge에 의존하지 않는다.
+- 좌표 이동 같은 빈번한 편집은 기존 `reconcileAfterLocalEdit()` 기반 빠른 refresh를 유지하고, 구조 편집만 구 버전식 안정 경로로 분리했다. 즉 성능 최적화는 남기되, 사용자가 문제를 겪은 create/link 계열만 우선 정확성으로 되돌린 셈이다.
+- 앞서 추가한 webview `LatestOnlyBuildGuard`는 그대로 유지해, full reload 이전/이후에 남아 있던 늦은 async rebuild가 최신 DOM을 다시 덮지 못하게 한다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed. 이 저장소 fixture 특성상 missing HOI4 asset `UserError`와 VS Code runtime mutex 로그는 남지만, smoke assertions는 11개 모두 녹색이었다.

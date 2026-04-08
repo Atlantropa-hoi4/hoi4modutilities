@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import {
     renderFocusTreeShellHtml,
+    renderFocusTreeFile,
     buildFocusTreeRenderBaseState,
     buildFocusTreeRenderPayloadFromBaseState,
     FocusTreeRenderBaseState,
@@ -284,6 +285,38 @@ export class FocusTreePreview extends PreviewBase {
         return updatedDocument.version;
     }
 
+    private async reloadPreviewAfterStructuralEdit(updatedDocument: vscode.TextDocument | undefined): Promise<number | undefined> {
+        if (!updatedDocument) {
+            return undefined;
+        }
+
+        this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+        const requestId = this.startRefreshRequest();
+        this.webviewReady = false;
+        this.lastRenderCache = undefined;
+        this.pendingReadyBaseState = undefined;
+        this.pendingReadyBaseStatePromise = undefined;
+        this.deferredHydrationDocumentVersion = undefined;
+
+        const loader = this.createSnapshotLoader(updatedDocument.getText(), 'full');
+        const content = await renderFocusTreeFile(
+            loader,
+            updatedDocument.uri,
+            this.panel.webview,
+            updatedDocument.version,
+            this.persistedConditionPresetsByTree,
+        );
+        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
+
+        const latestDocumentVersion = getDocumentByUri(this.uri)?.version;
+        if (!this.isRefreshRequestCurrent(requestId) || latestDocumentVersion !== updatedDocument.version) {
+            return updatedDocument.version;
+        }
+
+        this.panel.webview.html = content;
+        return updatedDocument.version;
+    }
+
     private startRefreshRequest(): number {
         this.latestRefreshRequestId += 1;
         return this.latestRefreshRequestId;
@@ -453,17 +486,7 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
-            await this.panel.webview.postMessage({
-                command: 'focusLinkEditApplied',
-                parentFocusId: msg.parentFocusId,
-                parentFocusIds: msg.parentFocusIds,
-                childFocusId: msg.childFocusId,
-                targetLocalX: msg.targetLocalX,
-                targetLocalY: msg.targetLocalY,
-                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
-            });
-
+            await this.reloadPreviewAfterStructuralEdit(updatedDocument);
             return true;
         }
 
@@ -495,14 +518,7 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
-            await this.panel.webview.postMessage({
-                command: 'focusExclusiveLinkEditApplied',
-                sourceFocusId: msg.sourceFocusId,
-                targetFocusId: msg.targetFocusId,
-                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
-            });
-
+            await this.reloadPreviewAfterStructuralEdit(updatedDocument);
             return true;
         }
 
@@ -526,12 +542,7 @@ export class FocusTreePreview extends PreviewBase {
 
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
-                const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument) ?? updatedDocument.version;
-                await this.panel.webview.postMessage({
-                    command: 'deleteFocusApplied',
-                    focusIds,
-                    documentVersion: updatedDocumentVersion,
-                });
+                await this.reloadPreviewAfterStructuralEdit(updatedDocument);
             }
 
             return true;
@@ -562,15 +573,7 @@ export class FocusTreePreview extends PreviewBase {
 
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
-                const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument) ?? updatedDocument.version;
-                await this.panel.webview.postMessage({
-                    command: 'createFocusTemplateApplied',
-                    treeEditKey: msg.treeEditKey,
-                    focusId: placeholderFocusId,
-                    targetAbsoluteX: msg.targetAbsoluteX,
-                    targetAbsoluteY: msg.targetAbsoluteY,
-                    documentVersion: updatedDocumentVersion,
-                });
+                await this.reloadPreviewAfterStructuralEdit(updatedDocument);
                 if (placeholderRange) {
                     await vscode.window.showTextDocument(updatedDocument, {
                         selection: new vscode.Range(
