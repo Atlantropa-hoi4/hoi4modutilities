@@ -132,3 +132,27 @@
 - `npm test`
 - `npm run test-ui`
 - `npm run package`
+
+# FocusTree Load Bottleneck + Release Refresh 2026-04-08
+
+## Plan
+- [x] focustree 초기 로드 경로를 다시 추적해 실제 병목과 중복 작업이 있는지 확인한다
+- [x] 첫 로딩 체감에 직접 영향을 주는 focustree 병목을 최소 수정으로 제거한다
+- [x] README를 현재 빌드/테스트/배포 흐름과 성능 특성에 맞게 갱신한다
+- [x] 확장 버전을 새 릴리스 번호로 올리고 changelog/package metadata를 함께 맞춘다
+- [x] 빌드와 관련 테스트로 수정 사항을 검증하고 결과를 review에 남긴다
+
+## Review
+- `src/previewdef/focustree/index.ts`는 이제 webview가 아직 `focusTreeWebviewReady`를 보내기 전에는 무거운 `buildFocusTreeRenderBaseState()` 경로를 타지 않고, shell HTML만 유지한 채 준비 완료 후 한 번만 실제 snapshot load를 수행한다.
+- 이번 병목은 loader 자체보다 먼저, preview 초기화 중 `refreshDocument()`가 pre-ready 상태에서도 전체 focustree load를 수행한 뒤 결과를 버리고 shell을 다시 렌더링하는 중복 경로에 있었다. 첫 오픈에서 가장 비싼 작업이 두 번 실행되던 셈이라 체감 지연이 컸다.
+- `README.md`는 현재 repo 상태에 맞춰 desktop-only 범위, contextual activation, lazy index/cache, focustree 초기 로드 개선, esbuild 기반 개발 흐름, `npm run verify`, 그리고 현재 release tagging 절차를 반영하도록 전면 정리했다.
+- 버전은 `1.0.0`으로 새 릴리스 라인을 열었고, `package.json`, `package-lock.json`, `CHANGELOG.md`를 함께 맞춰 패키지와 문서가 같은 버전을 가리키도록 정리했다.
+- 패키징 중 한 번 발생한 `vsce` secret-scan `ENOENT`는 산출물 경로 오류가 아니라 `test-ui`와 `package`를 병렬로 돌리면서 둘 다 `dist/static`을 다시 빌드한 레이스였다. 패키징을 단독으로 재실행해 정상 VSIX를 만들었다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run lint` passed.
+- `npm run build` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed. 로그에 fixture 기반 missing HOI4 asset `UserError`는 남지만 smoke assertions는 모두 통과했다.
+- `npm run package` passed and produced `hoi4modutilities-1.0.0.vsix`.

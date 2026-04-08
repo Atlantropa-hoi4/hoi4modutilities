@@ -4,7 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.23] - 2026/04/08 - Latest
+## [1.0.0] - 2026/04/08 - Latest
+
+### Changed
+* Refresh the project README for the desktop-only, esbuild-based extension workflow and the current release automation path.
+* Promote the fork to version `1.0.0` to mark the broader stabilization and tooling modernization work as a fresh release line.
+
+### Fixed
+* Remove a redundant pre-ready Focus Tree refresh path that previously loaded the full preview model before the webview handshake, then threw that work away and rendered the shell again.
+
+## [0.13.23] - 2026/04/08
 
 ### Changed
 * Unify Focus Tree preview startup and refresh around a single shell bootstrap plus snapshot-update protocol, removing the old small-file inline render heuristic and the separate `mode=full|patch` message split.

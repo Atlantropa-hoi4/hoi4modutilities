@@ -84,17 +84,18 @@ export class FocusTreePreview extends PreviewBase {
 
         const requestId = this.startRefreshRequest();
         const requestDocumentVersion = document.version;
+
+        if (!this.webviewReady) {
+            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
+            return;
+        }
+
         const refreshStartedAt = Date.now();
         try {
             const loader = this.createSnapshotLoader(document.getText());
             const baseState = await buildFocusTreeRenderBaseState(loader, document.version, this.persistedConditionPresetsByTree);
             this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
             if (!this.isRefreshRequestCurrent(requestId)) {
-                return;
-            }
-
-            if (!this.webviewReady) {
-                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
                 return;
             }
 
