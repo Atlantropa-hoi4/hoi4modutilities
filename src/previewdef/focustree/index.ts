@@ -268,6 +268,16 @@ export class FocusTreePreview extends PreviewBase {
         }, 0);
     }
 
+    private reconcileAfterLocalEdit(updatedDocument: vscode.TextDocument | undefined): number | undefined {
+        if (!updatedDocument) {
+            return undefined;
+        }
+
+        this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+        void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
+        return updatedDocument.version;
+    }
+
     private startRefreshRequest(): number {
         this.latestRefreshRequestId += 1;
         return this.latestRefreshRequestId;
@@ -355,15 +365,13 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
+            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
             await this.panel.webview.postMessage({
                 command: 'focusPositionEditApplied',
                 focusId: msg.focusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 
             return true;
@@ -393,15 +401,13 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
+            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
             await this.panel.webview.postMessage({
                 command: 'continuousFocusPositionEditApplied',
                 focusTreeEditKey: msg.focusTreeEditKey,
                 targetX: msg.targetX,
                 targetY: msg.targetY,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 
             return true;
@@ -441,9 +447,7 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
+            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
             await this.panel.webview.postMessage({
                 command: 'focusLinkEditApplied',
                 parentFocusId: msg.parentFocusId,
@@ -451,7 +455,7 @@ export class FocusTreePreview extends PreviewBase {
                 childFocusId: msg.childFocusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 
             return true;
@@ -485,14 +489,12 @@ export class FocusTreePreview extends PreviewBase {
             }
 
             const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
+            const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument);
             await this.panel.webview.postMessage({
                 command: 'focusExclusiveLinkEditApplied',
                 sourceFocusId: msg.sourceFocusId,
                 targetFocusId: msg.targetFocusId,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+                documentVersion: updatedDocumentVersion ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 
             return true;
@@ -518,13 +520,12 @@ export class FocusTreePreview extends PreviewBase {
 
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+                const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument) ?? updatedDocument.version;
                 await this.panel.webview.postMessage({
                     command: 'deleteFocusApplied',
                     focusIds,
-                    documentVersion: updatedDocument.version,
+                    documentVersion: updatedDocumentVersion,
                 });
-                void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
             }
 
             return true;
@@ -555,16 +556,15 @@ export class FocusTreePreview extends PreviewBase {
 
             const updatedDocument = getDocumentByUri(this.uri);
             if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+                const updatedDocumentVersion = this.reconcileAfterLocalEdit(updatedDocument) ?? updatedDocument.version;
                 await this.panel.webview.postMessage({
                     command: 'createFocusTemplateApplied',
                     treeEditKey: msg.treeEditKey,
                     focusId: placeholderFocusId,
                     targetAbsoluteX: msg.targetAbsoluteX,
                     targetAbsoluteY: msg.targetAbsoluteY,
-                    documentVersion: updatedDocument.version,
+                    documentVersion: updatedDocumentVersion,
                 });
-                void this.refreshDocument(updatedDocument, { ignorePendingLocalEditDocumentVersion: true });
                 if (placeholderRange) {
                     await vscode.window.showTextDocument(updatedDocument, {
                         selection: new vscode.Range(

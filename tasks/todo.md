@@ -197,3 +197,22 @@
 - `npm run test` passed.
 - `npm run test-ui` passed, including the focus preview smoke test.
 - `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Edit Reconcile Fix 2026-04-08
+
+## Plan
+- [x] focustree edit 메시지와 apply 후 refresh 경로를 다시 확인해 공통 실패 지점을 찾는다
+- [x] create/move/link/delete를 모두 authoritative host refresh로 다시 reconcile하도록 보정한다
+- [x] create 직후 host refresh 전에도 placeholder가 보이도록 webview fallback을 보강한다
+- [x] 관련 테스트를 보강하고 compile/test로 회귀를 검증한다
+
+## Review
+- `src/previewdef/focustree/index.ts`는 이제 create, delete, drag move, continuous focus move, prerequisite link, mutually exclusive link가 모두 같은 `reconcileAfterLocalEdit()`를 타도록 바뀌었다. 즉 optimistic webview ack는 유지하되, 성공한 문서 편집은 항상 즉시 host-side `refreshDocument(..., { ignorePendingLocalEditDocumentVersion: true })`로 다시 파싱해 authoritative snapshot을 보낸다.
+- 이번 회귀의 공통 원인은 일부 편집 경로가 local webview mutation에만 의존하고 host 재파싱은 정상 document-change 이벤트에 맡겨 두었던 점이었다. 최근 로딩 최적화 이후에는 이 경로가 더 취약해져서 create 외의 edit 기능이 실제 parsed preview 상태와 쉽게 어긋날 수 있었다.
+- `src/previewdef/focustree/localpreview.ts`와 `webviewsrc/focustree.ts`는 아직 host가 새 `renderedFocus` 템플릿을 보내기 전에도 freshly created placeholder focus를 최소 카드로 렌더하도록 보강되었다. 그래서 double click create는 더 이상 빈 slot 상태로 남지 않고, 뒤따르는 authoritative refresh가 오면 실제 rendered template로 자연스럽게 교체된다.
+- `test/unit/focustree-localpreview.test.ts`에는 pending placeholder 판별과 fallback template 생성 회귀 체크를 추가해, create 직후 프리뷰가 완전히 비어 버리는 문제를 다시 놓치지 않도록 했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed on rerun. 첫 시도는 VS Code test runtime mutex/launch race로 실패했지만, 같은 코드 상태에서 즉시 재실행 시 11 smoke tests가 모두 통과했다.

@@ -21,7 +21,12 @@ import {
 } from "../src/previewdef/focustree/conditionpresets";
 import { getCachedFocusTreeLayoutPlan, invalidateCachedFocusTreeLayoutPlan } from "../src/previewdef/focustree/layoutplan";
 import { collectCompletedFocusIds } from "../src/previewdef/focustree/conditionexprs";
-import { applyLocalFocusDeletion, createPlaceholderFocus } from "../src/previewdef/focustree/localpreview";
+import {
+    applyLocalFocusDeletion,
+    createPlaceholderFocus,
+    isPendingPlaceholderFocus,
+    renderPendingPlaceholderFocusTemplate,
+} from "../src/previewdef/focustree/localpreview";
 import { getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
@@ -2045,8 +2050,16 @@ function getFocusIconClassName(focus: Focus, exprs: ConditionItem[]): string {
 function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string | undefined {
     const focus = focusTree.focuses[focusId];
     const renderedFocus: Record<string, string> = (window as any).renderedFocus ?? {};
-    const template = renderedFocus[focusId];
-    if (!focus || !template) {
+    if (!focus) {
+        return undefined;
+    }
+
+    const template = renderedFocus[focusId] ?? (
+        isPendingPlaceholderFocus(focus)
+            ? renderPendingPlaceholderFocusTemplate(focus)
+            : undefined
+    );
+    if (!template) {
         return undefined;
     }
 
