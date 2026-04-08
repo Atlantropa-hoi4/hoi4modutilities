@@ -27,6 +27,7 @@ import {
     isPendingPlaceholderFocus,
     renderPendingPlaceholderFocusTemplate,
 } from "../src/previewdef/focustree/localpreview";
+import { LatestOnlyBuildGuard } from "../src/previewdef/focustree/buildguard";
 import { getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
@@ -102,6 +103,7 @@ type FocusPositionDragBinding = { element: HTMLElement; eventName: 'mousedown' |
 let focusPositionDragBindings: Record<string, FocusPositionDragBinding> = {};
 let focusTreeSnapshotVersion: number = 0;
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
+const contentBuildGuard = new LatestOnlyBuildGuard();
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
 let pendingFocusLinkParentIds: string[] = [];
@@ -1832,16 +1834,16 @@ function updateDeleteFocusAfterApply(focusIds: readonly string[]) {
     }
 }
 
-async function buildContent() {
+async function buildContent(): Promise<boolean> {
+    const buildVersion = contentBuildGuard.start();
     const checkedFocusesExprs = getCheckedFocusConditionExprs();
-    clearCheckedFocuses();
 
     const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
     const focustreeplaceholder = document.getElementById('focustreeplaceholder') as HTMLDivElement;
     const styleTable = new StyleTable();
     const focusTree = getCurrentFocusTree();
     if (!focusTree) {
-        return;
+        return false;
     }
     const exprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs, ...selectedExprs];
     const gridbox: GridBoxType = (window as any).gridBox;
@@ -1850,6 +1852,40 @@ async function buildContent() {
     const focusGridBoxItems = layoutPlan.focusGridBoxItems;
     const focusPosition = layoutPlan.focusPosition;
     const completableFocusIds = layoutPlan.completableFocusIds;
+    const leftPadding = (gridbox.position.x._value ?? 0)
+        + (focusCreateSidePaddingColumns * xGridSize)
+        - Math.min(layoutPlan.minX * xGridSize, 0);
+    const topPadding = (gridbox.position.y._value ?? 0)
+        + (focusCreateTopPaddingRows * yGridSize)
+        - Math.min(layoutPlan.minY * yGridSize, 0);
+    const renderContext: FocusRenderContext = {
+        exprs: renderExprs,
+        focusPositions: focusPosition,
+        renderedFocus: (window as any).renderedFocus ?? {},
+    };
+
+    const focusTreeContent = await renderGridBoxCommon({
+        ...gridbox,
+        position: {
+            ...gridbox.position,
+            x: toNumberLike(leftPadding),
+            y: toNumberLike(topPadding),
+        }
+    }, {
+        size: { width: 0, height: 0 },
+        orientation: 'upper_left'
+    }, {
+        id: 'focus-gridbox',
+        styleTable,
+        items: arrayToMap(focusGridBoxItems, 'id'),
+        onRenderItem: item => Promise.resolve(renderCurrentFocusHtml(focusTree, item.id, renderContext) ?? ''),
+        cornerPosition: 0.5,
+    });
+    if (!contentBuildGuard.isCurrent(buildVersion)) {
+        return false;
+    }
+
+    clearCheckedFocuses();
     currentCompletableFocusIds = completableFocusIds;
     currentRenderedFocusTree = focusTree;
     if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
@@ -1862,32 +1898,8 @@ async function buildContent() {
     setCurrentFocusPositions({ ...focusPosition });
     currentRenderedExprs = renderExprs;
     applyContinuousFocusElementPosition(focusTree);
-    const leftPadding = (gridbox.position.x._value ?? 0)
-        + (focusCreateSidePaddingColumns * xGridSize)
-        - Math.min(layoutPlan.minX * xGridSize, 0);
     currentGridLeftPadding = leftPadding;
-    currentGridTopPadding = (gridbox.position.y._value ?? 0)
-        + (focusCreateTopPaddingRows * yGridSize)
-        - Math.min(layoutPlan.minY * yGridSize, 0);
-
-    const focusTreeContent = await renderGridBoxCommon({
-        ...gridbox,
-        position: {
-            ...gridbox.position,
-            x: toNumberLike(leftPadding),
-            y: toNumberLike(currentGridTopPadding),
-        }
-    }, {
-        size: { width: 0, height: 0 },
-        orientation: 'upper_left'
-    }, {
-        id: 'focus-gridbox',
-        styleTable,
-        items: arrayToMap(focusGridBoxItems, 'id'),
-        onRenderItem: item => Promise.resolve(renderCurrentFocusHtml(focusTree, item.id) ?? ''),
-        cornerPosition: 0.5,
-    });
-
+    currentGridTopPadding = topPadding;
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement((window as any).styleNonce);
     const minimumCanvasWidth = currentGridLeftPadding + Math.max(layoutPlan.maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(layoutPlan.maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
@@ -1906,6 +1918,7 @@ async function buildContent() {
     bindFocusPositionDragHandlers();
     subscribeNavigators();
     updateFocusPositionEditUi();
+    return true;
 }
 
 function updateSelectedFocusTree(clearCondition: boolean) {
@@ -2047,9 +2060,19 @@ function getFocusIconClassName(focus: Focus, exprs: ConditionItem[]): string {
     return `st-focus-icon-${normalizeForStyle('-empty')}`;
 }
 
-function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string | undefined {
+interface FocusRenderContext {
+    exprs: ConditionItem[];
+    focusPositions: Record<string, NumberPosition>;
+    renderedFocus: Record<string, string>;
+}
+
+function renderCurrentFocusHtml(
+    focusTree: FocusTree,
+    focusId: string,
+    context?: FocusRenderContext,
+): string | undefined {
     const focus = focusTree.focuses[focusId];
-    const renderedFocus: Record<string, string> = (window as any).renderedFocus ?? {};
+    const renderedFocus = context?.renderedFocus ?? (window as any).renderedFocus ?? {};
     if (!focus) {
         return undefined;
     }
@@ -2063,12 +2086,12 @@ function renderCurrentFocusHtml(focusTree: FocusTree, focusId: string): string |
         return undefined;
     }
 
-    const position = currentFocusPositions[focusId];
+    const position = context?.focusPositions[focusId] ?? currentFocusPositions[focusId];
     if (!position) {
         return undefined;
     }
 
-    const iconClass = getFocusIconClassName(focus, currentRenderedExprs);
+    const iconClass = getFocusIconClassName(focus, context?.exprs ?? currentRenderedExprs);
     return template
         .replace('{{position}}', `${position.x}, ${position.y}`)
         .replace('{{iconClass}}', iconClass);
@@ -2107,7 +2130,10 @@ function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<
                     const rect = checkbox.getBoundingClientRect();
                     const oldLeft = rect.left;
                     const oldTop = rect.top;
-                    await buildContent();
+                    const applied = await buildContent();
+                    if (!applied) {
+                        return;
+                    }
 
                     const newCheckbox = document.getElementById(`checkbox-${normalizeForStyle(focus.id)}`) as HTMLInputElement;
                     if (newCheckbox) {
@@ -2373,7 +2399,10 @@ function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | und
 
 let retriggerSearch: () => void = () => {};
 const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }) => {
-    await buildContent();
+    const applied = await buildContent();
+    if (!applied) {
+        return;
+    }
     if (options?.restoreScroll) {
         scrollToState();
     }

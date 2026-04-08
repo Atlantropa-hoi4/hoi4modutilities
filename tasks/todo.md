@@ -233,3 +233,21 @@
 - `npm run compile-ts` passed.
 - `npm run test` passed.
 - `npm run test-ui` passed.
+
+# FocusTree Edit Reflection Race 2026-04-08
+
+## Plan
+- [x] edit ack 직후 webview rebuild와 host snapshot update가 서로 덮어쓰는 race가 있는지 확인한다
+- [x] stale async rebuild가 최신 authoritative snapshot DOM을 다시 덮지 못하도록 focustree webview rebuild 경로를 직렬화한다
+- [x] 관련 회귀 테스트를 보강하고 compile/test로 다시 검증한다
+
+## Review
+- `webviewsrc/focustree.ts`의 `buildContent()`는 이제 `LatestOnlyBuildGuard` 토큰을 받아 가장 마지막에 시작한 rebuild만 DOM에 적용한다. 오래 걸리는 `renderGridBoxCommon()`이 늦게 끝나더라도, 그 사이 도착한 최신 host snapshot 이후 stale build 결과는 버려진다.
+- 같은 파일의 `renderCurrentFocusHtml()`는 build-local render context를 받을 수 있게 바뀌어, async rebuild 중간에 전역 `currentRenderedExprs`나 `currentFocusPositions`가 다른 갱신에 의해 바뀌어도 해당 build가 캡처한 snapshot 기준으로만 렌더된다.
+- checkbox 기반 자체 rebuild도 동일한 latest-only guard를 타게 정리해서, 조건 토글과 host refresh가 겹칠 때도 이전 build가 최신 트리를 다시 덮어쓰지 않도록 맞췄다.
+- `src/previewdef/focustree/buildguard.ts`와 `test/unit/focustree-buildguard.test.ts`를 추가해, 새 build가 시작되면 이전 build token이 무효화되는 최소 회귀 조건을 unit test로 고정했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test` passed.
+- `npm run test-ui` passed. 이 저장소 fixture 특성상 missing HOI4 asset `UserError`와 VS Code runtime mutex 로그는 여전히 출력되지만, smoke assertions는 11개 모두 녹색이었다.
