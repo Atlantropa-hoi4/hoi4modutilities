@@ -221,6 +221,7 @@ const table: Partial<typeof __table> = {
     "worldmap.warnings.statecategoryconflict": "有多个省份分类使用名称“{0}”。",
     "worldmap.warnings.statecategorynotexist": "省份{0}使用的分类不存在：{1}。",
     "worldmap.warnings.statehassea": "海洋地块{0}不应当属于省份中。",
+    "worldmap.warnings.statehistorymissing": "省份没有历史数据。",
     "worldmap.warnings.stateidconflict": "有多个省份使用编号{0}。",
     "worldmap.warnings.stateidtoolarge": "省份编号过大，最大值：{0}",
     "worldmap.warnings.stateinmultiplestrategicregions": "省份{0}中的地块{1}和其他地块不在相同战略区域中。",
