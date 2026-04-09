@@ -269,3 +269,39 @@
 - `npm run compile-ts` passed.
 - `npm run test` passed.
 - `npm run test-ui` passed. 이 저장소 fixture 특성상 missing HOI4 asset `UserError`와 VS Code runtime mutex 로그는 남지만, smoke assertions는 11개 모두 녹색이었다.
+
+# FocusTree Stable Rewrite 2026-04-09
+
+## Plan
+- [x] `v0.13.22` 기준선과 현재 focustree host/webview 흐름을 다시 대조해, 유지할 현재 기능 계약과 버릴 내부 복잡도를 명시한다
+- [x] focustree host orchestration을 안정 버전식 명시적 단계로 재작성한다
+- [x] webview update 적용 경로를 host 계약에 맞게 단순화하고 current feature set을 유지한다
+- [x] 회귀 테스트를 새 구조 기준으로 정리하고 필요한 경우 추가한다
+- [x] compile/test로 검증하고 review/verification 결과를 남긴다
+
+## Notes
+- 사용자 요청: 이전 안정 버전을 참고하되, 현재 포커스 기능은 전부 유지하면서 focus 관련 기능을 사실상 새로 쓴다.
+- 기준선: `v0.13.22`의 강점은 구조 편집 후 full refresh 기준이 단순하고 예측 가능했다는 점이다.
+- 현재 유지 대상:
+- 조건 선택 및 preset 저장/복원
+- edit mode, drag move, continuous focus move, blank-space create, delete, prerequisite/exclusive link 편집
+- multi-select, hover relation highlight, inlay window 선택, warning/selector UI, retain-context 기반 reopen 안정성
+- optimistic local preview와 authoritative host reconcile의 조합
+- 재작성 목표:
+- `src/previewdef/focustree/index.ts` 중심의 refresh/edit orchestration을 작은 단계와 명시적 상태 전이로 다시 정리한다
+- 가능한 범위에서 host/webview update 계약을 단순화해 “stable baseline의 예측 가능성 + current feature set”을 같이 만족시킨다
+- 완료 조건:
+- focus preview가 열리고, 기존 edit 동작들이 회귀 없이 유지되며, 관련 unit/integration 테스트가 통과한다
+
+## Review
+- `src/previewdef/focustree/previewsession.ts`를 새로 추가해 focustree preview의 실제 상태 기계를 `initialize -> preload -> ready refresh -> deferred hydration -> local edit reconcile -> structural reload` 단계로 분리했다. 이전 안정 버전의 예측 가능한 full-refresh 사고방식을 유지하면서, 현재 버전의 deferred preload와 snapshot update 흐름도 같은 세션 안에서 관리하게 됐다.
+- `src/previewdef/focustree/index.ts`는 이제 preview definition, preset persistence, 그리고 edit command routing만 담당한다. 기존에는 shell 렌더링, refresh request 경쟁 제어, pending base-state 재사용, local edit reconcile, structural full reload가 한 파일에 섞여 있었는데, 이번에 host orchestration을 세션 클래스로 내려서 책임을 분리했다.
+- current feature set은 유지했다. 조건 preset 저장/복원, drag/continuous move의 optimistic ack 후 authoritative reconcile, create/delete/link/exclusive의 structural reload, retain-context 기반 reopen, 그리고 기존 webview message contract는 그대로 남겼다.
+- 결과적으로 이번 라운드는 patch 알고리즘이나 webview affordance를 바꾸기보다, `v0.13.22`의 안정적인 refresh 모델을 현재 기능 집합 위에 다시 세운 재구성에 가깝다. 이후 focus 관련 회귀가 나와도 host-side 상태 전이를 한 곳에서 추적할 수 있게 됐다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm test` passed.
+- `npm run test-ui` passed.
+- 참고: 첫 `npm test` 실패는 코드 문제보다 `npm test`와 `npm run test-ui`를 동시에 돌리며 `static/` 빌드 산출물을 건드린 병렬 실행 레이스였다. 같은 코드 상태에서 순차 재실행 시 모두 통과했다.
+- 2026-04-09 재검증에서도 같은 결론을 확인했다. 병렬 실행 시 `clean:out`/`compile-tests` 경쟁으로 `test-ui`가 흔들릴 수 있지만, 순차 실행에서는 focus preview smoke를 포함한 11개 UI 테스트가 통과했다.
