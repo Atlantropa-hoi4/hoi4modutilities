@@ -335,3 +335,92 @@
 - `npm run test:unit` passed with 127 tests.
 - `npm run test-ui` passed with 11 smoke tests.
 - 참고: `test-ui` 실행 로그에는 fixture 특성상 missing HOI4 asset `UserError`와 VS Code mutex 경고가 계속 나오지만, smoke assertions는 모두 통과했다.
+
+# Focus Stable Rewrite v0.13.20 2026-04-09
+
+## Plan
+- [x] `v0.13.20` focustree 기준선과 현재 HEAD 기능 계약을 다시 대조해 유지/단순화 범위를 고정한다
+- [x] `tasks/todo.md` 기준으로 host focus preview orchestration을 안정 버전식 명시적 흐름으로 재작성한다
+- [x] 현재 추가 기능을 유지하는 선에서 edit/session/update 경로를 새 host 흐름에 맞게 다시 묶는다
+- [x] 필요한 테스트를 갱신 또는 추가하고 순차 검증으로 compile/test-ui까지 확인한다
+
+## Notes
+- 사용자 요청: 이전 안정 버전 `v0.13.20`을 표준으로 삼되, 이후 새로 생성된 focus 기능은 유지하면서 관련 코드를 전부 다시 쓴다.
+- 기준선에서 가져올 핵심:
+- `index.ts` 중심의 단순한 refresh 수명주기
+- webview ready 전/후의 예측 가능한 full refresh 우선 정책
+- 구조 편집 후에는 복잡한 부분 갱신보다 안정적인 전체 재구성 우선
+- 현재 유지 대상:
+- condition selector 및 preset 저장/복원
+- drag move, continuous focus move, blank-space create, delete, prerequisite/exclusive link 편집
+- multi-select, hover relation highlight, inlay window, warning/selector UI
+- retain-context 기반 reopen 안정성, optimistic local preview, snapshot-based update
+
+## Review
+- `src/previewdef/focustree/previewsession.ts`를 `v0.13.20` 스타일의 직접 상태 머신으로 다시 썼다. pending local edit, webview ready, pending base state, deferred hydration, latest request id를 세션 내부 필드로 직접 관리해 refresh 흐름을 한 파일에서 따라갈 수 있게 했다.
+- `loaderadapter.ts`, `snapshotbuilder.ts`, `patchplanner.ts`, `runtime.ts`의 얇은 host 래퍼 계층을 제거했다. 실제 shell 렌더, base state 생성, full snapshot 생성, partial/full update 결정은 이제 `previewsession.ts`가 직접 수행한다.
+- 구조 편집과 일반 편집의 경계는 유지했다. 이동류 edit는 optimistic ack 뒤 authoritative full snapshot reconcile을 계속 사용하고, create/delete/link/exclusive 같은 구조 편집은 기존처럼 full document reload 경로를 사용한다.
+- `src/previewdef/focustree/edithandler.ts`는 세션의 새 계약에 맞게 정리했다. edit handler가 더 이상 별도 runtime result 객체를 만들지 않고, 문서 버전만 바로 사용한다.
+- `test/unit/focustree-previewsession.test.ts`는 새 세션 계약 기준으로 다시 썼다. shell fallback, cached base state 재사용, partial update, stale refresh discard, local edit reconcile, structural reload를 직접 검증한다.
+- 결과적으로 host 쪽 focus preview는 `v0.13.20`의 예측 가능한 수명주기 쪽으로 되돌아갔고, 이후 추가된 preset/deferred asset load/incremental snapshot 기능은 그 위에 유지됐다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 123 tests.
+- `npm install` ran to restore the missing local `esbuild` dependency that blocked `npm run build`/`npm run test-ui` in this workspace.
+- `npm run test-ui` passed with 11 smoke tests, including the focus preview fixture.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# Focus Strict Rollback v0.13.20 2026-04-09
+
+## Plan
+- [x] `v0.13.20` 기준 파일 구성을 다시 확인하고, 기준선에 없는 host helper를 제거할지 여부를 정한다
+- [x] focus host orchestration을 다시 `index.ts` 중심 구조로 되돌리고 추가 기능만 최소 범위로 접합한다
+- [x] rollback 후 compile, unit, UI smoke, VSIX packaging까지 순차 검증한다
+
+## Notes
+- 사용자 요청: 추가된 기능과 명시적으로 유지해야 하는 수정 기능만 남기고, 그 외 focus 관련 host 구조는 가능한 한 `v0.13.20` 기준으로 되돌린다.
+- 이번 라운드의 핵심은 “새 구조를 더 정리”하는 것이 아니라, 기준선에 없던 host orchestration 파일들을 걷어내고 실제 기준 파일인 `index.ts`로 수명주기를 되돌리는 것이었다.
+
+## Review
+- `src/previewdef/focustree/index.ts`가 다시 focus preview host의 중심이 되었다. `v0.13.20`처럼 preview lifecycle, document refresh, local edit apply, structural reload, webview ready 처리를 한 클래스 안에서 직접 따라갈 수 있게 정리했다.
+- 기준선에 없던 host helper인 `src/previewdef/focustree/edithandler.ts`, `src/previewdef/focustree/previewsession.ts`, `src/previewdef/focustree/loaderadapter.ts`, `src/previewdef/focustree/snapshotbuilder.ts`, `src/previewdef/focustree/patchplanner.ts`, `src/previewdef/focustree/runtime.ts`를 제거했다.
+- 다만 현재 명시적으로 유지해야 하는 이후 기능은 그대로 접합했다. condition preset 저장/복원, continuous focus move, grouped prerequisite link/delete payload, deferred/full asset load, incremental snapshot update, retain-context panel 옵션은 새 `index.ts` 안으로 다시 녹였다.
+- 테스트도 기준선에 없는 세션 전용 회귀 테스트를 함께 제거했다. `test/unit/focustree-previewsession.test.ts`와 `test/unit/focustree-runtime.test.ts`는 삭제됐고, 남아 있는 focus unit/UI 검증은 현재 기능 계약 기준으로 계속 통과한다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 117 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 보이지만, smoke assertions는 모두 통과했다.
+
+# Focus Full Rollback v0.13.20 2026-04-10
+
+## Plan
+- [x] `v0.13.20` 태그의 실제 focus 관련 파일 집합을 다시 확인한다
+- [x] focus source, webview, unit tests를 `v0.13.20` 스냅샷으로 그대로 복원한다
+- [x] 태그에 없던 focus 전용 파일과 테스트를 제거한다
+- [x] compile, unit, UI smoke, VSIX packaging까지 순차 검증한다
+
+## Notes
+- 사용자 보정: "더 공격적으로, 완전히 롤백"
+- 이번 라운드는 이전처럼 `v0.13.20` 구조 위에 이후 기능을 다시 얹는 것이 아니라, 포커스 서브시스템 자체를 태그 시점의 파일 구성과 구현으로 최대한 그대로 되돌리는 작업이다.
+- 대상 기준 파일:
+- `src/previewdef/focustree/{contentbuilder,focusspacing,index,inlay,loader,positioneditcommon,positioneditmetadata,positioneditservice,positioning,schema}.ts`
+- `[webviewsrc/focustree.ts](C:\Users\Administrator\Documents\Code\hoi4modutilities\webviewsrc\focustree.ts)`
+- `test/unit/focustree-{focusspacing,positionedit,schema}.test.ts`
+
+## Review
+- 포커스 서브시스템의 기준 파일들을 `v0.13.20` 내용으로 직접 복원했다. 대상은 `src/previewdef/focustree/{contentbuilder,focusspacing,index,inlay,loader,positioneditcommon,positioneditmetadata,positioneditservice,positioning,schema}.ts`, `webviewsrc/focustree.ts`, `test/unit/focustree-{focusspacing,positionedit,schema}.test.ts`였다.
+- 태그에 없던 focus 전용 파일은 전부 제거했다. `buildguard`, `conditionexprs`, `conditionpresets`, `focusicongfx`, `focusiconlayout`, `focuslint`, `focusrender`, `hoverrelations`, `inlayshared`, `layoutplan`, `localpreview`, `relationanchor`, `renderpayloadpatch`, `selectionstate`, `webviewupdate`와 이전에 도입했던 host helper(`edithandler`, `previewsession`, `loaderadapter`, `snapshotbuilder`, `patchplanner`, `runtime`)가 모두 정리됐다.
+- webview 쪽도 `webviewsrc/focustree.ts`를 태그 기준으로 되돌리고, 태그에 없던 `webviewsrc/focustree/messageapply.ts`, `webviewsrc/focustree/state.ts`를 제거했다.
+- 테스트는 `v0.13.20`에 맞는 focus 단위 테스트만 남겼다. 그 결과 focus 관련 unit suite는 58개 테스트 수준으로 줄었고, 이후 추가된 focustree 전용 회귀 테스트들은 함께 제거됐다.
+- 현재 코드베이스와의 접합 때문에 `src/previewdef/focustree/index.ts`에는 한 가지 최소 적응만 남겼다. 구버전의 preview 등록 방식을 현재 `PreviewDescriptor` 계약에 맞게 바꾼 부분이다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 58 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
