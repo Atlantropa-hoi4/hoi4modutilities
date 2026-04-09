@@ -33,6 +33,8 @@ import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanc
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
 import { clampFocusTreeIndex as clampFocusTreeIndexValue, resolveFocusTreeSelection as resolveFocusTreeSelectionValue } from "../src/previewdef/focustree/selectionstate";
 import { FocusTreeContentUpdateDecision, FocusTreeContentUpdateMessage, getFocusTreeContentUpdateDecision } from "../src/previewdef/focustree/webviewupdate";
+import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } from "./focustree/messageapply";
+import { createFocusTreeWebviewInitialState } from "./focustree/state";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -77,20 +79,22 @@ const useConditionInFocus: boolean = (window as any).useConditionInFocus;
 let focusTrees: FocusTree[] = (window as any).focusTrees;
 type PendingFocusLinkType = 'prerequisite' | 'exclusive';
 const restoredState = getState();
-
-let selectedExprs: ConditionItem[] = restoredState.selectedExprs ?? [];
-let conditionPresetsByTree: FocusConditionPresetsByTree = normalizeConditionPresetsByTree(
-    restoredState.conditionPresetsByTree ?? (window as any).persistedConditionPresetsByTree ?? {},
+const initialWebviewState = createFocusTreeWebviewInitialState(
+    restoredState,
+    (window as any).persistedConditionPresetsByTree,
 );
-let selectedFocusTreeIndex: number = restoredState.selectedFocusTreeIndex ?? 0;
-let selectedFocusTreeId: string | undefined = restoredState.selectedFocusTreeId;
-let selectedFocusIdsByTree: Record<string, string[]> = restoredState.selectedFocusIdsByTree ?? {};
+
+let selectedExprs: ConditionItem[] = initialWebviewState.selectedExprs;
+let conditionPresetsByTree: FocusConditionPresetsByTree = initialWebviewState.conditionPresetsByTree;
+let selectedFocusTreeIndex: number = initialWebviewState.selectedFocusTreeIndex;
+let selectedFocusTreeId: string | undefined = initialWebviewState.selectedFocusTreeId;
+let selectedFocusIdsByTree: Record<string, string[]> = initialWebviewState.selectedFocusIdsByTree;
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let conditionPresetsDropdown: DivDropdown | undefined = undefined;
 let inlayWindows: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
-let focusPositionEditMode: boolean = !!restoredState.focusPositionEditMode;
+let focusPositionEditMode: boolean = initialWebviewState.focusPositionEditMode;
 let currentRenderedFocusTree: FocusTree | undefined = undefined;
 let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedFocusElements: Record<string, HTMLElement> = {};
@@ -2290,58 +2294,49 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
     dynamicStyleCss?: string;
     documentVersion?: number;
 }) {
-    if (message.snapshotVersion < focusTreeSnapshotVersion) {
-        return false;
-    }
-    if (message.documentVersion !== undefined && message.documentVersion < focusPositionDocumentVersion) {
-        return false;
-    }
-
-    const changedSlots = new Set(message.changedSlots ?? []);
-    const previousSelectedTreeId = getCurrentSelectionTreeId();
-    if (changedSlots.has('treeDefinitions')) {
-        if (message.focusTrees) {
-            focusTrees = message.focusTrees;
-            (window as any).focusTrees = message.focusTrees;
-        } else if (message.focusTreePatches) {
-            applyFocusTreePatches(message.focusTreePatches);
-        }
-        setSelectedFocusTreeById(previousSelectedTreeId ?? message.selectedTreeId);
-    }
-    if (changedSlots.has('treeBody') && message.renderedFocus) {
-        (window as any).renderedFocus = message.renderedFocus;
-    } else if (changedSlots.has('treeBody')) {
-        applyStringMapPatch('renderedFocus', message.renderedFocusPatch, message.removedRenderedFocusIds);
-    }
-    if (changedSlots.has('inlays') && message.renderedInlayWindows) {
-        (window as any).renderedInlayWindows = message.renderedInlayWindows;
-    } else if (changedSlots.has('inlays')) {
-        applyStringMapPatch('renderedInlayWindows', message.renderedInlayWindowPatch, message.removedRenderedInlayWindowIds);
-    }
-    if (changedSlots.has('selector')) {
-        refreshFocusTreeSelectorOptions();
-    }
-    if (changedSlots.has('warnings')) {
-        refreshWarningsButtonVisibility();
-    }
-    if (changedSlots.has('layout') && message.gridBox) {
-        (window as any).gridBox = message.gridBox;
-    }
-    if (changedSlots.has('layout') && message.xGridSize !== undefined) {
-        xGridSize = message.xGridSize;
-        (window as any).xGridSize = message.xGridSize;
-    }
-    if (changedSlots.has('layout') && message.yGridSize !== undefined) {
-        yGridSize = message.yGridSize;
-        (window as any).yGridSize = message.yGridSize;
-    }
-
-    if (changedSlots.has('styleDeps')) {
-        replaceFocusTreeDynamicStyles(message.dynamicStyleCss);
-    }
-    focusTreeSnapshotVersion = message.snapshotVersion;
-    focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
-    return true;
+    return applyFocusTreeContentUpdateMessage(message, {
+        getSnapshotVersion: () => focusTreeSnapshotVersion,
+        setSnapshotVersion: snapshotVersion => {
+            focusTreeSnapshotVersion = snapshotVersion;
+        },
+        getDocumentVersion: () => focusPositionDocumentVersion,
+        setDocumentVersion: documentVersion => {
+            focusPositionDocumentVersion = documentVersion;
+        },
+        getCurrentSelectionTreeId,
+        setSelectedFocusTreeById,
+        setFocusTrees: nextFocusTrees => {
+            focusTrees = nextFocusTrees;
+            (window as any).focusTrees = nextFocusTrees;
+        },
+        applyFocusTreePatches,
+        setRenderedFocus: renderedFocus => {
+            (window as any).renderedFocus = renderedFocus;
+        },
+        patchRenderedFocus: (changedEntries, removedKeys) => {
+            applyStringMapPatch('renderedFocus', changedEntries, removedKeys);
+        },
+        setRenderedInlayWindows: renderedInlayWindows => {
+            (window as any).renderedInlayWindows = renderedInlayWindows;
+        },
+        patchRenderedInlayWindows: (changedEntries, removedKeys) => {
+            applyStringMapPatch('renderedInlayWindows', changedEntries, removedKeys);
+        },
+        refreshFocusTreeSelectorOptions,
+        refreshWarningsButtonVisibility,
+        setGridBox: gridBox => {
+            (window as any).gridBox = gridBox;
+        },
+        setGridSizeX: nextXGridSize => {
+            xGridSize = nextXGridSize;
+            (window as any).xGridSize = nextXGridSize;
+        },
+        setGridSizeY: nextYGridSize => {
+            yGridSize = nextYGridSize;
+            (window as any).yGridSize = nextYGridSize;
+        },
+        replaceDynamicStyleCss: replaceFocusTreeDynamicStyles,
+    });
 }
 
 function applyIncrementalCurrentTreeUpdate(
@@ -2659,7 +2654,7 @@ window.addEventListener('load', tryRun(async function() {
 
         const searchbox = document.getElementById('searchbox') as HTMLInputElement;
         let currentNavigatedIndex = 0;
-        let oldSearchboxValue: string = getState().searchboxValue || '';
+        let oldSearchboxValue: string = initialWebviewState.searchboxValue;
         let searchedFocus: HTMLDivElement[] = search(oldSearchboxValue, false);
 
         searchbox.value = oldSearchboxValue;

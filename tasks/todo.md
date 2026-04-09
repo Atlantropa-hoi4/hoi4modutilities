@@ -305,3 +305,33 @@
 - `npm run test-ui` passed.
 - 참고: 첫 `npm test` 실패는 코드 문제보다 `npm test`와 `npm run test-ui`를 동시에 돌리며 `static/` 빌드 산출물을 건드린 병렬 실행 레이스였다. 같은 코드 상태에서 순차 재실행 시 모두 통과했다.
 - 2026-04-09 재검증에서도 같은 결론을 확인했다. 병렬 실행 시 `clean:out`/`compile-tests` 경쟁으로 `test-ui`가 흔들릴 수 있지만, 순차 실행에서는 focus preview smoke를 포함한 11개 UI 테스트가 통과했다.
+
+# Focus Subsystem Clean Rewrite 2026-04-09
+
+## Plan
+- [x] `v0.13.21` 기준 동작과 현재 HEAD의 추가 기능 계약을 동시에 만족하는 새 focustree 내부 타입과 계층을 도입한다
+- [x] host 쪽을 `snapshot builder` / `patch planner` / `loader adapter` / `edit command handler` / `session controller` 구조로 재편한다
+- [x] webview focustree 엔트리를 상태 저장소와 메시지 적용 계층으로 분리해 모놀리식 구조를 줄인다
+- [x] focustree session/patch/webview 회귀 테스트를 새 구조 기준으로 보강한다
+- [x] `npm run compile-ts`, `npm run build`, `npm run lint`, `npm run test:unit`, `npm run test-ui`로 검증하고 review/verification을 남긴다
+
+## Notes
+- 사용자 요청: 이전 안정 버전 `v0.13.21`을 기준선으로 삼되, 이후 추가된 현재 기능과 성능 특성까지 유지하면서 포커스 관련 기능을 전부 다시 작성한다.
+- 유지 대상: 관계 하이라이트, minimap, condition/tree selector, inlay, shared/joint focus, edit mode drag/create/delete/link/exclusive, multi-select, preset 저장/복원, tree-id 기반 selection 유지, deferred/full asset load, snapshot-based incremental update.
+
+## Review
+- `src/previewdef/focustree/runtime.ts`를 추가해 세션이 공유하는 내부 기준 타입을 `FocusTreeSnapshot`, `FocusTreePatchPlan`, `FocusTreeRuntimeState`, `FocusTreeSelectionState`, `FocusTreeLocalEditResult`로 명시했다. 새 세션/테스트는 이 타입을 기준으로 움직이고, 기존 외부 webview message 이름은 유지했다.
+- `src/previewdef/focustree/loaderadapter.ts`, `src/previewdef/focustree/snapshotbuilder.ts`, `src/previewdef/focustree/patchplanner.ts`, `src/previewdef/focustree/edithandler.ts`를 추가해 host 쪽 책임을 나눴다. 이제 loader snapshot 생성, full snapshot 조립, partial/full patch 결정, workspace edit 적용이 `previewsession.ts`와 `index.ts`에 직접 섞이지 않는다.
+- `src/previewdef/focustree/previewsession.ts`는 새 runtime state와 injected builder/planner를 사용하는 session controller로 정리되었다. pre-ready shell fallback, pending base-state 재사용, partial/full snapshot posting, stale refresh discard, local edit reconcile, structural full reload가 하나의 상태 기계로 정리됐다.
+- `src/previewdef/focustree/index.ts`는 preset persistence와 panel lifecycle, message routing만 남기고 실제 편집 명령 적용은 `FocusTreeEditCommandHandler`로 옮겨 얇은 facade로 축소했다.
+- `webviewsrc/focustree/state.ts`를 추가해 persisted selection/search/preset/edit-mode 초기화를 한 곳으로 모았고, `webviewsrc/focustree/messageapply.ts`를 추가해 host `focusTreeContentUpdated` payload 적용 로직을 별도 모듈로 분리했다. `webviewsrc/focustree.ts`는 이 모듈들을 사용하도록 바뀌어 모놀리식 entry의 중심 상태/메시지 축을 떼어냈다.
+- 기존 기능 계약은 유지했다. focus preview open, selection/tree restore, condition preset persistence, incremental snapshot update, structural full reload, optimistic local edit ack 후 authoritative reconcile, retained webview context 흐름은 그대로 작동한다.
+- 회귀 테스트를 보강했다. `test/unit/focustree-runtime.test.ts`, `test/unit/focustree-messageapply.test.ts`, `test/unit/focustree-previewsession.test.ts`를 추가해 runtime/session/message-apply 경계를 직접 검증하도록 했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run build` passed.
+- `npm run lint` passed.
+- `npm run test:unit` passed with 127 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- 참고: `test-ui` 실행 로그에는 fixture 특성상 missing HOI4 asset `UserError`와 VS Code mutex 경고가 계속 나오지만, smoke assertions는 모두 통과했다.
