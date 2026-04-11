@@ -37,6 +37,10 @@ export abstract class PreviewBase {
     public getDocumentChangeDebounceMs(): number {
         return 250;
     }
+
+    public getDebugState(): unknown {
+        return undefined;
+    }
     
     public dispose(): void {
         this.dependencyChangedEmitter.dispose();

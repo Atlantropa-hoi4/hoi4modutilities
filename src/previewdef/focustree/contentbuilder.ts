@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { FocusTree, Focus } from './schema';
-import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
+import { getSpriteByGfxName, getSpriteByGfxNameFromResolvedFiles, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
 import { forceError, NumberPosition } from '../../util/common';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
@@ -11,18 +11,27 @@ import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { useConditionInFocus } from '../../util/featureflags';
-import { getLocalisedTextQuick } from "../../util/localisationIndex";
-import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
+import { fitFocusIconToBounds } from './focusiconlayout';
+import { FocusConditionPresetsByTree } from './conditionpresets';
+import {
+    focusDefaultPlaceholderSize,
+    focusIconBottomGap,
+    focusIconSidePadding,
+    focusIconTopOffset,
+    focusTextMarginTop,
+    renderFocusHtmlTemplate,
+} from './focusrender';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
 
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTree[];
+    selectedTreeId?: string;
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     gridBox: HOIPartial<GridBoxType>;
@@ -33,35 +42,52 @@ export interface FocusTreeRenderPayload {
     focusToolbarHeight: number;
     focusPositionDocumentVersion: number;
     focusPositionActiveFile: string;
+    conditionPresetsByTree: FocusConditionPresetsByTree;
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
+    deferredAssetLoad: boolean;
 }
 
-export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
+export interface FocusTreeRenderBaseState {
+    focusTrees: FocusTree[];
+    allFocuses: Focus[];
+    allInlays: FocusTree["inlayWindows"][number][];
+    focusById: Record<string, Focus>;
+    gfxFiles: string[];
+    gridBox: HOIPartial<GridBoxType>;
+    xGridSize: number;
+    yGridSize: number;
+    focusPositionDocumentVersion: number;
+    focusPositionActiveFile: string;
+    conditionPresetsByTree: FocusConditionPresetsByTree;
+    hasFocusSelector: boolean;
+    hasWarningsButton: boolean;
+    loadDurationMs: number;
+    deferredAssetLoad: boolean;
+}
+
+export interface FocusTreeRenderPayloadBuildMetrics {
+    focusRenderDurationMs: number;
+    inlayRenderDurationMs: number;
+}
+
+export async function renderFocusTreeFile(
+    loader: FocusTreeLoader,
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
-        const renderState = await buildFocusTreeRenderState(loader, documentVersion);
+        const renderState = await buildFocusTreeRenderState(loader, documentVersion, conditionPresetsByTree);
         if (renderState.payload.focusTrees.length === 0) {
             const baseContent = localize('focustree.nofocustree', 'No focus tree.');
             return html(webview, baseContent, [setPreviewFileUriScript], []);
         }
 
-        return html(
-            webview,
-            renderState.body,
-            [
-                setPreviewFileUriScript,
-                ...renderState.scripts.map(c => ({ content: c })),
-                'common.js',
-                'focustree.js',
-            ],
-            [
-                'codicon.css',
-                'common.css',
-                { nonce: renderState.payload.styleNonce },
-            ],
-        );
+        return renderFocusTreeHtmlFromPayload(uri, webview, renderState.payload);
 
     } catch (e) {
         const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
@@ -69,26 +95,67 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
     }
 }
 
+export function renderFocusTreeShellHtml(
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): string {
+    const payload = createEmptyFocusTreeRenderPayload(documentVersion, conditionPresetsByTree);
+    return renderFocusTreeHtmlFromPayload(uri, webview, payload);
+}
+
+export function renderFocusTreeHtmlFromPayload(
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    payload: FocusTreeRenderPayload,
+): string {
+    const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
+    const scripts = buildFocusTreeBootstrapScripts(payload);
+    scripts.push(i18nTableAsScript());
+    return html(
+        webview,
+        renderFocusTreeBody(payload),
+        [
+            setPreviewFileUriScript,
+            ...scripts.map(c => ({ content: c })),
+            'focustree.js',
+        ],
+        [
+            'codicon.css',
+            'common.css',
+            { nonce: payload.styleNonce },
+        ],
+    );
+}
+
 const leftPaddingBase = 50;
 const topPaddingBase = 50;
 const defaultXGridSize = 96;
 const defaultYGridSize = 130;
 
-function attributeEscape(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
 export async function buildFocusTreeRenderPayload(
     loader: FocusTreeLoader,
     documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
 ): Promise<FocusTreeRenderPayload> {
+    const baseState = await buildFocusTreeRenderBaseState(loader, documentVersion, conditionPresetsByTree);
+    return (await buildFocusTreeRenderPayloadFromBaseState(baseState)).payload;
+}
+
+export async function buildFocusTreeRenderBaseState(
+    loader: FocusTreeLoader,
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree = {},
+): Promise<FocusTreeRenderBaseState> {
     const session = new LoaderSession(false);
+    const loadStart = Date.now();
     const loadResult = await loader.load(session);
+    const loadDurationMs = Date.now() - loadStart;
     const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
     debug('Loader session focus tree', loadedLoaders);
 
     const focusTrees = loadResult.result.focusTrees;
-    const styleTable = new StyleTable();
     const xGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.x, defaultXGridSize);
     const yGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
@@ -100,44 +167,100 @@ export async function buildFocusTreeRenderPayload(
 
     const allFocuses: Focus[] = [];
     const allInlays: FocusTree["inlayWindows"][number][] = [];
+    const focusById: Record<string, Focus> = {};
     for (const tree of focusTrees) {
-        allFocuses.push(...Object.values(tree.focuses));
+        const treeFocuses = Object.values(tree.focuses);
+        treeFocuses.forEach(focus => {
+            focusById[focus.id] = focus;
+        });
+        allFocuses.push(...treeFocuses);
         allInlays.push(...tree.inlayWindows);
     }
 
-    const renderedFocus: Record<string, string> = {};
-    await Promise.all(allFocuses.map(async (focus) => {
-        renderedFocus[focus.id] = (await renderFocus(focus, styleTable, loadResult.result.gfxFiles, loader.file)).replace(/\s\s+/g, ' ');
-    }));
-
-    await prepareInlayGfxStyles(focusTrees, styleTable);
-    const renderedInlayWindows: Record<string, string> = {};
-    await Promise.all(allInlays.map(async (inlay) => {
-        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, loadResult.result.gfxFiles)).replace(/\s\s+/g, ' ');
-    }));
-
     return {
         focusTrees,
-        renderedFocus,
-        renderedInlayWindows,
+        allFocuses,
+        allInlays,
+        focusById,
+        gfxFiles: loadResult.result.gfxFiles,
         gridBox,
-        dynamicStyleCss: styleTable.toStyleContent(),
-        styleNonce: Math.random().toString(36).slice(2),
         xGridSize,
         yGridSize,
-        focusToolbarHeight,
         focusPositionDocumentVersion: documentVersion,
         focusPositionActiveFile: loader.file,
+        conditionPresetsByTree,
         hasFocusSelector: focusTrees.length > 1,
         hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
+        loadDurationMs,
+        deferredAssetLoad: !!loadResult.result.deferredAssetLoad,
+    };
+}
+
+export async function buildFocusTreeRenderPayloadFromBaseState(
+    baseState: FocusTreeRenderBaseState,
+): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
+    const styleTable = new StyleTable();
+    const focusRenderStart = Date.now();
+    if (baseState.deferredAssetLoad) {
+        prepareDeferredFocusIconStyles(baseState.allFocuses, styleTable, baseState.xGridSize, baseState.yGridSize);
+    } else {
+        await prepareFocusIconStyles(baseState.allFocuses, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize);
+    }
+    const renderedFocus: Record<string, string> = {};
+    for (const focus of baseState.allFocuses) {
+        renderedFocus[focus.id] = renderFocusHtmlTemplate(
+            focus,
+            styleTable,
+            baseState.focusPositionActiveFile,
+            baseState.xGridSize,
+            baseState.yGridSize,
+        ).replace(/\s\s+/g, ' ');
+    }
+    const focusRenderDurationMs = Date.now() - focusRenderStart;
+
+    const inlayRenderStart = Date.now();
+    const renderedInlayWindows: Record<string, string> = {};
+    if (!baseState.deferredAssetLoad) {
+        await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+        await Promise.all(baseState.allInlays.map(async (inlay) => {
+            renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+        }));
+    }
+    const inlayRenderDurationMs = Date.now() - inlayRenderStart;
+
+    return {
+        payload: {
+        focusTrees: baseState.focusTrees,
+        selectedTreeId: baseState.focusTrees[0]?.id,
+        renderedFocus,
+        renderedInlayWindows,
+        gridBox: baseState.gridBox,
+        dynamicStyleCss: styleTable.toStyleContent(),
+        styleNonce: Math.random().toString(36).slice(2),
+        xGridSize: baseState.xGridSize,
+        yGridSize: baseState.yGridSize,
+        focusToolbarHeight,
+        focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
+        focusPositionActiveFile: baseState.focusPositionActiveFile,
+        conditionPresetsByTree: baseState.conditionPresetsByTree,
+        hasFocusSelector: baseState.hasFocusSelector,
+        hasWarningsButton: baseState.hasWarningsButton,
+        deferredAssetLoad: baseState.deferredAssetLoad,
+    },
+        metrics: {
+            focusRenderDurationMs,
+            inlayRenderDurationMs,
+        },
     };
 }
 
 async function buildFocusTreeRenderState(
     loader: FocusTreeLoader,
     documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree,
 ): Promise<{ payload: FocusTreeRenderPayload; body: string; scripts: string[] }> {
-    const payload = await buildFocusTreeRenderPayload(loader, documentVersion);
+    const baseState = await buildFocusTreeRenderBaseState(loader, documentVersion, conditionPresetsByTree);
+    const { payload } = await buildFocusTreeRenderPayloadFromBaseState(baseState);
     const scripts = buildFocusTreeBootstrapScripts(payload);
     scripts.push(i18nTableAsScript());
     return {
@@ -147,9 +270,54 @@ async function buildFocusTreeRenderState(
     };
 }
 
+export function renderFocusTreeFocusHtmlMap(
+    baseState: FocusTreeRenderBaseState,
+    focusIds: readonly string[],
+): Record<string, string> {
+    const styleTable = new StyleTable();
+    const renderedFocus: Record<string, string> = {};
+    for (const focusId of focusIds) {
+        const focus = baseState.focusById[focusId];
+        if (!focus) {
+            continue;
+        }
+
+        renderedFocus[focus.id] = renderFocusHtmlTemplate(
+            focus,
+            styleTable,
+            baseState.focusPositionActiveFile,
+            baseState.xGridSize,
+            baseState.yGridSize,
+        ).replace(/\s\s+/g, ' ');
+    }
+
+    return renderedFocus;
+}
+
+export async function renderFocusTreeInlayHtmlMap(
+    baseState: FocusTreeRenderBaseState,
+    inlayIds: readonly string[],
+): Promise<Record<string, string>> {
+    const styleTable = new StyleTable();
+    await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+    const renderedInlayWindows: Record<string, string> = {};
+    for (const inlayId of inlayIds) {
+        const inlay = baseState.allInlays.find(currentInlay => currentInlay.id === inlayId);
+        if (!inlay) {
+            continue;
+        }
+
+        renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+    }
+
+    return renderedInlayWindows;
+}
+
 function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string[] {
     return [
         'window.focusTrees = ' + JSON.stringify(payload.focusTrees),
+        'window.bootstrapSelectedFocusTreeId = ' + JSON.stringify(payload.selectedTreeId),
+        'window.focusTreeTraceEnabled = ' + JSON.stringify(process.env.HOI4MU_FOCUSTREE_TRACE === '1'),
         'window.renderedFocus = ' + JSON.stringify(payload.renderedFocus),
         'window.renderedInlayWindows = ' + JSON.stringify(payload.renderedInlayWindows),
         'window.gridBox = ' + JSON.stringify(payload.gridBox),
@@ -160,7 +328,37 @@ function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string
         'window.focusToolbarHeight = ' + payload.focusToolbarHeight,
         'window.focusPositionDocumentVersion = ' + JSON.stringify(payload.focusPositionDocumentVersion),
         'window.focusPositionActiveFile = ' + JSON.stringify(payload.focusPositionActiveFile),
+        'window.persistedConditionPresetsByTree = ' + JSON.stringify(payload.conditionPresetsByTree),
     ];
+}
+
+function createEmptyFocusTreeRenderPayload(
+    documentVersion: number,
+    conditionPresetsByTree: FocusConditionPresetsByTree,
+): FocusTreeRenderPayload {
+    return {
+        focusTrees: [],
+        selectedTreeId: undefined,
+        renderedFocus: {},
+        renderedInlayWindows: {},
+        gridBox: {
+            position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
+            format: toStringAsSymbolIgnoreCase('up'),
+            size: { width: toNumberLike(defaultXGridSize), height: undefined },
+            slotsize: { width: toNumberLike(defaultXGridSize), height: toNumberLike(defaultYGridSize) },
+        } as HOIPartial<GridBoxType>,
+        dynamicStyleCss: '',
+        styleNonce: Math.random().toString(36).slice(2),
+        xGridSize: defaultXGridSize,
+        yGridSize: defaultYGridSize,
+        focusToolbarHeight,
+        focusPositionDocumentVersion: documentVersion,
+        focusPositionActiveFile: '',
+        conditionPresetsByTree,
+        hasFocusSelector: false,
+        hasWarningsButton: false,
+        deferredAssetLoad: false,
+    };
 }
 
 function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
@@ -173,9 +371,15 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             margin: 20px;
             background: rgba(128, 128, 128, 0.2);
             text-align: center;
+            display: none;
             pointer-events: none;
-            z-index: 0;
+            z-index: 4;
         `)}">Continuous focuses</div>`;
+
+    styleTable.raw('#focustreeplaceholder', 'pointer-events: none;');
+    styleTable.raw('#focustreeplaceholder [data-focus-id], #focustreeplaceholder [data-focus-id] *, #focustreeplaceholder .navigator, #focustreeplaceholder .navigator *', 'pointer-events: auto;');
+    styleTable.raw('#inlaywindowplaceholder', 'pointer-events: none;');
+    styleTable.raw('#inlaywindowplaceholder .navigator, #inlaywindowplaceholder .navigator *, #inlaywindowplaceholder button, #inlaywindowplaceholder button *', 'pointer-events: auto;');
 
     const shellMarkup =
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
@@ -191,7 +395,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
-        renderToolBar(payload.focusTrees, styleTable);
+        renderToolBar(payload, styleTable);
     const shellCss = styleTable.toStyleContent();
 
     return (
@@ -207,6 +411,38 @@ function normalizeFocusSpacingValue(value: number | undefined, fallback: number)
 
 function renderWarningContainer(styleTable: StyleTable) {
     styleTable.style('warnings', () => 'outline: none;', ':focus');
+    const warningEntryClass = styleTable.style('warnings-entry', () => `
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--vscode-panel-border);
+        background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background));
+        color: var(--vscode-editor-foreground);
+        text-align: left;
+        font: inherit;
+        cursor: pointer;
+    `);
+    const warningEntryMutedClass = styleTable.style('warnings-entry-muted', () => `
+        cursor: default;
+        opacity: 0.92;
+    `);
+    const warningMetaClass = styleTable.style('warnings-entry-meta', () => `
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+    `);
+    const warningTextClass = styleTable.style('warnings-entry-text', () => `
+        white-space: pre-wrap;
+        line-height: 1.35;
+    `);
+    const warningSeverityWarningClass = styleTable.style('warnings-entry-warning', () => `
+        border-left: 3px solid rgba(210, 140, 38, 0.96);
+    `);
+    const warningSeverityInfoClass = styleTable.style('warnings-entry-info', () => `
+        border-left: 3px solid rgba(92, 138, 184, 0.96);
+    `);
     return `
     <div id="warnings-container" class="${styleTable.style('warnings-container', () => `
         height: 100vh;
@@ -219,27 +455,38 @@ function renderWarningContainer(styleTable: StyleTable) {
         box-sizing: border-box;
         display: none;
     `)}">
-        <textarea id="warnings" readonly wrap="off" class="${styleTable.style('warnings', () => `
+        <div id="warnings" class="${styleTable.style('warnings', () => `
             height: 100%;
             width: 100%;
             font-family: 'Consolas', monospace;
-            resize: none;
             background: var(--vscode-editor-background);
             padding: 10px;
             border-top: none;
             border-left: none;
             border-bottom: none;
             box-sizing: border-box;
-        `)}"></textarea>
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        `)}"></div>
+        <div id="warnings-entry-template" style="display:none"
+            data-warning-entry-class="${warningEntryClass}"
+            data-warning-entry-muted-class="${warningEntryMutedClass}"
+            data-warning-meta-class="${warningMetaClass}"
+            data-warning-text-class="${warningTextClass}"
+            data-warning-warning-class="${warningSeverityWarningClass}"
+            data-warning-info-class="${warningSeverityInfoClass}"></div>
     </div>`;
 }
 
-function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string {
+function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable): string {
+    const focusTrees = payload.focusTrees;
     const toolbarGroupStyle = (marginRight: string = '10px') => styleTable.style('toolbarGroup', () => `display:flex; align-items:center; margin-right:${marginRight}; min-height:24px;`);
     const toolbarLabelStyle = (extra: string = '') => styleTable.style('toolbarLabel', () => `margin-right:5px; display:flex; align-items:center;${extra}`);
 
-    const focuses = focusTrees.length <= 1 ? '' : `
-        <div class="${toolbarGroupStyle()}">
+    const focuses = `
+        <div id="focus-tree-selector-container" class="${toolbarGroupStyle()}" style="${payload.hasFocusSelector ? 'display:flex;' : 'display:none;'}">
             <label for="focuses" class="${toolbarLabelStyle()}">${localize('focustree.focustree', 'Focus tree: ')}</label>
             <div class="select-container">
                 <select id="focuses" class="select multiple-select" tabindex="0" role="combobox">
@@ -297,8 +544,28 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             </div>
         </div>`;
 
-    const warningsButton = focusTrees.every(ft => ft.warnings.length === 0) ? '' : `
-        <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}">
+    const conditionPresets = `
+        <div id="condition-preset-container" class="${toolbarGroupStyle()}">
+            <label for="condition-presets" class="${toolbarLabelStyle()}">${localize('TODO', 'Preset: ')}</label>
+            <div class="select-container">
+                <div id="condition-presets" class="select multiple-select ${styleTable.style('conditionsLabel', () => `max-width:240px`)}" tabindex="0" role="combobox">
+                    <span class="value"></span>
+                </div>
+            </div>
+            <button
+                id="save-condition-preset"
+                title="${localize('TODO', 'Save current preset')}"
+                class="${styleTable.style('toolbarSmallIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
+            ><i class="codicon codicon-add"></i></button>
+            <button
+                id="delete-condition-preset"
+                title="${localize('TODO', 'Delete selected preset')}"
+                class="${styleTable.style('toolbarSmallIconButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0; margin-left:4px;`)}"
+            ><i class="codicon codicon-trash"></i></button>
+        </div>`;
+
+    const warningsButton = `
+        <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}" style="${payload.hasWarningsButton ? '' : 'display:none;'}">
             <i class="codicon codicon-warning"></i>
         </button>`;
 
@@ -310,7 +577,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
                 ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
-                ${useConditionInFocus ? conditions : allowbranch}
+                ${useConditionInFocus ? conditionPresets + conditions : allowbranch}
                 ${inlayWindows}
                 ${warningsButton}
             </div>
@@ -472,74 +739,118 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
-async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
-    for (const focusIcon of focus.icon) {
-        const iconName = focusIcon.icon;
-        const iconObject = iconName ? await getFocusIcon(iconName, gfxFiles) : null;
-        styleTable.style('focus-icon-' + normalizeForStyle(iconName ?? '-empty'), () =>
-            `${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
-            background-size: ${iconObject ? iconObject.width : 0}px;`
-        );
-    }
+async function prepareFocusIconStyles(
+    focuses: readonly Focus[],
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    xGridSize: number,
+    yGridSize: number,
+): Promise<void> {
+    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
+    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
+    const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
+    const uniqueIconNames = Array.from(new Set(
+        focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
+    ));
+    const iconDiagnostics = {
+        resolvedFromResolvedFilesCount: 0,
+        resolvedFromGfxScanCount: 0,
+        defaultFallbackCount: 0,
+        unresolvedGfxNames: [] as string[],
+    };
 
-    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => 'background: grey;');
-
-    let textContent = focus.id;
-    if (localisationIndex) {
-        let localizedText = await getLocalisedTextQuick(focus.id);
-        if (localizedText === focus.id || !localizedText) {
-            if (focus.text) {
-                localizedText = await getLocalisedTextQuick(focus.text);
-                if (localizedText !== focus.text && localizedText !== null) {
-                    textContent += `<br/>${localizedText}`;
-                }
-            }
+    await Promise.all(uniqueIconNames.map(async iconName => {
+        const iconResolution = await resolveFocusIcon(iconName, gfxFiles);
+        if (iconResolution.kind === 'resolved-files') {
+            iconDiagnostics.resolvedFromResolvedFilesCount += 1;
+        } else if (iconResolution.kind === 'gfx-scan') {
+            iconDiagnostics.resolvedFromGfxScanCount += 1;
         } else {
-            textContent += `<br/>${localizedText}`;
+            iconDiagnostics.defaultFallbackCount += 1;
+            iconDiagnostics.unresolvedGfxNames.push(iconName);
         }
+
+        const displaySize = iconResolution.image
+            ? fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
+            : { width: focusPlaceholderSize, height: focusPlaceholderSize };
+
+        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+            width: ${displaySize.width}px;
+            height: ${displaySize.height}px;
+            ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
+        `);
+    }));
+
+    debug('Focus tree icon diagnostics', {
+        resolvedFromResolvedFilesCount: iconDiagnostics.resolvedFromResolvedFilesCount,
+        resolvedFromGfxScanCount: iconDiagnostics.resolvedFromGfxScanCount,
+        defaultFallbackCount: iconDiagnostics.defaultFallbackCount,
+        unresolvedGfxNames: iconDiagnostics.unresolvedGfxNames.slice(0, 20),
+    });
+
+    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
+        width: ${focusPlaceholderSize}px;
+        height: ${focusPlaceholderSize}px;
+        background: grey;
+    `);
+}
+
+function prepareDeferredFocusIconStyles(
+    focuses: readonly Focus[],
+    styleTable: StyleTable,
+    xGridSize: number,
+    yGridSize: number,
+): void {
+    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
+    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
+    const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
+    const uniqueIconNames = Array.from(new Set(
+        focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
+    ));
+
+    uniqueIconNames.forEach(iconName => {
+        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+            width: ${focusPlaceholderSize}px;
+            height: ${focusPlaceholderSize}px;
+            background: grey;
+        `);
+    });
+
+    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
+        width: ${focusPlaceholderSize}px;
+        height: ${focusPlaceholderSize}px;
+        background: grey;
+    `);
+}
+
+type FocusIconResolution =
+    | { kind: 'resolved-files'; image: Image }
+    | { kind: 'gfx-scan'; image: Image }
+    | { kind: 'default'; image: Image | undefined };
+
+async function resolveFocusIcon(name: string, gfxFiles: string[]): Promise<FocusIconResolution> {
+    const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(name, gfxFiles);
+    if (resolvedFileSprite !== undefined) {
+        return {
+            kind: 'resolved-files',
+            image: resolvedFileSprite.image,
+        };
     }
 
-    return `<div
-    class="
-        navigator
-        {{iconClass}}
-        ${styleTable.style('focus-common', () => `
-            background-position-x: center;
-            background-position-y: calc(50% - 18px);
-            background-repeat: no-repeat;
-            width: 100%;
-            height: 100%;
-            text-align: center;
-            cursor: pointer;
-        `)}
-    "
-    start="${focus.token?.start}"
-    end="${focus.token?.end}"
-    ${file === focus.file ? '' : `file="${focus.file}"`}
-    data-focus-id="${attributeEscape(focus.id)}"
-    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
-    title="${focus.id}\n({{position}})">
-        <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
-            <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
-        </div>
-        <span
-        class="${styleTable.style('focus-span', () => `
-            margin: 10px -400px;
-            margin-top: 85px;
-            text-align: center;
-            display: inline-block;
-        `)}">
-        ${textContent}
-        </span>
-    </div>`;
+    const scannedSprite = await getSpriteByGfxName(name, gfxFiles);
+    if (scannedSprite !== undefined) {
+        return {
+            kind: 'gfx-scan',
+            image: scannedSprite.image,
+        };
+    }
+
+    return {
+        kind: 'default',
+        image: await getImageByPath(defaultFocusIcon),
+    };
 }
 
 export async function getFocusIcon(name: string, gfxFiles: string[]): Promise<Image | undefined> {
-    const sprite = await getSpriteByGfxName(name, gfxFiles);
-    if (sprite !== undefined) {
-        return sprite.image;
-    }
-
-    return await getImageByPath(defaultFocusIcon);
+    return (await resolveFocusIcon(name, gfxFiles)).image;
 }

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
-import { FocusTreeCreateMeta, TextRange } from "./positioneditcommon";
+import { ContinuousFocusPositionMeta, FocusTreeCreateMeta, TextRange } from "./positioneditcommon";
 import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 interface ScalarFieldMeta {
@@ -42,6 +42,7 @@ export interface FocusPositionTextChangeResult {
 
 export interface CreateFocusTemplateTextChangeResult {
     changes?: FocusPositionTextChange[];
+    placeholderFocusId?: string;
     placeholderRange?: TextRange;
     error?: string;
 }
@@ -130,6 +131,75 @@ export function buildFocusPositionWorkspaceEdit(
     return { edit };
 }
 
+export function buildContinuousFocusPositionTextChanges(
+    content: string,
+    filePath: string,
+    treeEditKey: string,
+    targetX: number,
+    targetY: number,
+): FocusPositionTextChangeResult {
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const continuousMeta = collectFocusPositionFileMetadata(root, filePath).continuousTrees[treeEditKey];
+    const shiftedMeta = continuousMeta ? shiftContinuousFocusMeta(continuousMeta, bomOffset) : undefined;
+    if (!shiftedMeta || !shiftedMeta.editable) {
+        return { error: 'The selected focus tree continuous position is not editable in the current file.' };
+    }
+
+    if (!shiftedMeta.focusTreeRange) {
+        return { error: 'The selected focus tree has no writable continuous position anchor.' };
+    }
+
+    const lineEnding = detectLineEnding(content);
+    const changes: FocusPositionTextChange[] = [];
+    if (shiftedMeta.sourceRange) {
+        ensureScalarField(changes, content, shiftedMeta.sourceRange, shiftedMeta.x, 'x', `${Math.round(targetX)}`, lineEnding);
+        ensureScalarField(changes, content, shiftedMeta.sourceRange, shiftedMeta.y, 'y', `${Math.round(targetY)}`, lineEnding);
+    } else {
+        changes.push(createContinuousFocusInsertionChange(content, shiftedMeta.focusTreeRange, Math.round(targetX), Math.round(targetY), lineEnding));
+    }
+
+    return {
+        changes: dedupeChanges(changes),
+    };
+}
+
+export function buildContinuousFocusPositionWorkspaceEdit(
+    document: vscode.TextDocument,
+    filePath: string,
+    treeEditKey: string,
+    targetX: number,
+    targetY: number,
+): { edit?: vscode.WorkspaceEdit; error?: string } {
+    const result = buildContinuousFocusPositionTextChanges(
+        document.getText(),
+        filePath,
+        treeEditKey,
+        targetX,
+        targetY,
+    );
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const changes = result.changes ?? [];
+    if (changes.length === 0) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+        edit.replace(
+            document.uri,
+            new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+            change.text,
+        );
+    }
+
+    return { edit };
+}
+
 export function buildCreateFocusTemplateTextChanges(
     content: string,
     filePath: string,
@@ -169,6 +239,7 @@ export function buildCreateFocusTemplateTextChanges(
 
     return {
         changes: [change.change],
+        placeholderFocusId: change.placeholderId,
         placeholderRange: change.placeholderRange,
     };
 }
@@ -179,7 +250,7 @@ export function buildCreateFocusTemplateWorkspaceEdit(
     treeEditKey: string,
     targetAbsoluteX: number,
     targetAbsoluteY: number,
-): { edit?: vscode.WorkspaceEdit; placeholderRange?: TextRange; error?: string } {
+): { edit?: vscode.WorkspaceEdit; placeholderFocusId?: string; placeholderRange?: TextRange; error?: string } {
     const result = buildCreateFocusTemplateTextChanges(
         document.getText(),
         filePath,
@@ -205,6 +276,7 @@ export function buildCreateFocusTemplateWorkspaceEdit(
 
     return {
         edit,
+        placeholderFocusId: result.placeholderFocusId,
         placeholderRange: result.placeholderRange,
     };
 }
@@ -215,8 +287,10 @@ export function buildFocusLinkTextChanges(
     childFocusId: string,
     targetLocalX?: number,
     targetLocalY?: number,
+    parentFocusIds?: readonly string[],
 ): FocusLinkTextChangeResult {
-    if (parentFocusId === childFocusId) {
+    const normalizedParentFocusIds = normalizeParentFocusIds(parentFocusId, parentFocusIds, childFocusId);
+    if (normalizedParentFocusIds.length === 0) {
         return { error: 'A focus cannot be linked to itself.' };
     }
 
@@ -237,16 +311,21 @@ export function buildFocusLinkTextChanges(
     const child = matches[0];
     const lineEnding = detectLineEnding(content);
     const changes: FocusPositionTextChange[] = [];
-    const hasExistingPrerequisiteLink = child.prerequisiteIds.includes(parentFocusId);
     const hasExistingRelativePositionLink = child.currentRelativePositionId === parentFocusId;
+    const matchingPrerequisiteField = findMatchingPrerequisiteField(child, normalizedParentFocusIds);
+    const hasExactPrerequisiteGroup = !!matchingPrerequisiteField
+        && areFocusIdSetsEqual(matchingPrerequisiteField.focusIds, normalizedParentFocusIds);
 
-    if (hasExistingPrerequisiteLink || hasExistingRelativePositionLink) {
+    if (hasExactPrerequisiteGroup && hasExistingRelativePositionLink) {
         if (targetLocalX !== undefined && targetLocalY !== undefined) {
             ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
             ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
         }
-        removeNamedFocusReferences(changes, content, child.prerequisiteFields, parentFocusId, lineEnding);
-        if (hasExistingRelativePositionLink && child.relativePositionId) {
+        changes.push({
+            range: expandRangeToWholeLines(content, matchingPrerequisiteField.range),
+            text: '',
+        });
+        if (child.relativePositionId) {
             changes.push({
                 range: expandRangeToWholeLines(content, child.relativePositionId.nodeRange),
                 text: '',
@@ -262,7 +341,7 @@ export function buildFocusLinkTextChanges(
         ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
         ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
     }
-    ensurePrerequisiteLink(changes, content, child, parentFocusId, lineEnding);
+    ensurePrerequisiteLink(changes, content, child, normalizedParentFocusIds, lineEnding, matchingPrerequisiteField);
     ensureRelativePositionIdLink(changes, content, child, parentFocusId, lineEnding);
 
     return {
@@ -276,8 +355,9 @@ export function buildFocusLinkWorkspaceEdit(
     childFocusId: string,
     targetLocalX?: number,
     targetLocalY?: number,
+    parentFocusIds?: readonly string[],
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
-    const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY);
+    const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY, parentFocusIds);
     if (result.error) {
         return { error: result.error };
     }
@@ -382,34 +462,46 @@ export function buildFocusExclusiveLinkWorkspaceEdit(
 
 export function buildDeleteFocusTextChanges(
     content: string,
-    focusId: string,
+    focusIdOrFocusIds: string | readonly string[],
 ): FocusDeleteTextChangeResult {
     const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
     const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
     const root = parseHoi4File(parseContent);
     const editableFocuses = collectEditableFocuses(root).map(meta => shiftFocusMeta(meta, bomOffset));
-    const matches = editableFocuses.filter(meta => meta.focusId === focusId);
-    if (matches.length === 0) {
-        return { error: `Focus ${focusId} is not editable in the current file.` };
+    const deletedFocusIds = Array.from(new Set(
+        (Array.isArray(focusIdOrFocusIds) ? focusIdOrFocusIds : [focusIdOrFocusIds]).filter(Boolean),
+    ));
+    if (deletedFocusIds.length === 0) {
+        return {};
     }
 
-    if (matches.length > 1) {
-        return { error: `Focus ${focusId} is ambiguous in the current file.` };
+    const deletedFocuses: FocusNodeMeta[] = [];
+    for (const focusId of deletedFocusIds) {
+        const matches = editableFocuses.filter(meta => meta.focusId === focusId);
+        if (matches.length === 0) {
+            return { error: `Focus ${focusId} is not editable in the current file.` };
+        }
+
+        if (matches.length > 1) {
+            return { error: `Focus ${focusId} is ambiguous in the current file.` };
+        }
+
+        deletedFocuses.push(matches[0]);
     }
 
-    const deletedFocus = matches[0];
+    const deletedFocusIdSet = new Set(deletedFocusIds);
     const lineEnding = detectLineEnding(content);
-    const changes: FocusPositionTextChange[] = [{
+    const changes: FocusPositionTextChange[] = deletedFocuses.map(deletedFocus => ({
         range: expandRangeToWholeLines(content, deletedFocus.sourceRange, true),
         text: '',
-    }];
+    }));
 
     for (const focus of editableFocuses) {
-        if (focus.focusId === focusId) {
+        if (deletedFocusIdSet.has(focus.focusId)) {
             continue;
         }
 
-        removeDeletedFocusReferences(changes, content, focus, focusId, lineEnding);
+        removeDeletedFocusReferences(changes, content, focus, deletedFocusIdSet, lineEnding);
     }
 
     return {
@@ -419,9 +511,9 @@ export function buildDeleteFocusTextChanges(
 
 export function buildDeleteFocusWorkspaceEdit(
     document: vscode.TextDocument,
-    focusId: string,
+    focusIdOrFocusIds: string | readonly string[],
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
-    const result = buildDeleteFocusTextChanges(document.getText(), focusId);
+    const result = buildDeleteFocusTextChanges(document.getText(), focusIdOrFocusIds);
     if (result.error) {
         return { error: result.error };
     }
@@ -450,7 +542,7 @@ function createFocusTemplateInsertionChange(
     targetAbsoluteY: number,
     lineEnding: string,
     existingFocusIds: Set<string>,
-): { change: FocusPositionTextChange; placeholderRange: TextRange } {
+): { change: FocusPositionTextChange; placeholderId: string; placeholderRange: TextRange } {
     const blockName = treeMeta.kind === 'shared'
         ? 'shared_focus'
         : treeMeta.kind === 'joint'
@@ -467,10 +559,33 @@ function createFocusTemplateInsertionChange(
             range: { start: blockText.insertPosition, end: blockText.insertPosition },
             text: blockText.text,
         },
+        placeholderId: placeholder,
         placeholderRange: {
             start: blockText.insertPosition + placeholderOffset,
             end: blockText.insertPosition + placeholderOffset + placeholder.length,
         },
+    };
+}
+
+function createContinuousFocusInsertionChange(
+    content: string,
+    focusTreeRange: TextRange,
+    x: number,
+    y: number,
+    lineEnding: string,
+): FocusPositionTextChange {
+    const insertPosition = getBlockClosingLineStart(content, focusTreeRange);
+    const { childIndent } = getBlockIndentation(content, focusTreeRange);
+    const indentUnit = inferIndentUnit(content, getLineIndent(content, focusTreeRange.start), focusTreeRange);
+    const nestedIndent = childIndent + indentUnit;
+    const separator = getBlankLineSeparatorBeforeInsert(content, insertPosition, lineEnding);
+    return {
+        range: { start: insertPosition, end: insertPosition },
+        text:
+            `${separator}${childIndent}continuous_focus_position = {${lineEnding}` +
+            `${nestedIndent}x = ${x}${lineEnding}` +
+            `${nestedIndent}y = ${y}${lineEnding}` +
+            `${childIndent}}${lineEnding}`,
     };
 }
 
@@ -629,6 +744,20 @@ function shiftTreeMeta(meta: FocusTreeCreateMeta, offset: number): FocusTreeCrea
     };
 }
 
+function shiftContinuousFocusMeta(meta: ContinuousFocusPositionMeta, offset: number): ContinuousFocusPositionMeta {
+    if (offset === 0) {
+        return meta;
+    }
+
+    return {
+        ...meta,
+        focusTreeRange: meta.focusTreeRange ? shiftRange(meta.focusTreeRange, offset) : undefined,
+        sourceRange: meta.sourceRange ? shiftRange(meta.sourceRange, offset) : undefined,
+        x: meta.x ? shiftScalarField(meta.x, offset) : undefined,
+        y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
+    };
+}
+
 function shiftScalarField(meta: ScalarFieldMeta, offset: number): ScalarFieldMeta {
     return {
         nodeRange: shiftRange(meta.nodeRange, offset),
@@ -690,10 +819,20 @@ function ensurePrerequisiteLink(
     changes: FocusPositionTextChange[],
     content: string,
     focus: FocusNodeMeta,
-    parentFocusId: string,
+    parentFocusIds: readonly string[],
     lineEnding: string,
+    matchingField?: FocusReferenceFieldMeta,
 ): void {
-    if (focus.prerequisiteIds.includes(parentFocusId)) {
+    if (matchingField) {
+        const mergedIds = Array.from(new Set([...matchingField.focusIds, ...parentFocusIds]));
+        if (mergedIds.length === matchingField.focusIds.length) {
+            return;
+        }
+
+        changes.push({
+            range: expandRangeToWholeLines(content, matchingField.range),
+            text: buildFocusReferenceFieldReplacement(content, matchingField.range, matchingField.fieldName, mergedIds, matchingField.hasOrWrapper, lineEnding),
+        });
         return;
     }
 
@@ -701,7 +840,7 @@ function ensurePrerequisiteLink(
     const { childIndent } = getBlockIndentation(content, focus.sourceRange);
     changes.push({
         range: { start: insertPosition, end: insertPosition },
-        text: `${childIndent}prerequisite = { focus = ${parentFocusId} }${lineEnding}`,
+        text: buildInsertedFocusReferenceField(childIndent, 'prerequisite', parentFocusIds, lineEnding),
     });
 }
 
@@ -751,17 +890,44 @@ function ensureExclusiveLink(
     });
 }
 
+function normalizeParentFocusIds(
+    parentFocusId: string,
+    parentFocusIds: readonly string[] | undefined,
+    childFocusId: string,
+): string[] {
+    return Array.from(new Set((parentFocusIds && parentFocusIds.length > 0 ? parentFocusIds : [parentFocusId]).filter(focusId => focusId && focusId !== childFocusId)));
+}
+
+function findMatchingPrerequisiteField(
+    focus: FocusNodeMeta,
+    parentFocusIds: readonly string[],
+): FocusReferenceFieldMeta | undefined {
+    return focus.prerequisiteFields.find(field => parentFocusIds.some(parentFocusId => field.focusIds.includes(parentFocusId)));
+}
+
+function areFocusIdSetsEqual(left: readonly string[], right: readonly string[]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+
+    const rightSet = new Set(right);
+    return left.every(focusId => rightSet.has(focusId));
+}
+
 function removeDeletedFocusReferences(
     changes: FocusPositionTextChange[],
     content: string,
     focus: FocusNodeMeta,
-    deletedFocusId: string,
+    deletedFocusIds: string | ReadonlySet<string>,
     lineEnding: string,
 ): void {
-    removeNamedFocusReferences(changes, content, focus.prerequisiteFields, deletedFocusId, lineEnding);
-    removeNamedFocusReferences(changes, content, focus.exclusiveFields, deletedFocusId, lineEnding);
+    const deletedFocusIdSet = typeof deletedFocusIds === 'string'
+        ? new Set([deletedFocusIds])
+        : deletedFocusIds;
+    removeNamedFocusReferencesForSet(changes, content, focus.prerequisiteFields, deletedFocusIdSet, lineEnding);
+    removeNamedFocusReferencesForSet(changes, content, focus.exclusiveFields, deletedFocusIdSet, lineEnding);
 
-    if (focus.currentRelativePositionId === deletedFocusId && focus.relativePositionId) {
+    if (focus.currentRelativePositionId && deletedFocusIdSet.has(focus.currentRelativePositionId) && focus.relativePositionId) {
         changes.push({
             range: expandRangeToWholeLines(content, focus.relativePositionId.nodeRange),
             text: '',
@@ -796,8 +962,18 @@ function removeNamedFocusReferences(
     focusId: string,
     lineEnding: string,
 ): void {
-    for (const field of fields.filter(currentField => currentField.focusIds.includes(focusId))) {
-        const remainingIds = field.focusIds.filter(id => id !== focusId);
+    removeNamedFocusReferencesForSet(changes, content, fields, new Set([focusId]), lineEnding);
+}
+
+function removeNamedFocusReferencesForSet(
+    changes: FocusPositionTextChange[],
+    content: string,
+    fields: FocusReferenceFieldMeta[],
+    focusIds: ReadonlySet<string>,
+    lineEnding: string,
+): void {
+    for (const field of fields.filter(currentField => currentField.focusIds.some(id => focusIds.has(id)))) {
+        const remainingIds = field.focusIds.filter(id => !focusIds.has(id));
         const range = expandRangeToWholeLines(content, field.range);
         changes.push({
             range,
@@ -991,6 +1167,20 @@ function inferIndentUnit(content: string, blockIndent: string, blockRange: TextR
     return blockIndent.includes('\t') ? '\t' : '    ';
 }
 
+function inferIndentUnitFromIndent(indent: string): string {
+    const tabMatch = /(\t+)$/.exec(indent);
+    if (tabMatch?.[1]) {
+        return '\t';
+    }
+
+    const spaceMatch = /( +)$/.exec(indent);
+    if (spaceMatch?.[1]) {
+        return spaceMatch[1];
+    }
+
+    return '    ';
+}
+
 function buildFocusReferenceFieldReplacement(
     content: string,
     fieldRange: TextRange,
@@ -1018,6 +1208,23 @@ function buildFocusReferenceFieldReplacement(
     return `${blockIndent}${fieldName} = {${lineEnding}` +
         remainingIds.map(id => `${childIndent}focus = ${id}${lineEnding}`).join('') +
         `${blockIndent}}${lineEnding}`;
+}
+
+function buildInsertedFocusReferenceField(
+    childIndent: string,
+    fieldName: string,
+    focusIds: readonly string[],
+    lineEnding: string,
+): string {
+    if (focusIds.length === 1) {
+        return `${childIndent}${fieldName} = { focus = ${focusIds[0]} }${lineEnding}`;
+    }
+
+    const indentUnit = inferIndentUnitFromIndent(childIndent);
+    const focusIndent = childIndent + indentUnit;
+    return `${childIndent}${fieldName} = {${lineEnding}` +
+        focusIds.map(id => `${focusIndent}focus = ${id}${lineEnding}`).join('') +
+        `${childIndent}}${lineEnding}`;
 }
 
 function getBlockIndentation(content: string, blockRange: TextRange): { childIndent: string } {

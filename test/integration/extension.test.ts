@@ -28,6 +28,37 @@ function hasCustomEditorTab(viewType: string, uri: vscode.Uri): boolean {
             tab.input.uri.toString() === uri.toString());
 }
 
+type FocusPreviewDiagnostics = {
+    currentFocusTreeId?: string;
+    selectedFocusTreeId?: string;
+    selectorOptionCount?: number;
+    selectorSelectedText?: string;
+    focusCount?: number;
+    focusGridBoxItemCount?: number;
+    renderedFocusHitCount?: number;
+    currentCanvasWidth?: number;
+    currentCanvasHeight?: number;
+};
+
+async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string): Promise<void> {
+    await waitFor(async () => {
+        const debugState = await vscode.commands.executeCommand(Commands.DebugFocusTreePreviewState, uri) as {
+            diagnostics?: FocusPreviewDiagnostics;
+        } | undefined;
+        const diagnostics = debugState?.diagnostics;
+
+        return diagnostics?.currentFocusTreeId === expectedTreeId
+            && diagnostics?.selectedFocusTreeId === expectedTreeId
+            && (diagnostics?.selectorOptionCount ?? 0) > 0
+            && diagnostics?.selectorSelectedText === expectedTreeId
+            && (diagnostics?.focusCount ?? 0) > 0
+            && (diagnostics?.focusGridBoxItemCount ?? 0) > 0
+            && (diagnostics?.renderedFocusHitCount ?? 0) > 0
+            && (diagnostics?.currentCanvasWidth ?? 0) > 0
+            && (diagnostics?.currentCanvasHeight ?? 0) > 0;
+    }, 30000);
+}
+
 suite('extension smoke', () => {
     teardown(async () => {
         await vscode.commands.executeCommand('workbench.action.closeAllEditors');
@@ -85,6 +116,38 @@ suite('extension smoke', () => {
 
         await vscode.commands.executeCommand(Commands.Preview);
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: preset-smoke.txt'), 30000);
+    });
+
+    test('opens the GXC focus preview and resolves a non-empty current tree', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'GXC focus (Liangguang).txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
+        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
+    });
+
+    test('reopens the GXC focus preview and keeps the current tree diagnostics stable', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'GXC focus (Liangguang).txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
+        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
+
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.window.showTextDocument(document);
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
+        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
     });
 
     test('opens a gui preview webview for a representative fixture', async () => {

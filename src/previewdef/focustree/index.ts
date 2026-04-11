@@ -1,43 +1,69 @@
 import * as vscode from 'vscode';
-import { buildFocusTreeRenderPayload, renderFocusTreeFile } from './contentbuilder';
-import { matchPathEnd } from '../../util/nodecommon';
-import { PreviewBase } from '../previewbase';
-import { PreviewDescriptor } from '../descriptor';
-import { FocusTreeLoader } from './loader';
-import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
-import { FocusPositionEditMessage } from './positioneditcommon';
-import { buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { contextContainer } from '../../context';
 import { localize } from '../../util/i18n';
+import { matchPathEnd } from '../../util/nodecommon';
+import { getRelativePathInWorkspace } from '../../util/vsccommon';
+import { PreviewDescriptor } from '../descriptor';
+import { findDocumentRegexPreviewPriority } from '../previewdetect';
+import { PreviewBase } from '../previewbase';
+import { normalizeConditionPresetsByTree, FocusConditionPresetsByTree } from './conditionpresets';
+import { FocusTreeEditCommandHandler } from './edithandler';
+import { FocusTreeLoader } from './loader';
+import {
+    FocusPositionEditMessage,
+} from './positioneditcommon';
+import { FocusTreePreviewSession } from './previewsession';
+
+const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
-    if (matchPathEnd(uri.toString().toLowerCase(), ['common', 'national_focus', '*']) && uri.path.toLowerCase().endsWith('.txt')) {
+    const lowerUri = uri.toString().toLowerCase();
+    const lowerPath = uri.path.toLowerCase();
+    if (!lowerPath.endsWith('.txt')) {
+        return undefined;
+    }
+
+    if (matchPathEnd(lowerUri, ['common', 'national_focus', '*'])) {
         return 0;
     }
 
-    const text = document.getText();
-    return /(focus_tree|shared_focus|joint_focus)\s*=\s*{/.exec(text)?.index;
+    return findDocumentRegexPreviewPriority(document, /(focus_tree|shared_focus|joint_focus)\s*=\s*{/);
 }
 
-class FocusTreePreview extends PreviewBase {
-    private focusTreeLoader: FocusTreeLoader;
-    private relativeFilePath: string;
-    private pendingLocalEditDocumentVersions = new Set<number>();
-    private webviewReady = false;
-    private lastRenderStructure: { hasFocusSelector: boolean; hasWarningsButton: boolean } | undefined;
-    private latestRefreshRequestId = 0;
+export class FocusTreePreview extends PreviewBase {
+    private readonly relativeFilePath: string;
+    private readonly session: FocusTreePreviewSession;
+    private readonly editCommandHandler: FocusTreeEditCommandHandler;
+    private persistedConditionPresetsByTree: FocusConditionPresetsByTree;
+    private latestDiagnostics: unknown;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
         this.relativeFilePath = getRelativePathInWorkspace(this.uri);
-        this.focusTreeLoader = new FocusTreeLoader(this.relativeFilePath);
+        const focusTreeLoader = new FocusTreeLoader(this.relativeFilePath);
+        this.persistedConditionPresetsByTree = this.getStoredConditionPresetsByTree();
+        this.session = new FocusTreePreviewSession({
+            uri: this.uri,
+            webview: this.panel.webview,
+            focusTreeLoader,
+            getConditionPresetsByTree: () => this.persistedConditionPresetsByTree,
+            updateDependencies: dependencies => this.updateDependencies(dependencies),
+        });
+        this.editCommandHandler = new FocusTreeEditCommandHandler({
+            uri: this.uri,
+            relativeFilePath: this.relativeFilePath,
+            webview: this.panel.webview,
+            session: this.session,
+        });
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
-        const loader = this.createSnapshotLoader(document.getText());
-        const result = await renderFocusTreeFile(loader, document.uri, this.panel.webview, document.version);
-        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-        return result;
+        return this.session.renderShell(document.version);
+    }
+
+    public override async initializePanelContent(document: vscode.TextDocument): Promise<void> {
+        await this.session.initializePanel(document);
     }
 
     public override getDocumentChangeDebounceMs(): number {
@@ -45,283 +71,83 @@ class FocusTreePreview extends PreviewBase {
     }
 
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
-        if (this.pendingLocalEditDocumentVersions.delete(document.version)) {
-            return;
-        }
-
-        const requestId = this.startRefreshRequest();
-        const requestDocumentVersion = document.version;
-        if (!this.webviewReady) {
-            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-            return;
-        }
-
-        try {
-            const loader = this.createSnapshotLoader(document.getText());
-            const payload = await buildFocusTreeRenderPayload(loader, document.version);
-            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-            if (!this.isRefreshRequestCurrent(requestId)) {
-                return;
-            }
-
-            const nextStructure = {
-                hasFocusSelector: payload.hasFocusSelector,
-                hasWarningsButton: payload.hasWarningsButton,
-            };
-            const structureChanged = !this.lastRenderStructure
-                || this.lastRenderStructure.hasFocusSelector !== nextStructure.hasFocusSelector
-                || this.lastRenderStructure.hasWarningsButton !== nextStructure.hasWarningsButton
-                || payload.focusTrees.length === 0;
-            if (structureChanged) {
-                this.lastRenderStructure = nextStructure;
-                this.webviewReady = false;
-                await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-                return;
-            }
-
-            this.lastRenderStructure = nextStructure;
-            await this.panel.webview.postMessage({
-                command: 'focusTreeContentUpdated',
-                ...payload,
-            });
-        } catch {
-            this.webviewReady = false;
-            await this.applyFullRefresh(document, requestId, requestDocumentVersion);
-        }
+        await this.session.refreshDocument(document);
     }
 
-    private createSnapshotLoader(content: string): FocusTreeLoader {
-        const loader = this.focusTreeLoader.createSnapshotLoader(() => Promise.resolve(content));
-        loader.onLoadDone(r => this.updateDependencies(r.dependencies));
-        return loader;
-    }
-
-    private startRefreshRequest(): number {
-        this.latestRefreshRequestId += 1;
-        return this.latestRefreshRequestId;
-    }
-
-    private isRefreshRequestCurrent(requestId: number): boolean {
-        return requestId === this.latestRefreshRequestId;
-    }
-
-    private async applyFullRefresh(
-        document: vscode.TextDocument,
-        requestId: number,
-        requestDocumentVersion: number,
-    ): Promise<void> {
-        const content = await this.getContent(document);
-        if (!this.isRefreshRequestCurrent(requestId) || document.version !== requestDocumentVersion) {
-            return;
-        }
-
-        this.panel.webview.html = content;
+    public override getDebugState(): unknown {
+        return {
+            uri: this.uri.toString(),
+            session: this.session.getDebugState(),
+            diagnostics: this.latestDiagnostics,
+        };
     }
 
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
-        if ((msg as any).command === 'focusTreeWebviewReady') {
-            this.webviewReady = true;
+        const command = (msg as { command?: string }).command;
+        if (command === 'focusTreeWebviewReady') {
+            this.session.handleWebviewReady();
             return true;
         }
 
-        if (msg.command !== 'applyFocusPositionEdit'
-            && msg.command !== 'createFocusTemplateAtPosition'
-            && msg.command !== 'applyFocusLinkEdit'
-            && msg.command !== 'applyFocusExclusiveLinkEdit'
-            && msg.command !== 'deleteFocus') {
-            return false;
-        }
-
-        const document = getDocumentByUri(this.uri);
-        if (!document) {
-            await vscode.window.showErrorMessage(localize('TODO', 'The source document is no longer open.'));
+        if (command === 'focusTreeDiagnostics') {
+            this.latestDiagnostics = (msg as { snapshot?: unknown }).snapshot;
             return true;
         }
 
-        if (msg.command === 'applyFocusPositionEdit') {
-            const { edit, error } = buildFocusPositionWorkspaceEdit(document, msg.focusId, msg.targetLocalX, msg.targetLocalY);
-            if (error) {
-                await vscode.window.showErrorMessage(error);
-                return true;
-            }
-
-            if (!edit) {
-                return true;
-            }
-
-            const applied = await vscode.workspace.applyEdit(edit);
-            if (!applied) {
-                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus position edit.'));
-                return true;
-            }
-
-            const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
-            await this.panel.webview.postMessage({
-                command: 'focusPositionEditApplied',
-                focusId: msg.focusId,
-                targetLocalX: msg.targetLocalX,
-                targetLocalY: msg.targetLocalY,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
-            });
-
+        if (command === 'promptFocusConditionPresetName') {
+            await this.resolveConditionPresetName((msg as { initialValue?: string }).initialValue);
             return true;
         }
 
-        if (msg.command === 'applyFocusLinkEdit') {
-            const { edit, error } = buildFocusLinkWorkspaceEdit(
-                document,
-                msg.parentFocusId,
-                msg.childFocusId,
-                msg.targetLocalX,
-                msg.targetLocalY,
-            );
-            if (error) {
-                await vscode.window.showErrorMessage(error);
-                return true;
-            }
-
-            if (!edit) {
-                await this.panel.webview.postMessage({
-                    command: 'focusLinkEditApplied',
-                    parentFocusId: msg.parentFocusId,
-                    childFocusId: msg.childFocusId,
-                    targetLocalX: msg.targetLocalX,
-                    targetLocalY: msg.targetLocalY,
-                    documentVersion: document.version,
-                });
-                return true;
-            }
-
-            const applied = await vscode.workspace.applyEdit(edit);
-            if (!applied) {
-                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus link edit.'));
-                return true;
-            }
-
-            const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
-            await this.panel.webview.postMessage({
-                command: 'focusLinkEditApplied',
-                parentFocusId: msg.parentFocusId,
-                childFocusId: msg.childFocusId,
-                targetLocalX: msg.targetLocalX,
-                targetLocalY: msg.targetLocalY,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
-            });
-
+        if (command === 'persistFocusConditionPresets') {
+            await this.persistConditionPresets((msg as { presetsByTree: FocusConditionPresetsByTree }).presetsByTree);
             return true;
         }
 
-        if (msg.command === 'applyFocusExclusiveLinkEdit') {
-            const { edit, error } = buildFocusExclusiveLinkWorkspaceEdit(
-                document,
-                msg.sourceFocusId,
-                msg.targetFocusId,
-            );
-            if (error) {
-                await vscode.window.showErrorMessage(error);
-                return true;
-            }
+        return this.editCommandHandler.handleMessage(msg);
+    }
 
-            if (!edit) {
-                await this.panel.webview.postMessage({
-                    command: 'focusExclusiveLinkEditApplied',
-                    sourceFocusId: msg.sourceFocusId,
-                    targetFocusId: msg.targetFocusId,
-                    documentVersion: document.version,
-                });
-                return true;
-            }
+    private async resolveConditionPresetName(initialValue?: string): Promise<void> {
+        const name = await vscode.window.showInputBox({
+            prompt: localize('TODO', 'Preset name'),
+            value: initialValue ?? '',
+            ignoreFocusOut: true,
+        });
 
-            const applied = await vscode.workspace.applyEdit(edit);
-            if (!applied) {
-                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the mutually exclusive focus link edit.'));
-                return true;
-            }
+        await this.panel.webview.postMessage({
+            command: 'focusConditionPresetNameResolved',
+            name,
+        });
+    }
 
-            const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            }
-            await this.panel.webview.postMessage({
-                command: 'focusExclusiveLinkEditApplied',
-                sourceFocusId: msg.sourceFocusId,
-                targetFocusId: msg.targetFocusId,
-                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
-            });
+    private async persistConditionPresets(presetsByTree: FocusConditionPresetsByTree): Promise<void> {
+        this.persistedConditionPresetsByTree = normalizeConditionPresetsByTree(presetsByTree);
+        await this.storeConditionPresetsByTree(this.persistedConditionPresetsByTree);
+    }
 
-            return true;
+    private getConditionPresetsStateKey(): string {
+        return `${focusConditionPresetsStateKeyPrefix}${this.relativeFilePath}`;
+    }
+
+    private getStoredConditionPresetsByTree(): FocusConditionPresetsByTree {
+        const workspaceState = contextContainer.current?.workspaceState;
+        if (!workspaceState) {
+            return {};
         }
 
-        if (msg.command === 'deleteFocus') {
-            const { edit, error } = buildDeleteFocusWorkspaceEdit(document, msg.focusId);
-            if (error) {
-                await vscode.window.showErrorMessage(error);
-                return true;
-            }
-
-            if (!edit) {
-                return true;
-            }
-
-            const applied = await vscode.workspace.applyEdit(edit);
-            if (!applied) {
-                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus delete edit.'));
-                return true;
-            }
-
-            const updatedDocument = getDocumentByUri(this.uri);
-            if (updatedDocument) {
-                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-                await super.onDocumentChange(updatedDocument);
-            }
-
-            return true;
-        }
-
-        const { edit, error, placeholderRange } = buildCreateFocusTemplateWorkspaceEdit(
-            document,
-            this.relativeFilePath,
-            msg.treeEditKey,
-            msg.targetAbsoluteX,
-            msg.targetAbsoluteY,
+        return normalizeConditionPresetsByTree(
+            workspaceState.get(this.getConditionPresetsStateKey()) as FocusConditionPresetsByTree | undefined,
         );
-        if (error) {
-            await vscode.window.showErrorMessage(error);
-            return true;
+    }
+
+    private async storeConditionPresetsByTree(conditionPresetsByTree: FocusConditionPresetsByTree): Promise<void> {
+        const workspaceState = contextContainer.current?.workspaceState;
+        if (!workspaceState) {
+            return;
         }
 
-        if (!edit) {
-            return true;
-        }
-
-        const applied = await vscode.workspace.applyEdit(edit);
-        if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus template insert.'));
-            return true;
-        }
-
-        const updatedDocument = getDocumentByUri(this.uri);
-        if (updatedDocument) {
-            this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
-            await super.onDocumentChange(updatedDocument);
-            if (placeholderRange) {
-                await vscode.window.showTextDocument(updatedDocument, {
-                    selection: new vscode.Range(
-                        updatedDocument.positionAt(placeholderRange.start),
-                        updatedDocument.positionAt(placeholderRange.end),
-                    ),
-                    viewColumn: vscode.ViewColumn.One,
-                });
-            }
-        }
-
-        return true;
+        const hasEntries = Object.keys(conditionPresetsByTree).length > 0;
+        await workspaceState.update(this.getConditionPresetsStateKey(), hasEntries ? conditionPresetsByTree : undefined);
     }
 }
 

@@ -10,7 +10,8 @@ import { useConditionInFocus } from "../../util/featureflags";
 import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
 import { parseInlayWindowRef } from "./inlay";
-import { FocusPositionMeta, FocusTreeCreateMeta, createFocusPositionEditKey } from "./positioneditcommon";
+import { collectFocusLint, sortFocusWarnings } from "./focuslint";
+import { ContinuousFocusPositionMeta, FocusPositionMeta, FocusTreeCreateMeta, createFocusPositionEditKey } from "./positioneditcommon";
 import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 export type FocusTreeKind = 'focus' | 'shared' | 'joint';
@@ -20,6 +21,7 @@ export interface FocusTree {
     kind: FocusTreeKind;
     focuses: Record<string, Focus>;
     createTemplate?: FocusTreeCreateMeta;
+    continuousLayout?: ContinuousFocusPositionMeta;
     inlayWindowRefs: FocusTreeInlayRef[];
     inlayWindows: FocusTreeInlay[];
     inlayConditionExprs: ConditionItem[];
@@ -42,8 +44,15 @@ export interface Focus {
     y: number;
     id: string;
     icon: FocusIconWithCondition[];
+    available?: ConditionComplexExpr;
+    availableIfCapitulated: boolean;
+    hasAiWillDo: boolean;
+    hasCompletionReward: boolean;
     prerequisite: string[][];
+    prerequisiteGroupCount: number;
+    prerequisiteFocusCount: number;
     exclusive: string[];
+    exclusiveCount: number;
     hasAllowBranch: boolean;
     inAllowBranch: string[];
     allowBranch: ConditionComplexExpr | undefined;
@@ -54,9 +63,16 @@ export interface Focus {
     isInCurrentFile: boolean;
     text?: string;
     layout?: FocusPositionMeta;
+    lintWarningCount: number;
+    lintInfoCount: number;
+    lintMessages?: string[];
 }
 
 export interface FocusWarning extends Warning<string> {
+    code: string;
+    severity: 'warning' | 'info';
+    kind: 'parse' | 'lint';
+    relatedFocusIds?: string[];
     navigations?: { file: string, start: number, end: number }[];
 }
 
@@ -121,6 +137,10 @@ interface FocusTreeDef {
 interface FocusDef {
     id: string;
     icon: Raw[];
+    available: Raw;
+    available_if_capitulated: boolean;
+    ai_will_do: Raw;
+    completion_reward: Raw;
     x: number;
     y: number;
     prerequisite: FocusOrORList[];
@@ -171,6 +191,10 @@ const focusSchema: SchemaDef<FocusDef> = {
         _innerType: 'raw',
         _type: 'array',
     },
+    available: "raw",
+    available_if_capitulated: "boolean",
+    ai_will_do: "raw",
+    completion_reward: "raw",
     x: "number",
     y: "number",
     prerequisite: {
@@ -275,9 +299,10 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
 
     if (file.shared_focus.length > 0) {
         const conditionExprs: ConditionItem[] = [];
-        const warnings: FocusWarning[] = [];
-        const focuses = getFocuses(file.shared_focus, conditionExprs, filePath, warnings, constants);
-        validateRelativePositionId(focuses, warnings);
+        const parseWarnings: FocusWarning[] = [];
+        const focuses = getFocuses(file.shared_focus, conditionExprs, filePath, parseWarnings, constants);
+        validateRelativePositionId(focuses, parseWarnings);
+        const warnings = finalizeFocusTreeWarnings(focuses, parseWarnings, filePath);
 
         const sharedFocusTree: FocusTree = {
             id: localize('focustree.sharedfocuses', '<Shared focuses>'),
@@ -297,9 +322,10 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
 
     if (file.joint_focus.length > 0) {
         const conditionExprs: ConditionItem[] = [];
-        const warnings: FocusWarning[] = [];
-        const focuses = getFocuses(file.joint_focus, conditionExprs, filePath, warnings, constants);
-        validateRelativePositionId(focuses, warnings);
+        const parseWarnings: FocusWarning[] = [];
+        const focuses = getFocuses(file.joint_focus, conditionExprs, filePath, parseWarnings, constants);
+        validateRelativePositionId(focuses, parseWarnings);
+        const warnings = finalizeFocusTreeWarnings(focuses, parseWarnings, filePath);
 
         const jointFocusTree: FocusTree = {
             id: getJointFocusTreeId(filePath),
@@ -319,19 +345,20 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
 
     for (const focusTree of file.focus_tree) {
         const conditionExprs: ConditionItem[] = [];
-        const warnings: FocusWarning[] = [];
-        const focuses = getFocuses(focusTree.focus, conditionExprs, filePath, warnings, constants);
+        const parseWarnings: FocusWarning[] = [];
+        const focuses = getFocuses(focusTree.focus, conditionExprs, filePath, parseWarnings, constants);
 
         if (useConditionInFocus) {
             for (const sharedFocus of focusTree.shared_focus) {
                 if (!sharedFocus) {
                     continue;
                 }
-                addSharedFocus(focuses, filePath, linkedFocusTrees, sharedFocus, conditionExprs, warnings);
+                addSharedFocus(focuses, filePath, linkedFocusTrees, sharedFocus, conditionExprs, parseWarnings);
             }
         }
 
-        validateRelativePositionId(focuses, warnings);
+        validateRelativePositionId(focuses, parseWarnings);
+        const warnings = finalizeFocusTreeWarnings(focuses, parseWarnings, filePath);
 
         focusTrees.push({
             id: focusTree.id ?? localize('focustree.ananymous', '<Anonymous focus tree>'),
@@ -345,8 +372,12 @@ export function getFocusTreeWithFocusFile(file: HOIPartial<FocusFile>, sharedFoc
             inlayWindows: [],
             inlayConditionExprs: [],
             allowBranchOptions: getAllowBranchOptions(focuses),
-            continuousFocusPositionX: normalizeNumberLike(focusTree.continuous_focus_position?.x, 0) ?? 50,
-            continuousFocusPositionY: normalizeNumberLike(focusTree.continuous_focus_position?.y, 0) ?? 1000,
+            continuousFocusPositionX: focusTree.continuous_focus_position
+                ? (normalizeNumberLike(focusTree.continuous_focus_position.x, 0) ?? 50)
+                : undefined,
+            continuousFocusPositionY: focusTree.continuous_focus_position
+                ? (normalizeNumberLike(focusTree.continuous_focus_position.y, 0) ?? 1000)
+                : undefined,
             conditionExprs,
             isSharedFocues: false,
             warnings,
@@ -372,6 +403,7 @@ export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath
     for (const tree of trees) {
         if (tree.kind === 'focus' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
             tree.createTemplate = metadata.focusTrees[localFocusTreeIndex];
+            tree.continuousLayout = tree.createTemplate ? metadata.continuousTrees[tree.createTemplate.editKey] : undefined;
             localFocusTreeIndex++;
         } else if (tree.kind === 'shared' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
             tree.createTemplate = metadata.sharedTree;
@@ -401,9 +433,11 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
 
         if (focus.id in focuses) {
             const otherFocus = focuses[focus.id];
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'focus-duplicate-id',
                 text: localize('focustree.warnings.focusidconflict', "There're more than one focuses with ID {0} in file: {1}.", focus.id, filePath),
                 source: focus.id,
+                relatedFocusIds: [focus.id],
                 navigations: [
                     {
                         file: filePath,
@@ -415,8 +449,8 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
                         start: otherFocus.token?.start ?? 0,
                         end: otherFocus.token?.end ?? 0,
                     },
-                ]
-            });
+                ],
+            }));
         }
         focuses[focus.id] = focus;
     }
@@ -443,14 +477,27 @@ function getFocuses(hoiFocuses: HOIPartial<FocusDef>[], conditionExprs: Conditio
     return focuses;
 }
 
+function finalizeFocusTreeWarnings(focuses: Record<string, Focus>, parseWarnings: FocusWarning[], currentFilePath: string): FocusWarning[] {
+    const lintResult = collectFocusLint(focuses, currentFilePath);
+    for (const focus of Object.values(focuses)) {
+        const lintAggregate = lintResult.byFocusId[focus.id];
+        focus.lintWarningCount = lintAggregate?.warningCount ?? 0;
+        focus.lintInfoCount = lintAggregate?.infoCount ?? 0;
+        focus.lintMessages = lintAggregate?.messages;
+    }
+
+    return sortFocusWarnings(parseWarnings.concat(lintResult.warnings));
+}
+
 function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[], filePath: string, warnings: FocusWarning[], constants: {}): Focus | null {
     const id = hoiFocus.id ?? `[missing_id_${randomString(8)}]`;
 
     if (!hoiFocus.id) {
-        warnings.push({
+        warnings.push(createParseWarning({
+            code: 'focus-missing-id',
             text: localize('focustree.warnings.focusnoid', "A focus defined in this file don't have ID: {0}.", filePath),
             source: id,
-        });
+        }));
     }
 
     const exclusive = hoiFocus.mutually_exclusive
@@ -458,14 +505,17 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         .filter((s): s is string => s !== undefined);
     const prerequisite = hoiFocus.prerequisite
         .map(p => p.focus.concat(p.OR).filter((s): s is string => s !== undefined));
-    const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants, conditionExprs);
+    const available = hoiFocus.available
+        ? extractConditionValue(hoiFocus.available._raw.value, countryScope, []).condition
+        : undefined;
+    const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants);
     const hasAllowBranch = hoiFocus.allow_branch.length > 0;
     const allowBranchCondition = extractConditionValues(hoiFocus.allow_branch.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition;
     const offset: Offset[] = hoiFocus.offset.map(o => ({
         x: o.x ?? 0,
         y: o.y ?? 0,
         trigger: o.trigger && o.trigger.length > 0
-            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition
+            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, []).condition
             : undefined,
     }));
 
@@ -473,11 +523,18 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         layoutEditKey: createFocusPositionEditKey(filePath, hoiFocus._token?.start ?? id),
         id,
         icon,
+        available,
+        availableIfCapitulated: hoiFocus.available_if_capitulated === true,
+        hasAiWillDo: hoiFocus.ai_will_do !== undefined,
+        hasCompletionReward: hoiFocus.completion_reward !== undefined,
         x: hoiFocus.x ?? 0,
         y: hoiFocus.y ?? 0,
         relativePositionId: hoiFocus.relative_position_id,
         prerequisite,
+        prerequisiteGroupCount: prerequisite.length,
+        prerequisiteFocusCount: prerequisite.reduce((sum, group) => sum + group.length, 0),
         exclusive,
+        exclusiveCount: exclusive.length,
         hasAllowBranch,
         inAllowBranch: hasAllowBranch ? [id] : [],
         allowBranch: allowBranchCondition,
@@ -486,6 +543,27 @@ function getFocus(hoiFocus: HOIPartial<FocusDef>, conditionExprs: ConditionItem[
         file: filePath,
         isInCurrentFile: true,
         text: hoiFocus.text,
+        lintWarningCount: 0,
+        lintInfoCount: 0,
+    };
+}
+
+function createParseWarning(params: {
+    code: string;
+    text: string;
+    source: string;
+    relatedFocusIds?: string[];
+    navigations?: FocusWarning['navigations'];
+    severity?: FocusWarning['severity'];
+}): FocusWarning {
+    return {
+        code: params.code,
+        severity: params.severity ?? 'warning',
+        kind: 'parse',
+        text: params.text,
+        source: params.source,
+        relatedFocusIds: params.relatedFocusIds,
+        navigations: params.navigations,
     };
 }
 
@@ -520,9 +598,11 @@ function addSharedFocus(focuses: Record<string, Focus>, filePath: string, shared
 
             if (focus.id in focuses) {
                 const otherFocus = focuses[focus.id];
-                warnings.push({
+                warnings.push(createParseWarning({
+                    code: 'focus-duplicate-id',
                     text: localize('focustree.warnings.focusidconflict2', "There're more than one focuses with ID {0} in files: {1}, {2}.", focus.id, filePath, focus.file),
                     source: focus.id,
+                    relatedFocusIds: [focus.id],
                     navigations: [
                         {
                             file: focus.file,
@@ -534,8 +614,8 @@ function addSharedFocus(focuses: Record<string, Focus>, filePath: string, shared
                             start: otherFocus.token?.start ?? 0,
                             end: otherFocus.token?.end ?? 0,
                         },
-                    ]
-                });
+                    ],
+                }));
             }
             focuses[key] = focus;
             updateConditionExprsByFocus(focus, conditionExprs);
@@ -544,7 +624,7 @@ function addSharedFocus(focuses: Record<string, Focus>, filePath: string, shared
     }
 
     for (const warning of sharedFocusTree.warnings) {
-        if (warning.source in focuses) {
+        if (warning.kind === 'parse' && warning.source in focuses) {
             warnings.push(warning);
         }
     }
@@ -553,16 +633,6 @@ function addSharedFocus(focuses: Record<string, Focus>, filePath: string, shared
 function updateConditionExprsByFocus(focus: Focus, conditionExprs: ConditionItem[]) {
     if (focus.allowBranch) {
         extractConditionalExprs(focus.allowBranch, conditionExprs);
-    }
-
-    for (const offset of focus.offset) {
-        if (offset.trigger) {
-            extractConditionalExprs(offset.trigger, conditionExprs);
-        }
-    }
-
-    for (const icon of focus.icon) {
-        extractConditionalExprs(icon.condition, conditionExprs);
     }
 }
 
@@ -585,10 +655,17 @@ function validateRelativePositionId(focuses: Record<string, Focus>, warnings: Fo
         }
 
         if (!(focus.relativePositionId in focuses)) {
-            warnings.push({
+            warnings.push(createParseWarning({
+                code: 'relative-position-target-missing',
                 text: localize('focustree.warnings.relativepositionidnotexist', 'Relative position ID of focus {0} not exist: {1}.', focus.id, focus.relativePositionId),
                 source: focus.id,
-            });
+                relatedFocusIds: [focus.id],
+                navigations: focus.token ? [{
+                    file: focus.file,
+                    start: focus.token.start,
+                    end: focus.token.end,
+                }] : undefined,
+            }));
             continue;
         }
 
@@ -605,10 +682,21 @@ function validateRelativePositionId(focuses: Record<string, Focus>, warnings: Fo
             if (nextFocus && relativePositionIdChain.includes(nextFocus.id)) {
                 relativePositionIdChain.forEach(r => circularReported[r] = true);
                 relativePositionIdChain.push(nextFocus.id);
-                warnings.push({
+                const navigationTargets = relativePositionIdChain
+                    .map(focusId => focuses[focusId])
+                    .filter((value): value is Focus => value !== undefined && !!value.token)
+                    .map(focusEntry => ({
+                        file: focusEntry.file,
+                        start: focusEntry.token!.start,
+                        end: focusEntry.token!.end,
+                    }));
+                warnings.push(createParseWarning({
+                    code: 'relative-position-circular',
                     text: localize('focustree.warnings.relativepositioncircularref', "There're circular reference in relative position ID of these focuses: {0}.", relativePositionIdChain.join(' -> ')),
                     source: focus.id,
-                });
+                    relatedFocusIds: Array.from(new Set(relativePositionIdChain)),
+                    navigations: navigationTargets.length > 0 ? navigationTargets : undefined,
+                }));
                 break;
             }
             currentFocus = nextFocus;
@@ -616,11 +704,11 @@ function validateRelativePositionId(focuses: Record<string, Focus>, warnings: Fo
     }
 }
 
-function parseFocusIcon(nodes: Node[], constants: {}, conditionExprs: ConditionItem[]): FocusIconWithCondition[] {
-    return nodes.map(n => parseSingleFocusIcon(n, constants, conditionExprs)).filter((v): v is FocusIconWithCondition => v !== undefined);
+function parseFocusIcon(nodes: Node[], constants: {}): FocusIconWithCondition[] {
+    return nodes.map(n => parseSingleFocusIcon(n, constants)).filter((v): v is FocusIconWithCondition => v !== undefined);
 }
 
-function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: ConditionItem[]): FocusIconWithCondition {
+function parseSingleFocusIcon(node: Node, constants: {}): FocusIconWithCondition {
     const stringResult = convertNodeToJson<string>(node, 'string', constants);
     if (stringResult) {
         return { icon: stringResult, condition: true };
@@ -629,6 +717,6 @@ function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: Conditi
     const iconWithCondition = convertNodeToJson<FocusIconDef>(node, focusIconSchema, constants);
     return {
         icon: iconWithCondition.value,
-        condition: iconWithCondition.trigger ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, conditionExprs).condition : true,
+        condition: iconWithCondition.trigger ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, []).condition : true,
     };
 }

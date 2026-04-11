@@ -8,6 +8,12 @@ export interface ScalarFieldMeta {
     valueRange: TextRange;
 }
 
+export interface FocusConditionPreset {
+    id: string;
+    name: string;
+    exprKeys: string[];
+}
+
 export interface FocusPositionOffsetMeta {
     x: number;
     y: number;
@@ -42,6 +48,20 @@ export interface FocusTreeCreateMeta {
     focusIdPrefix?: string;
 }
 
+export interface ContinuousFocusPositionMeta {
+    editKey: string;
+    editable: boolean;
+    sourceFile: string;
+    focusTreeRange?: TextRange;
+    sourceRange?: TextRange;
+    x?: ScalarFieldMeta;
+    y?: ScalarFieldMeta;
+    basePosition: {
+        x: number;
+        y: number;
+    };
+}
+
 export interface ApplyFocusPositionEditMessage {
     command: 'applyFocusPositionEdit';
     focusId: string;
@@ -61,6 +81,7 @@ export interface CreateFocusTemplateAtPositionMessage {
 export interface ApplyFocusLinkEditMessage {
     command: 'applyFocusLinkEdit';
     parentFocusId: string;
+    parentFocusIds?: string[];
     childFocusId: string;
     targetLocalX: number;
     targetLocalY: number;
@@ -74,10 +95,29 @@ export interface ApplyFocusExclusiveLinkEditMessage {
     documentVersion: number;
 }
 
+export interface ApplyContinuousFocusPositionEditMessage {
+    command: 'applyContinuousFocusPositionEdit';
+    focusTreeEditKey: string;
+    targetX: number;
+    targetY: number;
+    documentVersion: number;
+}
+
 export interface DeleteFocusMessage {
     command: 'deleteFocus';
     focusId: string;
+    focusIds?: string[];
     documentVersion: number;
+}
+
+export interface PromptFocusConditionPresetNameMessage {
+    command: 'promptFocusConditionPresetName';
+    initialValue?: string;
+}
+
+export interface PersistFocusConditionPresetsMessage {
+    command: 'persistFocusConditionPresets';
+    presetsByTree: Record<string, FocusConditionPreset[]>;
 }
 
 export type FocusPositionEditMessage =
@@ -85,7 +125,10 @@ export type FocusPositionEditMessage =
     | CreateFocusTemplateAtPositionMessage
     | ApplyFocusLinkEditMessage
     | ApplyFocusExclusiveLinkEditMessage
-    | DeleteFocusMessage;
+    | ApplyContinuousFocusPositionEditMessage
+    | DeleteFocusMessage
+    | PromptFocusConditionPresetNameMessage
+    | PersistFocusConditionPresetsMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;

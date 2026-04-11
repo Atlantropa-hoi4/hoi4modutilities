@@ -83,4 +83,77 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.isInCurrentFile, false);
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.layout?.sourceFile, 'common/national_focus/shared.txt');
     });
+
+    it('captures editable continuous focus position metadata for local focus trees', () => {
+        const trees = getFocusTree(
+            parseHoi4File(readFixture('focus', 'layout-edit.txt')),
+            [],
+            'common/national_focus/layout-edit.txt',
+        );
+        const focusTree = trees.find(tree => tree.kind === 'focus');
+
+        assert.ok(focusTree);
+        assert.strictEqual(focusTree?.continuousLayout?.editKey, 'focus-tree:common/national_focus/layout-edit.txt:focus:0');
+        assert.strictEqual(focusTree?.continuousLayout?.sourceFile, 'common/national_focus/layout-edit.txt');
+        assert.deepStrictEqual(focusTree?.continuousLayout?.basePosition, { x: 150, y: 275 });
+        assert.ok(focusTree?.continuousLayout?.sourceRange);
+        assert.ok(focusTree?.continuousLayout?.x);
+        assert.ok(focusTree?.continuousLayout?.y);
+    });
+
+    it('keeps continuous focus coordinates undefined when the tree does not define continuous_focus_position', () => {
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = no_continuous_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/no-continuous-tree.txt',
+        );
+
+        assert.ok(tree);
+        assert.strictEqual(tree.continuousFocusPositionX, undefined);
+        assert.strictEqual(tree.continuousFocusPositionY, undefined);
+    });
+
+    it('collects Conditions options from allow_branch triggers only', () => {
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = condition_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                        allow_branch = { has_global_flag = BRANCH_FLAG }
+                        icon = {
+                            trigger = { has_war = no }
+                            value = GFX_focus_generic_construct_civ_factory
+                        }
+                        offset = {
+                            x = 1
+                            y = 0
+                            trigger = { owns_state = 977 }
+                        }
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/condition-tree.txt',
+        );
+
+        assert.ok(tree);
+        assert.deepStrictEqual(tree.conditionExprs, [
+            {
+                scopeName: '',
+                nodeContent: 'has_global_flag = BRANCH_FLAG',
+            },
+        ]);
+    });
 });

@@ -424,3 +424,458 @@
 - `npm run test-ui` passed with 11 smoke tests.
 - `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
 - 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# Focus Feature-Preserving Rollback Correction 2026-04-10
+
+## Plan
+- [x] 사용자 보정을 작업 문서와 lessons에 기록한다
+- [x] focus 관련 소스, webview, tests를 feature-complete 커밋 기준으로 복구해 롤백 이전 기능을 다시 모두 살린다
+- [x] compile, unit, UI smoke, VSIX packaging으로 feature-complete 상태를 다시 검증한다
+
+## Notes
+- 사용자 보정: "롤백하되 롤백 이전 기능을 전부 유지", "변경된 기능들도 유지"
+- 따라서 이번 라운드는 exact `v0.13.20` file-set restore를 유지하는 것이 아니라, 직전 aggressive rollback으로 제거된 focus 기능들을 먼저 모두 복구하는 작업이다.
+- 복구 기준은 `568a90b`의 focustree file-set이다. 이 시점은 `v0.13.20` 기반 재작성 이후 기능 보존 상태를 포함하고 있어서, exact tag restore보다 사용자 요구에 더 가깝다.
+
+## Review
+- `src/previewdef/focustree/`는 `568a90b` 기준의 feature-complete 구조로 복구했다. `buildguard`, `conditionexprs`, `conditionpresets`, `focusicongfx`, `focusiconlayout`, `focuslint`, `focusrender`, `hoverrelations`, `inlayshared`, `layoutplan`, `localpreview`, `relationanchor`, `renderpayloadpatch`, `selectionstate`, `webviewupdate`와 session helper(`edithandler`, `previewsession`, `loaderadapter`, `patchplanner`, `runtime`, `snapshotbuilder`)를 다시 살렸다.
+- `src/previewdef/focustree/index.ts`, `contentbuilder.ts`, `loader.ts`, `schema.ts`, `positioneditcommon.ts`, `positioneditmetadata.ts`, `positioneditservice.ts`, `webviewsrc/focustree.ts`도 함께 복구해, rollback 전 호스트/웹뷰 계약과 이후 변경 기능이 다시 같은 경로에서 동작하도록 맞췄다.
+- 웹뷰 상태/메시지 계층도 `[webviewsrc/focustree/state.ts](C:\Users\Administrator\Documents\Code\hoi4modutilities\webviewsrc\focustree\state.ts)`, `[webviewsrc/focustree/messageapply.ts](C:\Users\Administrator\Documents\Code\hoi4modutilities\webviewsrc\focustree\messageapply.ts)`까지 함께 복원했다.
+- focus 회귀 테스트도 feature-complete 세트로 되돌렸다. preset, hover relation, local preview, patch planner/session/runtime, selection state 관련 unit tests가 다시 포함됐다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 127 tests.
+- `npm run test-ui` passed with 11 smoke tests, including the focus preview fixture.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Regression Fixes 2026-04-10
+
+## Plan
+- [x] 현재 focustree 회귀 증상과 host/webview 계약을 다시 조사한다
+- [x] 아이콘 렌더, 구조 편집 즉시 반영, continuous focus 편집 회귀를 수정한다
+- [x] 관련 unit 검증과 VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 보고 증상:
+- 최신 빌드에서 focus 아이콘이 뜨지 않는다
+- 더블 클릭 생성 focus가 바로 반영되지 않는다
+- `continuous_focus` 수정이 작동하지 않는다
+- 그 외 `v0.13.20`에서 되던 포커스 편집 기능들이 함께 흔들린다
+- 1차 분석:
+- 웹뷰는 `createFocusTemplateApplied`, `deleteFocusApplied`, `focusLinkEditApplied`, `focusExclusiveLinkEditApplied` 기반 local preview 경로를 가지고 있지만, 현재 host edit handler는 성공한 구조 편집 뒤에 full reload만 하고 즉시 ack를 거의 보내지 않는다
+- `continuousFocuses` shell element는 현재 placeholder/inlay DOM보다 낮은 `z-index`로 렌더되어 실제 pointer hit가 막힐 가능성이 있다
+- focus icon resolver는 resolved gfx file set이 놓친 경우 index 기반 `getSpriteByGfxName()` fallback을 다시 시도하는 편이 안전하다
+
+## Review
+- `src/previewdef/focustree/edithandler.ts`는 성공한 구조 편집 뒤에도 즉시 ack를 보내도록 다시 맞췄다. `createFocusTemplateApplied`, `deleteFocusApplied`, `focusLinkEditApplied`, `focusExclusiveLinkEditApplied`를 full reload 전에 먼저 보내서 웹뷰의 local preview 경로가 다시 동작한다.
+- `src/previewdef/focustree/contentbuilder.ts`는 `continuousFocuses` shell element를 focus/inlay placeholder 위로 올려 실제 pointer hit가 가능하게 했고, focus icon lookup도 resolved gfx file set이 놓친 경우 `getSpriteByGfxName()` fallback을 다시 타도록 보강했다.
+- `test/unit/focustree-edithandler.test.ts`를 추가해 create/delete/link/exclusive 구조 편집이 모두 optimistic ack 후 structural reload 순서로 처리되는 회귀 조건을 고정했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 131 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Stable Baseline Recovery 2026-04-10
+
+## Plan
+- [x] 현재 focustree host/session/payload 경로를 `v0.13.20` full-refresh 기준과 다시 맞춘다
+- [x] 아이콘 로드와 create/link/continuous 편집 반영을 incremental patch가 아닌 full snapshot 기준으로 복구한다
+- [x] compile, unit, UI smoke, VSIX packaging으로 다시 검증한다
+
+## Notes
+- 사용자 보정: 이전 회귀 수정 후에도 `v0.13.20`에서 되던 기능들과 아이콘 표시가 여전히 깨져 있다.
+- 이번 라운드에서는 개별 증상 패치보다, focus host를 `v0.13.20`식 full-refresh/full-asset 우선 경로로 단순화해 표준 동작을 먼저 회복하는 쪽이 우선이다.
+
+## Review
+- `src/previewdef/focustree/previewsession.ts`는 incremental patch/deferred hydration 우선 경로를 걷어내고, `v0.13.20`처럼 full render/full asset 우선 세션으로 다시 단순화했다. 웹뷰가 아직 준비되지 않았을 때와 구조 편집 직후에는 곧바로 전체 문서를 다시 렌더하고, 웹뷰 준비 후 일반 갱신도 full snapshot만 보내도록 정리했다.
+- 같은 맥락에서 local edit 후 reconcile도 부분 patch 강제가 아니라 full snapshot 재동기화로 돌려, create/link/delete/continuous 편집 뒤의 표준 동작을 더 예측 가능하게 만들었다.
+- `src/previewdef/focustree/index.ts`는 panel 초기화 때 세션 full render를 기다리도록 바꿔 첫 오픈도 shell-only 경로에 묶이지 않게 했다.
+- `src/previewdef/focustree/edithandler.ts`는 타입 전용 import를 `import type`으로 바꿔, edit handler 테스트나 경량 로드에서 불필요하게 전체 focustree 세션/loader 체인이 함께 올라오지 않게 정리했다.
+- `test/unit/focustree-previewsession.test.ts`는 새 세션 계약에 맞게 다시 맞췄다. 이제 webview 미준비 상태의 full render, panel 초기화 full render, webview ready 이후 full snapshot, stale refresh discard, local edit reconcile, structural reload를 직접 검증한다.
+
+## Verification
+- `npm run test:unit` passed with 131 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and produced `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Loading Recovery 2026-04-10
+
+## Plan
+- [x] focustree 초기 panel open과 구조 재로드가 full asset render를 기다리며 막히는지 점검한다
+- [x] shell-first initial load를 복구하되, ready 이후 full snapshot/full asset reconcile은 유지한다
+- [x] unit, UI smoke, VSIX packaging으로 다시 검증한다
+
+## Notes
+- 사용자 보정: 이번 라운드에서는 포커스 프리뷰가 아예 로드되지 않는다.
+- 의심 경로: `previewsession.ts`가 초기 panel open과 구조 재로드에서도 `renderDocument()` full render를 바로 기다리도록 바뀌면서, 누락되거나 차가운 asset 로드가 첫 표시 자체를 막고 있을 수 있다.
+
+## Review
+- `src/previewdef/focustree/previewsession.ts`는 initial panel open과 structural reload를 다시 shell-first로 돌렸다. 이제 처음 열릴 때와 구조 편집 뒤에는 즉시 shell HTML을 보여 주고, 웹뷰가 `focusTreeWebviewReady`를 보낸 뒤에만 full snapshot/full asset reconcile을 수행한다.
+- 동시에 ready 이후 일반 문서 갱신은 이전 라운드처럼 incremental patch가 아니라 full snapshot만 보내도록 유지해서, 로딩 회복과 표준 편집 반영 안정성을 같이 맞췄다.
+- `test/unit/focustree-previewsession.test.ts`도 새 계약에 맞게 고쳐, 미준비 상태 shell 유지, panel 초기화 shell, ready 이후 full snapshot, local edit reconcile, structural reload를 검증하도록 했다.
+
+## Verification
+- `npm run test:unit` passed with 131 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Blank Canvas Recovery 2026-04-10
+
+## Plan
+- [x] shell은 보이지만 tree body가 비는 현재 focustree ready/apply 경로를 추적한다
+- [x] selected tree/state apply 계약을 고쳐 실제 focus body가 다시 렌더되게 한다
+- [x] unit, UI smoke, VSIX packaging으로 다시 검증한다
+
+## Notes
+- 사용자 스크린샷: toolbar는 보이지만 실제 focus tree body는 비어 있다.
+- 이번 라운드는 "첫 로드 지연"이 아니라 shell 이후 ready-time snapshot/state apply 또는 selected tree 복원 경로가 어긋났는지 확인하는 작업이다.
+
+## Review
+- `src/previewdef/focustree/previewsession.ts`는 마지막으로 본 문서를 세션에 보관하도록 바뀌었다. 이제 `focusTreeWebviewReady` 시점에 `getDocumentByUri()`가 문서를 못 찾아도, 초기 panel open이나 직전 refresh에서 본 문서로 full snapshot 동기화를 계속 수행한다.
+- 같은 파일의 shell replace guard도 workspace 조회와 세션 기억 문서 둘 다 기준으로 보도록 해, shell-first 초기화 이후 ready 시점에 동기화가 조용히 건너뛰는 상황을 줄였다.
+- `test/unit/focustree-previewsession.test.ts`에는 workspace 조회가 실패해도 마지막 초기화 문서를 사용해 `focusTreeContentUpdated`를 보내는 회귀 테스트를 추가했다.
+
+## Verification
+- `npm run test:unit` passed with 132 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Blank Canvas Deep Trace 2026-04-10
+
+## Plan
+- [x] 사용자 재보정을 작업 문서와 lessons에 기록한다
+- [x] focustree body 렌더 입력을 직접 추적해 빈 캔버스가 `layoutPlan` 문제인지 `renderedFocus` payload 문제인지 확인한다
+- [x] `v0.13.20` 표준 동작을 해치지 않으면서 최소 수정으로 본문 렌더를 복구한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "아직도 여전함"
+- 이전 라운드의 selected-tree/condition 기본값 수정만으로는 실제 blank canvas가 해결되지 않았다.
+- 이번 라운드는 shell 이후 본문 렌더 입력 자체를 확인하는 것이 목표다. 특히 현재 tree의 `layoutPlan.focusGridBoxItems`와 `renderedFocus` 맵이 실제로 채워지는지 먼저 확인한다.
+
+## Review
+- `v0.13.20`의 `webviewsrc/focustree.ts`와 현재 구현을 직접 대조한 결과, 예전에는 "조건 선택 때문에 결과 focus가 0개가 되면 `selectedExprs`를 비우고 다시 렌더"하는 fallback이 있었는데 현재 구조화 과정에서 그 보호 장치가 사라져 있었다.
+- 이를 현재 구조에 맞게 `src/previewdef/focustree/layoutplan.ts`의 `resolveFocusTreeLayoutPlan()`으로 복구했다. 이 helper는 현재 선택으로 `layoutPlan.focusGridBoxItems`가 비고 실제 tree에는 focus가 남아 있으면, `has_focus_tree`와 checked focus만 남긴 fallback expr로 다시 layout plan을 계산한다.
+- `webviewsrc/focustree.ts`는 그 helper가 fallback을 사용했다고 알려 줄 때만 `selectedExprs`를 실제로 비우고 persisted state, conditions dropdown, preset UI를 함께 정리하도록 연결했다. 따라서 표준 `v0.13.20` 복구 동작은 되살리면서 이후 추가된 preset/state 구조도 유지된다.
+- `test/unit/focustree-layoutplan.test.ts`에는 persisted condition 조합이 전체 tree를 숨기는 상황에서 fallback이 다시 tree body를 살리는 회귀 테스트를 추가했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 133 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui`는 preview open smoke를 통과했지만 실제 blank-canvas 픽셀 단위 검증까지 하지는 않는다. 다만 이번 수정은 바로 그 blank-canvas 보호 경로를 unit test로 고정했다.
+
+# FocusTree Runtime Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록한다
+- [x] focustree shell bootstrap, ready message, content update apply, body rebuild 순서를 다시 추적한다
+- [x] 실제로 본문 렌더를 건너뛰는 지점을 최소 수정으로 복구한다
+- [x] 검증과 VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "..아직도 여전함"
+- empty-selection fallback을 복구한 뒤에도 실제 사용자 환경에서는 blank canvas가 계속되고 있다.
+- 이번 라운드는 조건 필터가 아니라 runtime 순서 문제를 우선 본다. 특히 shell-first 초기화 이후 `focusTreeContentUpdated` 적용과 `buildContent()` 호출 시점의 실제 데이터가 비어 있지 않은지 확인한다.
+
+## Review
+- `webviewsrc/focustree/messageapply.ts`에서 full tree update를 적용할 때, 현재 구현은 host가 보낸 `selectedTreeId`보다 "이전 선택 tree id"를 무조건 우선하고 있었다. 이 때문에 shell-first 초기화 후 복원된 예전 tree id가 현재 snapshot에 존재하지 않아도, 새 snapshot의 기본 tree로 이동하지 못하고 잘못된 index/selection에 머물 수 있었다.
+- 이 경로를 고쳐서, full snapshot의 `focusTrees` 안에 이전 선택 id가 실제로 존재할 때만 그것을 유지하고, 그렇지 않으면 host가 보낸 `selectedTreeId`로 선택을 복구하도록 했다.
+- `test/unit/focustree-messageapply.test.ts`에는 "복원된 tree id가 현재 snapshot에 없으면 host-selected tree를 따른다"는 회귀 테스트를 추가했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 134 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Host Startup Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록한다
+- [x] focustree host의 초기 `selectedTreeId`, snapshot tree ordering, stale session 상태를 추적한다
+- [x] 실제 초기 body 렌더를 깨는 지점을 최소 수정으로 복구한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "동일한 문제 아직도 여전함"
+- 이전 라운드의 webview-side selected tree/state apply 수정만으로는 실제 사용자 환경의 blank canvas가 해결되지 않았다.
+- 이번 라운드는 browser restore path가 아니라 host startup data를 우선 추적한다. 특히 host가 어떤 tree를 기본 선택으로 보냈는지, 그 값이 현재 문서와 맞는지, 그리고 세션 리셋 뒤에도 stale flag가 남아 첫 authoritative refresh를 건너뛰지 않는지 확인한다.
+
+## Review
+- 반복 보고를 기준으로 shell-first/message-first 부팅 경로를 다시 확인한 결과, blank canvas와 아이콘/편집 회귀를 한 번에 설명하는 가장 큰 차이는 `v0.13.20`의 full HTML refresh 기준을 현재 세션이 벗어나 있었다는 점이었다.
+- `src/previewdef/focustree/previewsession.ts`를 안정 버전 쪽에 가깝게 단순화했다. 이제 초기 open, 일반 문서 변경, structural reload 모두 `renderDocument()` 기반 full HTML refresh를 사용하고, `focusTreeWebviewReady`는 추가 refresh를 강제하지 않고 ready 플래그만 갱신한다.
+- 이 변경으로 shell HTML만 먼저 띄운 뒤 `focusTreeContentUpdated` 메시지로 본문을 채우던 경로가 초기 렌더의 주 경로에서 빠졌다. 결과적으로 v0.13.20에서 동작하던 bootstrap 계약에 더 가까워졌고, current webview state/preset 구조와 edit ack 경로는 그대로 유지된다.
+- `test/unit/focustree-previewsession.test.ts`도 새 기준에 맞춰 갱신했다. 세션 테스트는 now-ready 상태에서도 full HTML refresh를 사용한다는 점, stale refresh가 최신 HTML을 덮지 못한다는 점, local/structural edit 후 full HTML이 다시 로드된다는 점을 검증한다.
+
+## Verification
+- `npm run test:unit` passed with 134 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Panel Init Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록한다
+- [x] shared preview panel 초기화 계약과 focustree session의 full-refresh 변경을 대조한다
+- [x] 첫 paint를 복구하는 최소 startup 수정 적용
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "이번엔 또 공백 상태의 무한 로딩."
+- 스크린샷은 이전의 toolbar-only blank canvas와 다르게, 아예 webview HTML이 아직 올라오지 않은 초기 blank 상태로 보인다.
+- 이번 라운드는 focustree 내부 tree/body 선택보다 panel initialization contract를 먼저 본다. 특히 `initializePanelContent()`가 오래 걸리거나 실패할 때 상위 preview가 어떤 상태에 머무는지 확인한다.
+
+## Review
+- 원인은 `src/previewdef/focustree/index.ts`의 custom `initializePanelContent()` 경로와 `src/previewdef/previewbase.ts`의 공통 초기화 계약 사이에서 생겼다. focustree 세션이 첫 open 때 `renderDocument()` full refresh를 끝까지 `await`하도록 바뀌면서, 공통 `Loading...`/즉시 HTML 세팅 보호를 우회한 채 panel이 빈 상태로 오래 머물 수 있었다.
+- `src/previewdef/focustree/previewsession.ts`의 `initializePanel()`을 다시 조정해서, 첫 open에서는 shell HTML을 즉시 넣고 full refresh는 비동기로 이어지게 했다. 따라서 첫 paint는 바로 뜨고, 이후 authoritative full render는 계속 유지된다.
+- `test/unit/focustree-previewsession.test.ts`도 이 계약에 맞춰 갱신했다. 이제 초기화 테스트는 shell이 먼저 보이고 이후 full HTML로 교체된다는 점을 검증한다.
+
+## Verification
+- `npm run test:unit` passed with 134 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Renderable Selection Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록한다
+- [x] 첫 full HTML 경로에서 selected tree, layout plan, rendered focus map의 실제 렌더 가능 여부를 추적한다
+- [x] 렌더 불가능한 현재 선택을 자동 보정하는 최소 수정 적용
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "..."
+- 최신 스크린샷은 panel 초기화는 살아났지만, focus tree selector와 본문이 함께 비어 있는 상태다.
+- 이번 라운드는 startup contract가 아니라 current-tree renderability를 본다. 선택된 tree가 실제 grid item과 rendered HTML을 모두 갖는지 먼저 확인한다.
+
+## Review
+- 증상상 current tree 선택은 존재하지만, 그 tree가 실제로는 그릴 수 없는 상태였다. 이 경우 selector value도 비고 본문도 비는 현상이 함께 나온다.
+- `src/previewdef/focustree/selectionstate.ts`에 `resolveRenderableFocusTreeSelection()`을 추가했다. 기본 selection 복원 뒤, 그 tree가 렌더 불가능하면 첫 번째 renderable tree로 자동 보정하는 helper다.
+- `webviewsrc/focustree.ts`의 `buildContent()`는 이제 현재 선택 tree의 layout plan과 rendered focus map을 함께 검사한다. 현재 tree가 실제 grid item과 focus HTML을 만들지 못하면, renderable tree로 선택을 보정하고 selector/UI 상태를 함께 새로 맞춘 뒤 렌더를 계속한다.
+- `test/unit/focustree-selectionstate.test.ts`에는 renderable selection fallback 회귀 테스트 2개를 추가했다.
+
+## Verification
+- `npm run test:unit` passed with 136 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Real File Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록한다
+- [x] 실제 문제 파일 `TFR_national_focus_KOR.txt`를 parser/layout 기준으로 추적한다
+- [x] 실제 데이터에서 깨지는 경로를 고친다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "`TFR_national_focus_KOR.txt` 참조, 해결 아직 안됨"
+- 이제 실제 문제 파일이 주어졌으므로 generic fallback 추측 대신 그 파일의 tree/condition/layout 결과를 직접 확인한다.
+
+## Review
+- 실파일 추적에서 `TFR_tree_KOR`는 focus가 626개인데도 현재 기본 상태에서 `gridItems: 0`으로 떨어지고 있었다. 같은 tree를 `hideDisallowedFocuses=false`로 계산하면 626개가 다시 보였으므로, 빈 캔버스의 직접 원인은 "조건을 하나도 고르지 않은 기본 상태에서도 `allow_branch` 기반 숨김 필터가 켜지는 것"으로 확인됐다.
+- `webviewsrc/focustree.ts`의 조건 선택 복원 경로는 더 이상 "선택이 비어 있으면 사용 가능한 모든 조건을 자동 선택"하지 않는다. 대신 `src/previewdef/focustree/conditionselection.ts`의 `resolveSelectedConditionExprKeys()`를 통해, 사용자가 실제로 고른 조건만 복원하고 기본 상태는 빈 선택 그대로 유지한다.
+- 같은 파일의 layout-plan 계산은 `useConditionInFocus && selectedExprs.length > 0`일 때만 `hideDisallowedFocuses`를 켠다. 따라서 `Conditions`가 비어 있는 초기 상태는 다시 `v0.13.20`처럼 전체 tree를 보여 주고, 사용자가 조건을 명시적으로 고른 뒤에만 `allow_branch` 필터가 적용된다.
+- `test/unit/focustree-conditionselection.test.ts`를 추가해 빈 기본 선택, 저장된 조건 복원, clear 동작을 고정했고, 실파일 추적에서 드러난 "무선택 상태는 전체 표시" 계약을 코드 레벨로 분리했다.
+
+## Verification
+- `npm run test:unit` passed with 139 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Offscreen Reveal Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록하고 selection-empty 이론에서 실제 viewport 위치 추적으로 전환한다
+- [x] `TFR_national_focus_KOR.txt`의 렌더 결과가 비어 있는지, 아니면 오프스크린으로 밀려 있는지 계산한다
+- [x] 실제 렌더된 포커스가 현재 뷰포트에 하나도 없을 때 앵커 포커스를 자동으로 보여 주도록 수정한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "똑같은데"
+- 실파일 계산 결과 현재 `TFR_tree_KOR`의 top-most focus는 존재하지만, `focusCreateSidePaddingColumns` / `focusCreateTopPaddingRows`와 음수 branch 좌표가 겹치면서 초기 viewport 밖으로 밀려 있었다.
+
+## Review
+- 실제 파일 추적에서 blank canvas의 원인은 "tree body가 0개"가 아니라 "초기 viewport에 렌더된 focus가 하나도 안 들어오는 것"이었다. `TFR_tree_KOR`는 `minX = -18`, `minY = 0`이고, 현재 build는 edit-mode blank canvas buffer 때문에 렌더 원점을 추가로 오른쪽/아래로 민다. 그 결과 top-most focus도 초기 viewport 바깥으로 밀려, 화면상으로는 비어 보였다.
+- `webviewsrc/focustree.ts`에 `revealCurrentFocusTreeAnchorIfNeeded()`를 추가했다. full rebuild 뒤 현재 viewport 안에 보이는 focus element가 하나도 없으면, 선택된 focus를 우선하고 없으면 top-most/left-most focus를 앵커로 골라 `scrollIntoView()` 한다.
+- 앵커 선택 규칙은 `src/previewdef/focustree/viewanchor.ts`로 분리했다. 현재 선택 focus가 있으면 그것을 우선하고, 없으면 `y`, `x`, `id` 순으로 정렬한 첫 focus를 반환한다.
+- `test/unit/focustree-viewanchor.test.ts`를 추가해 selected-focus 우선, top-most fallback, 빈 position map 처리를 고정했다.
+
+## Verification
+- `npm run test:unit` passed with 142 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Selected Tree Bootstrap Trace 2026-04-10
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록하고 viewport 이론에서 selected-tree 지정 경로 추적으로 전환한다
+- [x] full HTML bootstrap과 webview 초기 state가 `selectedTreeId`를 어떻게 정하는지 확인한다
+- [x] restored tree id가 없을 때 stale index 대신 host-selected tree를 우선하도록 수정한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "그것보다는 focustree가 아예 지정이 안 되고 있는 것 같은데"
+- 현재 focustree 주 경로는 patch message가 아니라 full HTML refresh인데, 이 bootstrap에는 `selectedTreeId`가 포함되지 않고 있었다.
+
+## Review
+- 실제로 현재 focus preview는 `focusTreeContentUpdated` patch 경로보다 `renderDocument()` 기반 full HTML refresh를 더 많이 타고 있었다. 그런데 이 full HTML bootstrap에는 `window.focusTrees`만 있고 `selectedTreeId`는 전혀 없어서, webview는 복원된 `selectedFocusTreeId`가 비어 있으면 오래된 `selectedFocusTreeIndex`만 믿고 current tree를 고르고 있었다.
+- `TFR_national_focus_KOR.txt`처럼 첫 tree만 실제 focus를 가지고 뒤의 tree들이 비어 있는 파일에서는, stale index가 `3`이나 `4`로 남아 있으면 빈 tree가 현재 tree로 선택될 수 있었다. 사용자가 말한 "focustree가 아예 지정이 안 된다"는 증상과 정확히 맞는 경로다.
+- `src/previewdef/focustree/contentbuilder.ts`는 이제 full HTML bootstrap에도 `window.bootstrapSelectedFocusTreeId`를 내려보낸다. 값은 host 기준 기본 tree인 `payload.focusTrees[0]?.id`다.
+- `webviewsrc/focustree/state.ts`는 초기 state 구성 시 restored `selectedFocusTreeId`가 없으면 `window.bootstrapSelectedFocusTreeId`를 사용한다. 따라서 stale index만 남은 상태에서도 first real tree를 기준으로 selection이 다시 잡힌다.
+- `test/unit/focustree-state.test.ts`를 추가해 "restored id가 없고 stale index만 있으면 bootstrap tree id를 쓴다"와 "restored id가 있으면 그것을 유지한다"를 고정했다.
+
+## Verification
+- `npm run test:unit` passed with 144 tests.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- 참고: `test-ui` 로그에는 fixture 기반 missing asset `UserError`와 VS Code mutex 경고가 계속 출력되지만, smoke assertions는 모두 통과했다.
+
+# FocusTree Stable Build Path Restore 2026-04-11
+
+## Plan
+- [x] 반복된 사용자 보정을 lessons/todo에 기록하고, 추측성 선택/viewport 보정보다 안정 빌드 경로 복원으로 방향을 전환한다
+- [x] focustree webview의 첫 build 경로를 v0.13.20 스타일로 되돌리되 이후 추가 기능은 유지되도록 접합한다
+- [x] dispose race까지 같이 막고 필요한 회귀 테스트를 추가한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재보정: "해결안됨..."이 반복됐다.
+- v0.13.20 소스를 다시 대조해 보니, 현재 blank 재현은 tree id나 viewport만의 문제가 아니라 modern webview build 경로 전체를 더 의심해야 하는 단계다.
+
+## Review
+- `webviewsrc/focustree.ts`의 본문 build 경로를 `v0.13.20` 쪽 계산 방식으로 되돌렸다. 현재 tree의 grid item/position 계산을 다시 직접 수행하고, 조건 때문에 tree 전체가 비면 selection을 비우고 재계산하는 안정 경로를 복구했다. 그 위에 현재 기능인 preset, multi-select, grouped link/delete, continuous focus drag, viewport reveal은 그대로 유지되도록 현재 상태 동기화 코드를 접합했다.
+- `src/previewdef/focustree/previewsession.ts`는 async full refresh가 dispose된 webview에 닿을 때 조용히 무시하도록 바꿨다. 이로써 `test-ui`에서 보이던 disposed rejection을 세션 레벨에서 삼키고, stale refresh가 새 panel 상태를 오염시키지 않게 했다.
+- `test/unit/focustree-previewsession.test.ts`에는 disposed webview full refresh 회귀를 추가했다. 패키징 중에 참조 파일 `TFR_national_focus_KOR.txt`가 VSIX에 들어가는 문제도 `.vscodeignore`에 exact path를 넣어 정리했다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 145 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 11 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Real File Repro Trace 2026-04-11
+
+## Plan
+- [x] `TFR_national_focus_KOR.txt` 기반 fixture와 smoke 경로를 추가한다
+- [x] host/session/webview 진단 snapshot과 URI-scoped state restore를 구현한다
+- [x] selected tree bootstrap을 첫 non-empty tree 우선 규칙으로 고정하고 icon 경로도 계측한다
+- [x] compile, unit/UI 검증, VSIX packaging까지 다시 완료한다
+
+## Notes
+- 사용자 재지시: 세부 점검 계획을 실제로 구현하라고 요청했다.
+- 이번 라운드는 추측성 fallback을 더 얹지 않고, 실파일 재현과 진단 값을 host까지 끌어와서 첫 렌더 입력을 검증하는 데 집중한다.
+
+## Review
+- `test/fixtures/workspace/common/national_focus/TFR_national_focus_KOR.txt`를 실제 smoke fixture로 추가했다. 이제 UI smoke가 단순 preset fixture가 아니라 사용자가 문제를 본 `TFR` 케이스를 직접 연다.
+- `webviewsrc/focustree/state.ts`는 restored webview state를 현재 `window.previewedFileUri`와 비교해서, 다른 파일의 state이거나 `uri`가 없는 오래된 state면 tree/condition/search/edit-mode 복원을 버리도록 바꿨다. 이 경로에서 `selected tree`는 host bootstrap id를 우선하고, 그것도 비어 있으면 첫 non-empty tree로 고정한다.
+- `src/previewdef/focustree/previewsession.ts`, `src/previewdef/previewmanager.ts`, `webviewsrc/focustree.ts`, `src/previewdef/focustree/index.ts`에는 session/webview diagnostics를 추가했다. focustree webview는 첫 load/build 때 현재 tree id, selector 값, focus grid item 수, rendered focus hit 수, canvas 크기를 host로 보내고, preview manager는 내부 debug command로 그 snapshot을 다시 읽을 수 있다.
+- `src/previewdef/focustree/contentbuilder.ts`는 icon 경로에서 `resolved files hit`, `gfx scan hit`, `default fallback`, `unresolved gfx names`를 분리해서 기록한다. 이로써 icon이 안 뜨는 원인이 index miss인지 fallback scan miss인지 로그로 바로 구분된다.
+- `test/unit/focustree-state.test.ts`는 stale index, 다른 파일 state, empty tree restore를 검증하도록 다시 썼고, `test/integration/extension.test.ts`는 새 internal debug command를 통해 `TFR_tree_KOR`가 실제 current tree로 잡히고 본문 grid/canvas가 비어 있지 않은지 확인한다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 147 tests.
+- `npm run build` passed.
+- `npm run test-ui` passed with 12 smoke tests, including the new `TFR_national_focus_KOR.txt` preview diagnostics assertion.
+
+# FocusTree Selector Bootstrap Trace 2026-04-11
+
+## Plan
+- [x] selector option bootstrap 경로를 다시 점검하고 빈 selector 재현을 테스트로 고정한다
+- [x] load 시 selector option을 강제로 재구성하고 diagnostics에 selector 상태를 포함한다
+- [x] compile, unit/UI, package로 다시 검증한다
+
+## Notes
+- 사용자 재보정: "Focus Tree조차 인식되지 않는 것 같다."
+- 최신 스크린샷은 selector label은 보이지만 option text가 비어 있으므로, current-tree 계산보다 selector option bootstrap 자체를 우선 본다.
+
+# FocusTree Startup Filter And Create Responsiveness 2026-04-11
+
+## Plan
+- [x] startup 시 `allow_branch` filtering을 다시 표준 동작으로 되돌린다
+- [x] 생성된 focus placeholder를 실제 카드처럼 보이게 조정한다
+- [x] structural edit refresh를 ack 이후 비동기로 넘겨 체감 반응을 줄인다
+- [x] compile, unit/UI, package로 다시 검증한다
+
+## Notes
+- 사용자 재보정: 시작 화면에서 `allow_branch`가 무시되고, 생성된 focus 표시가 어색하며, 프리뷰 반응이 느리다고 보고했다.
+
+## Review
+- 초기 렌더와 조건 UI가 서로 다른 규칙을 쓰고 있었다. `Conditions` 드롭다운은 빈 선택을 유지하지만, 실제 렌더는 tree별 기본 조건 또는 실제로 보이는 첫 조건을 사용해 `allow_branch`를 적용하도록 `webviewsrc/focustree.ts`를 정리했다. 이로써 시작 화면에서 모든 branch를 한꺼번에 노출하지 않으면서도 TFR처럼 빈 캔버스가 되던 케이스는 다시 막았다.
+- 생성 직후 focus는 authoritative `renderedFocus`가 도착하기 전까지 깨진 중간 markup으로 바뀔 수 있었다. `webviewsrc/focustree.ts`에 tree별 pending placeholder 추적을 추가해서, host가 실제 HTML을 보낼 때까지는 local placeholder 카드를 계속 유지하게 했다.
+- `src/previewdef/focustree/localpreview.ts`의 placeholder template은 임시 dashed box에서 실제 카드형 프레임으로 바꿨고, `src/previewdef/focustree/edithandler.ts`는 structural refresh를 optimistic ack 뒤 비동기로 넘겨서 생성/삭제/링크 편집 직후 체감 지연을 줄였다.
+- `src/previewdef/focustree/conditionselection.ts`와 `webviewsrc/focustree.ts`는 `allow_branch` 적용 여부를 “UI에 선택이 보이느냐”가 아니라 “렌더에 실제 쓰인 조건이 있느냐” 기준으로 다시 맞췄다. 덕분에 stable contract와 현재 startup bootstrap이 충돌하지 않게 됐다.
+
+## Verification
+- `npm run compile-ts` passed.
+- `npm run test:unit` passed with 149 tests.
+- `npm run test-ui` passed with 13 smoke tests, including the TFR preview diagnostics checks.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- `.vscodeignore` was updated and `npm run package` rerun so stray root txt files are no longer included in the VSIX.
+
+# FocusTree GXC Baseline Verification 2026-04-11
+
+## Plan
+- [x] `GXC focus (Liangguang).txt`를 focustree 실파일 기준 smoke로 연결한다
+- [x] 기존 TFR 전용 integration assertion을 GXC 기준선에 맞게 정리한다
+- [x] 테스트와 패키징을 다시 돌려 GXC 기준선으로 VSIX까지 검증한다
+
+## Notes
+- 사용자 기준 변경: "`GXC focus (Liangguang).txt` 를 기준으로 테스트"
+- `vscode-test`의 workspace root는 저장소 루트가 아니라 `test/fixtures/workspace`라서, 기준 파일도 같은 workspace 안에 존재해야 integration smoke가 열린다.
+
+## Review
+- `test/integration/extension.test.ts`의 TFR 고정 smoke 둘을 GXC 기준 smoke로 교체했다. 이제 실제 기준 파일 `GXC focus (Liangguang).txt`를 열고, debug state에서 `currentFocusTreeId`, `selectedFocusTreeId`, selector text가 모두 `GXC_focus_tree`인지 확인한다. 본문 렌더까지 잡기 위해 focus count, grid item count, rendered focus hit count, canvas width/height도 같이 검증한다.
+- 중복된 preview state polling은 `waitForFocusPreviewState()` 헬퍼로 정리했다. 같은 파일을 다시 열었을 때도 selector와 current tree 진단 값이 흔들리지 않는지 재오픈 smoke까지 포함했다.
+- UI smoke가 처음 실패한 원인은 코드가 아니라 test workspace 경로였다. `vscode-test`는 `test/fixtures/workspace`를 workspace root로 사용하므로, 실제 기준 파일도 `test/fixtures/workspace/GXC focus (Liangguang).txt`로 복제해 smoke가 동일한 파일명을 가진 상태로 열리게 맞췄다.
+
+## Verification
+- `npm run build` passed.
+- `npm run test:unit` passed with 149 tests.
+- `npm run test-ui` passed with 13 smoke tests, including the new GXC-based focus preview checks.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+
+# FocusTree Performance Recovery 2026-04-11
+
+## Plan
+- [x] focustree 초기 로드/문서 변경이 왜 느린지 현재 세션 경로를 점검한다
+- [x] full HTML refresh 회귀를 제거하고 shell + snapshot update 경로로 되돌린다
+- [x] 단위/UI 검증과 VSIX 패키징으로 성능 회귀 수정이 안전한지 확인한다
+
+## Notes
+- 사용자 재보정: 실제 핵심 문제는 blank 자체보다 로딩 속도와 편집 후 반응 속도가 현저히 느린 점이었다.
+
+## Review
+- 실제 병목은 focustree 세션이 이미 있는 snapshot/patch 인프라를 전혀 쓰지 않고, 초기 로드와 문서 변경마다 `webview.html` 전체를 다시 만드는 회귀 경로였다. 이 때문에 focustree 스크립트와 DOM이 매번 재부팅되고, 큰 트리에서는 첫 paint와 편집 후 반영이 모두 무겁게 느껴졌다.
+- [previewsession.ts](C:\Users\Administrator\Documents\Code\hoi4modutilities\src\previewdef\focustree\previewsession.ts)는 이제 다시 `shell -> snapshot update` 흐름을 탄다. panel open 시에는 shell HTML만 즉시 넣고, 실제 tree 내용은 `focusTreeContentUpdated` 메시지로 전달한다. webview가 준비되기 전까지는 준비된 base state를 보관했다가, ready 이후에 그대로 적용한다.
+- 첫 렌더는 `deferred` asset load로 보내고, ready 이후에 같은 document version에 대해서만 한 번 `full` hydration을 백그라운드로 예약한다. 그래서 본문은 먼저 뜨고, 무거운 icon/inlay asset 쪽은 뒤에서 보강된다.
+- ready 이후의 일반 refresh와 구조 편집 후 refresh는 더 이상 HTML 전체 교체를 하지 않는다. render cache가 있으면 patch planner를 통해 partial/full content update를 보내고, webview는 현재 DOM을 유지한 채 필요한 부분만 갱신한다.
+- [focustree-previewsession.test.ts](C:\Users\Administrator\Documents\Code\hoi4modutilities\test\unit\focustree-previewsession.test.ts)도 새 계약에 맞게 바꿨다. 핵심 회귀는 shell 유지, ready 이후 snapshot delivery, stale refresh discard, local/structural edit update, disposed postMessage 무시 경로다.
+
+## Verification
+- `npm run build` passed.
+- `npm run test:unit` passed with 149 tests.
+- `npm run test-ui` passed with 13 smoke tests.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
+- UI smoke 기준으로 GXC focus preview open은 약 `653ms`, reopen 안정화는 약 `700ms` 수준으로 통과했다.

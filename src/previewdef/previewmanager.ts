@@ -45,6 +45,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     public register(): vscode.Disposable {
         const disposables: vscode.Disposable[] = [];
         disposables.push(vscode.commands.registerCommand(Commands.Preview, this.showPreview, this));
+        disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
         disposables.push(vscode.window.onDidChangeActiveTextEditor(this.safeUpdateHoi4PreviewContextValue, this));
@@ -69,6 +70,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
         try {
             const uri = vscode.Uri.parse(uriStr, true);
+            debug('preview.deserialize', { uri: uriStr, viewType: panel.viewType });
             await vscode.workspace.openTextDocument(uri);
             await this.showPreviewImpl(uri, panel);
         } catch (e) {
@@ -149,6 +151,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         const uri = document.uri;
         const key = uri.toString();
         if (key in this.previews) {
+            debug('preview.reveal-existing', { uri: key, panelProvided: !!panel });
             this.previews[key].panel.reveal();
             panel?.dispose();
             debug(`dispose panel ${uri} because preview already open`);
@@ -189,6 +192,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         }
 
         const previewItem = previewProvider.createPreview(uri, panel);
+        debug('preview.create', { uri: key, provider: previewProvider.type, deserialized: !!panel });
         this.previews[key] = previewItem;
 
         previewItem.onDispose(() => {
@@ -205,6 +209,17 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         });
 
         await previewItem.initializePanelContent(document);
+    }
+
+    private getPreviewDebugState(uri?: vscode.Uri | string): unknown {
+        const resolvedUri = typeof uri === 'string'
+            ? vscode.Uri.parse(uri, true)
+            : uri ?? vscode.window.activeTextEditor?.document.uri;
+        if (!resolvedUri) {
+            return undefined;
+        }
+
+        return this.previews[resolvedUri.toString()]?.getDebugState();
     }
 
     private findPreviewProvider(document: vscode.TextDocument): PreviewDescriptor | undefined {
