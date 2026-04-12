@@ -1,5 +1,54 @@
 # Focus Tree Large File Performance 2026-04-06
 
+# FocusTree Conditions Review Fix 2026-04-11
+
+## Plan
+- [x] 리뷰에서 지적된 `conditionExprs` 회귀 범위를 다시 확인한다
+- [x] `allow_branch` 외에 focus icon / offset trigger도 Conditions 소스로 다시 수집하도록 schema 경로를 복원한다
+- [x] shared focus import 경로에서도 같은 조건 수집 규칙이 유지되도록 보정한다
+- [x] 관련 unit test 기대값을 새 동작에 맞춰 갱신한다
+
+## Review
+- `src/previewdef/focustree/schema.ts`는 이제 local focus 파싱 시 `icon.trigger`와 `offset.trigger`의 조건식도 다시 `conditionExprs`에 수집한다.
+- 같은 파일의 `updateConditionExprsByFocus()`도 `allow_branch`만이 아니라 imported shared focus의 icon/offset 조건까지 반영하도록 확장해, 로컬/공유 focus 간 Conditions 목록 규칙이 어긋나지 않게 맞췄다.
+- `test/unit/focustree-schema.test.ts`는 Conditions 목록이 `allow_branch` 전용이 아니라 icon/offset trigger까지 포함하는 회귀 기대값으로 갱신했다.
+
+## Verification
+- 코드 수정만 적용했다.
+- 테스트 실행은 이번 요청에서 별도로 수행하지 않았다.
+
+# FocusTree Grouped Link Match Fix 2026-04-11
+
+## Plan
+- [x] grouped prerequisite 토글에서 overlap-first 매칭이 실제로 어떤 오동작을 만드는지 다시 확인한다
+- [x] exact multi-parent group이 있으면 그 필드를 overlap 후보보다 우선 선택하도록 링크 매칭을 보정한다
+- [x] earlier overlap group이 있어도 exact group만 제거되는 회귀 테스트를 추가한다
+
+## Review
+- `src/previewdef/focustree/positioneditservice.ts`의 prerequisite field 탐색은 이제 parent set과 정확히 같은 group을 먼저 찾고, 없을 때만 overlap merge 후보를 찾는다.
+- 덕분에 동일한 grouped link를 다시 적용할 때, 앞쪽에 다른 overlap block이 있더라도 exact block만 토글되고 unrelated prerequisite group은 유지된다.
+- `test/unit/focustree-positionedit.test.ts`에는 overlap group과 exact group이 함께 있는 상태에서 exact group만 제거되는 회귀 테스트를 추가했다.
+
+## Verification
+- 코드 수정만 적용했다.
+- 테스트 실행은 이번 요청에서 별도로 수행하지 않았다.
+
+# FocusTree Conditions Scope Fix 2026-04-12
+
+## Plan
+- [x] 리뷰에서 지적된 `conditionExprs` 소비 경로를 다시 확인한다
+- [x] icon/offset trigger가 global Conditions 상태에 섞이지 않도록 schema 수집 범위를 원래 의미로 복원한다
+- [x] schema 회귀 테스트를 tree-level `allow_branch` 기대값으로 되돌린다
+
+## Review
+- `src/previewdef/focustree/schema.ts`의 `conditionExprs` 수집은 다시 `allow_branch` 중심의 tree-level visibility 조건만 담도록 복원했다.
+- icon/offset trigger는 각 focus의 장식/표현용 조건으로만 남고, webview의 global `Conditions` 드롭다운이나 completed-focus 계산 소스로는 더 이상 섞이지 않는다.
+- `test/unit/focustree-schema.test.ts`도 같은 계약에 맞춰 `allow_branch`만 남는 기대값으로 되돌렸다.
+
+## Verification
+- 코드 수정만 적용했다.
+- 테스트 실행은 이번 요청에서 별도로 수행하지 않았다.
+
 ## Plan
 - [x] Current focustree render path and large-file bottlenecks를 다시 확인하고 hot path를 특정한다
 - [x] P1 host-side diff payload path를 구현해 same-structure refresh 전송량을 줄인다
@@ -879,3 +928,157 @@
 - `npm run test-ui` passed with 13 smoke tests.
 - `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.
 - UI smoke 기준으로 GXC focus preview open은 약 `653ms`, reopen 안정화는 약 `700ms` 수준으로 통과했다.
+
+# Codebase Review And Refactoring Plan 2026-04-12
+
+## Plan
+- [x] 저장소 구조, 기존 `tasks` 문서, 현재 dirty worktree 상태를 확인한다
+- [x] 핵심 오케스트레이션/인덱스/미리보기/focustree 모듈을 정적 분석한다
+- [x] 현재 테스트 지형을 확인하고 baseline unit suite를 실행한다
+- [x] 우선순위가 있는 전면 리팩토링 계획을 정리한다
+
+## Review
+- High: `src/services/indexService.ts`는 `invalidate()`가 in-flight build를 versioning/cancel 하지 않아, build 중간에 workspace 변경이 들어오면 stale task가 그대로 `readyTargets`를 다시 세우고 후속 `ensure()`도 기존 task를 재사용한다. 이 패턴은 `src/util/gfxindex.ts`, `src/util/localisationIndex.ts`, `src/util/sharedFocusIndex.ts`의 invalidate-after-change 흐름 전체에 걸쳐 있어, 시작 직후 파일 변동이나 대형 workspace 스캔 중 편집이 있으면 stale index가 살아남을 위험이 있다.
+- High: `src/util/localisationIndex.ts`의 `resolveLocalisedTextFromIndex()`는 workspace(mod)보다 global(vanilla) 값을 먼저 조회한다. 같은 localisation key를 모드가 override 하는 가장 일반적인 HOI4 workflow에서 preview가 vanilla 문자열을 계속 보여줄 수 있는 순서다. 현재 `test/unit/localisation-index.test.ts`는 fallback만 검증하고 override precedence 회귀는 잡지 못한다.
+- Medium: `src/previewdef/focustree/positioneditservice.ts`와 `src/previewdef/focustree/schema.ts`에 편집 AST 추출, text edit 조합, 템플릿 생성, link reconciliation, warning 보정, shared focus merge가 과도하게 집중돼 있다. 테스트는 있지만 변경 이력이 매우 잦고 파일 크기도 각각 약 1100/650 lines라서, 다음 기능 추가나 버그 수정 때 회귀 반경이 지나치게 크다.
+- Medium: preview orchestration은 `src/extension.ts` -> `src/services/previews.ts` -> `src/previewdef/previewmanager.ts` singleton 경로에 강하게 묶여 있다. preview provider registry, serializer, dependency subscription, debounce scheduling, context update가 한 클래스에 몰려 있고 직접적인 unit coverage도 거의 없어, lifecycle 회귀가 생기면 focustree tests만으로는 잡히지 않을 가능성이 높다.
+- Low: build는 이미 `scripts/build.mjs`의 esbuild 경로로 이행됐지만 `webpack.config.js`와 `package.json`의 webpack/ts-loader/copy-webpack-plugin devDependency가 아직 남아 있다. 당장 기능 버그는 아니지만, 유지보수자가 어떤 빌드 체인이 canonical인지 헷갈리기 쉽고 dependency surface도 불필요하게 넓다.
+
+## Refactoring Plan
+
+### Phase 1. Correctness First
+- `IndexService`에 generation token 또는 invalidation epoch를 도입해 stale build completion이 `ready` 상태를 다시 세우지 못하게 한다.
+- `gfxindex`, `localisationIndex`, `sharedFocusIndex`에 "build 중 invalidate" 회귀 테스트를 추가한다.
+- localisation resolution precedence를 `workspace -> global -> english fallback` 순서로 재정의하고, override fixture 테스트를 추가한다.
+
+### Phase 2. Split Focustree Domain Boundaries
+- `positioneditservice.ts`를 `move`, `create-delete`, `prerequisite-link`, `mutually-exclusive-link`, `text-change-utils` 계층으로 나눈다.
+- `schema.ts`를 parsing, shared-focus merge, warning/lint finalization, condition extraction 모듈로 분리한다.
+- 각 하위 모듈의 pure helper 경계를 먼저 만들고, preview/webview contract는 마지막에 유지한 채 이동한다.
+
+### Phase 3. Untangle Preview Orchestration
+- `PreviewManager`에서 provider selection/cache, dependency subscription graph, panel lifecycle, context-key update를 별도 컴포넌트로 분리한다.
+- singleton export 대신 생성자 주입 가능한 registry/session composition으로 바꿔 unit test 가능성을 높인다.
+- serializer restore, duplicate-open reveal, dependency-triggered refresh에 대한 manager-level tests를 추가한다.
+
+### Phase 4. Tooling And Build Cleanup
+- `webpack.config.js`가 더 이상 필요 없으면 제거하고 관련 devDependency를 정리한다.
+- build/test/package script contract를 README와 AGENTS workflow에 맞게 다시 한 번 명시한다.
+- `dist/out/static/l10n` 산출물 역할과 생성 경로를 표로 정리해 release 작업을 단순화한다.
+
+## Suggested Order
+1. localisation precedence + IndexService invalidation race 수정 및 테스트 추가
+2. focustree `positioneditservice` 분해
+3. focustree `schema` 분해
+4. preview manager lifecycle 분해 및 테스트 보강
+5. build/dependency 정리
+
+## Verification
+- `npm run test:unit` passed with 150 tests.
+- 이번 라운드는 코드 변경이 아니라 정적 코드 리뷰와 계획 수립이 중심이었으므로, UI smoke나 VSIX 패키징은 다시 돌리지 않았다.
+
+# IndexService Invalidation Race Fix 2026-04-12
+
+## Plan
+- [x] `IndexService`의 in-flight build / invalidate 상호작용을 다시 확인한다
+- [x] 무효화된 이전 build가 완료돼도 `ready`를 다시 세우지 못하도록 generation 기반 보호를 넣는다
+- [x] 같은 generation 안에서는 기존 in-flight build를 재사용하고, invalidate 뒤에는 새 build가 시작되는 회귀 테스트를 추가한다
+- [x] unit suite로 기존 인덱스/preview 테스트까지 함께 확인한다
+
+## Review
+- `src/services/indexService.ts`는 이제 target별 generation을 추적한다. `invalidate()`는 해당 generation을 증가시키고 현재 task 슬롯을 비우며, 이후 `ensure()`는 현재 generation과 일치하는 in-flight task만 재사용한다.
+- 이전 generation의 build가 나중에 완료되더라도 더 이상 `readyTargets`를 다시 세우지 못한다. 따라서 workspace 변경이나 파일 이벤트가 build 중간에 들어와도 stale index가 최신 상태를 덮어쓰지 않는다.
+- 같은 파일의 task cleanup도 generation-aware 하게 바뀌어, 이전 build의 `finally()`가 더 최신 generation의 task 등록을 실수로 지우지 않게 했다.
+- `test/unit/index-service.test.ts`를 추가해 두 가지를 고정했다: invalidate 후 첫 build 완료가 `ready`를 세우지 않는 경로, 그리고 invalidate가 없을 때는 동일 generation의 in-flight build를 재사용하는 경로.
+
+## Verification
+- `npm run test:unit` passed with 152 tests.
+
+# Localisation Override Precedence Fix 2026-04-12
+
+## Plan
+- [x] localisation lookup 우선순위와 현재 회귀 테스트 범위를 다시 확인한다
+- [x] 모드(workspace) localisation이 vanilla(global)를 우선 덮어쓰도록 lookup 순서를 보정한다
+- [x] requested language와 english fallback 모두에서 override precedence를 고정하는 unit test를 추가/갱신한다
+- [x] unit suite로 기존 인덱스/preview 경로까지 함께 검증한다
+
+## Review
+- `src/util/localisationIndex.ts`의 `resolveLocalisedTextFromIndex()`는 이제 `workspace requested language -> global requested language -> workspace english -> global english -> key` 순서로 값을 찾는다.
+- 이 변경으로 모드가 같은 localisation key를 재정의한 경우 preview가 더 이상 vanilla 문구를 먼저 집어오지 않는다. requested language가 없어서 english로 fallback 하는 경우에도, mod-provided english가 vanilla english보다 우선한다.
+- `test/unit/localisation-index.test.ts`는 단순 fallback 확인에서 더 나아가, requested-language override와 english-fallback override가 모두 workspace 우선으로 해석되는지 명시적으로 검증한다.
+
+## Verification
+- `npm run test:unit` passed with 152 tests.
+
+# PositionEditService Split 2026-04-12
+
+## Plan
+- [x] 현재 `positioneditservice.ts`의 책임 분포와 기존 uncommitted 변경을 확인한다
+- [x] public API는 유지한 채 공용 타입, AST/metadata 추출, text manipulation helper를 별도 모듈로 분리한다
+- [x] 기존 exact prerequisite match 수정과 position edit 회귀 테스트가 그대로 유지되는지 확인한다
+- [x] unit suite로 focustree 편집 경로 전반을 다시 검증한다
+
+## Review
+- `src/previewdef/focustree/positioneditservice.ts`는 이제 public orchestration 레이어로 축소됐다. BOM 처리, parse context 준비, unique editable focus 검증, 그리고 각 edit 시나리오별 조합 로직만 남겼다.
+- 새 `src/previewdef/focustree/positioneditservicetypes.ts`는 public/internal 공용 타입을 모으고, `src/previewdef/focustree/positioneditserviceparse.ts`는 editable focus metadata 추출과 prerequisite-group 매칭 같은 parser-side 책임을 맡는다.
+- 새 `src/previewdef/focustree/positioneditservicetext.ts`는 scalar field 삽입/교체, prerequisite/exclusive field 조작, line-range 확장, template insertion text 생성처럼 순수 text-edit helper를 담당한다.
+- 결과적으로 기존 giant file에 섞여 있던 parser traversal, text range math, template string assembly가 분리되어 이후 4번 `schema.ts` 정리 전에도 edit-path 코드 읽기와 회귀 분석이 훨씬 쉬워졌다.
+- 외부 계약은 유지했다. `test/unit/focustree-positionedit.test.ts`가 그대로 통과했고, exact multi-parent prerequisite match 회귀도 새 구조에서 계속 보존된다.
+
+## Verification
+- `npm run test:unit` passed with 152 tests.
+
+# FocusTree Schema Split 2026-04-12
+
+## Plan
+- [x] 현재 `schema.ts`의 parsing/assembly/lint 경계를 다시 확인하고 새 helper 분리 상태를 점검한다
+- [x] public import 경로는 유지한 채 schema definition/type export와 focus tree assembly 책임을 별도 모듈로 분리한다
+- [x] `inlay_window`, `continuous_focus_position`, shared/joint focus 조립 동작이 그대로 유지되도록 보정한다
+- [x] unit suite로 focustree schema/preview 경로를 다시 검증한다
+
+## Review
+- 새 `src/previewdef/focustree/focustreeschematypes.ts`는 focus file schema definition, raw parsed types, `convertFocusFileNodeToJson()`, `extractFocusIds()`, focus icon parsing처럼 parser-adjacent 책임을 맡는다.
+- 새 `src/previewdef/focustree/focustreeschemahelpers.ts`는 focus object 조립, shared focus merge, relative position validation, lint finalization, allow-branch condition 수집을 담당한다. 기존 `focus_tree.inlay_window` 파싱과 `continuous_focus_position` 기본값 처리도 여기로 옮겨 assembly 책임 안에서 보존했다.
+- `src/previewdef/focustree/schema.ts`는 이제 public export surface와 metadata hydration만 담당한다. 기존 import 경로를 깨지 않도록 type/function export는 유지하면서, `collectFocusPositionFileMetadata()`를 이용한 `createTemplate`, `continuousLayout`, `focus.layout`, `isInCurrentFile` 연결만 남겼다.
+- 중간 검증에서 type-only re-export 때문에 기존 일반 import가 깨지는 문제가 있었고, `schema.ts`는 최종적으로 `focustreeschematypes`를 전체 re-export 하도록 맞춰 export 호환성을 유지했다.
+
+## Verification
+- `npm run test:unit` passed with 152 tests.
+
+# PreviewManager Lifecycle Split 2026-04-12
+
+## Plan
+- [x] `extension -> services/previews -> previewmanager` 결합 지점과 현재 lifecycle 책임을 다시 점검한다
+- [x] provider 선택, dependency subscription 추적, singleton wiring을 별도 경계로 분리해 `PreviewManager`를 orchestration 중심으로 줄인다
+- [x] 중복 preview reveal, dependency-driven refresh, provider priority context 갱신을 고정하는 manager-level test를 추가한다
+- [x] unit/build 검증으로 extension wiring 회귀가 없는지 확인한다
+
+## Review
+- `src/previewdef/previewmanager.ts`는 이제 실제 orchestration에 더 가깝다. preview provider 하드코딩, provider cache, dependency subscription 배열, singleton 생성이 한 파일에 함께 있던 구조를 줄이고, manager는 panel lifecycle과 preview instance wiring에 집중한다.
+- 새 `src/previewdef/previewproviderresolver.ts`는 provider 우선순위 계산, document-version cache, `canPreview()` 예외 보호를 담당한다. 그래서 context-key 갱신과 preview open 경로가 같은 provider resolution 로직을 공유하게 됐다.
+- 새 `src/previewdef/previewdependencytracker.ts`는 dependency path subscription과 영향 preview 조회를 담당한다. `PreviewManager`는 이제 배열을 직접 다루지 않고 교체/조회만 호출한다.
+- 새 `src/previewdef/previewproviders.ts`는 기본 preview descriptor 목록을 모은다. 이에 따라 `src/services/previews.ts`는 더 이상 module-level singleton을 가져오지 않고, activation 시 `new PreviewManager({ previewProviders: defaultPreviewProviders })`로 manager를 생성한다. 이 변경으로 `extension.ts -> services/previews.ts -> previewmanager singleton` 결합이 약해지고, unit test에서 fake providers를 주입한 manager 인스턴스를 직접 만들 수 있게 됐다.
+- `test/unit/previewmanager.test.ts`를 추가해 세 가지 lifecycle 계약을 고정했다: 이미 열린 preview는 새 panel을 만들지 않고 reveal만 하는 경로, dependency subscription으로 연결된 다른 preview가 문서 변경에 반응하는 경로, context update가 가장 높은 우선순위 provider를 선택하는 경로.
+
+## Verification
+- `npm run test:unit` passed with 155 tests.
+- `npm run build` passed.
+
+# Build And Dependency Cleanup 2026-04-12
+
+## Plan
+- [x] 현재 실제 빌드 진입점과 `webpack` 잔존 설정/의존성을 다시 확인한다
+- [x] 사용되지 않는 webpack-era config와 devDependency를 제거하고, 개발 task를 현재 esbuild 경로에 맞춘다
+- [x] lockfile을 재동기화하고 build/test/package 검증으로 배포 경로가 유지되는지 확인한다
+
+## Review
+- `package.json`에서 더 이상 사용하지 않는 `copy-webpack-plugin`, `ts-loader`, `webpack`, `webpack-cli` devDependency를 제거했다. 현재 canonical build는 `scripts/build.mjs`의 esbuild 파이프라인이므로 이들 패키지는 설치 비용만 늘리고 유지보수자에게 잘못된 신호를 주고 있었다.
+- obsolete [webpack.config.js](C:\Users\Administrator\Documents\Code\hoi4modutilities\webpack.config.js) 는 삭제했다. 실제 bundle, static asset copy, l10n bundle 생성은 이미 `scripts/build.mjs`가 담당하고 있어 기능 경로에는 영향이 없다.
+- `.vscode/tasks.json`의 기본 build task는 존재하지도 않는 `webpack-dev`를 가리키고 있었는데, 이를 현재 one-shot 개발 번들 경로인 `build:dev`로 바꿨다. 더 이상 webpack 전용 background/problem matcher를 기대하지 않도록 같이 단순화했다.
+- `.vscodeignore`에서는 삭제된 `webpack.config.js` 제외 규칙을 정리했고, `CHANGELOG.md`의 0.13.0 toolchain 설명도 실제 상태에 맞게 `esbuild-based`로 수정했다.
+- `npm install`로 lockfile을 재동기화하면서 webpack 계열 전이 의존성도 함께 빠졌고, 설치 트리에서 총 90개 패키지가 제거됐다.
+
+## Verification
+- `npm install` completed and refreshed `package-lock.json`.
+- `npm run test` passed.
+- `npm run package` passed and refreshed `hoi4modutilities-1.0.0.vsix`.

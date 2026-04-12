@@ -1,46 +1,42 @@
 import * as vscode from 'vscode';
-import { focusTreePreviewDef } from './focustree';
 import { localize } from '../util/i18n';
-import { gfxPreviewDef } from './gfx';
 import { Commands, WebviewType, ContextName } from '../constants';
-import { technologyPreviewDef } from './technology';
-import { matchPathEnd } from '../util/nodecommon';
 import { arrayToMap } from '../util/common';
-import { debug, error } from '../util/debug';
-import { PreviewBase } from './previewbase';
+import { debug } from '../util/debug';
 import { contextContainer, setVscodeContext } from '../context';
 import { basename, getDocumentByUri } from '../util/vsccommon';
-import { worldMapPreviewDef } from './worldmap';
-import { eventPreviewDef } from './event';
 import { sendEvent } from '../util/telemetry';
-import { guiPreviewDef } from './gui';
-import { mioPreviewDef } from './mio';
 import { getWebviewPanelOptions } from '../util/webview';
-import { PreviewDescriptor } from './descriptor';
 import { UpdateScheduler } from '../services/updateScheduler';
+import { PreviewProviderResolver } from './previewproviderresolver';
+import { PreviewDependencyTracker } from './previewdependencytracker';
+import type { PreviewBase } from './previewbase';
+import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor';
 
-interface DependencySubscription {
-    segments: string[];
-    preview: PreviewBase;
+type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
+
+interface PreviewManagerOptions {
+    previewProviders: PreviewDescriptor[];
+    documentUpdateScheduler?: PreviewUpdateScheduler;
+    dependencyUpdateScheduler?: PreviewUpdateScheduler;
 }
 
 export class PreviewManager implements vscode.WebviewPanelSerializer {
     private readonly previews: Record<string, PreviewBase> = {};
-    private readonly previewProviderCache = new Map<string, { version: number; providerType: string | undefined }>();
-    private readonly documentUpdateScheduler = new UpdateScheduler<string>(key => key);
-    private readonly dependencyUpdateScheduler = new UpdateScheduler<string>(key => key);
+    private readonly previewProvidersMap: Record<string, PreviewDescriptor>;
+    private readonly previewProviderResolver: PreviewProviderResolver;
+    private readonly dependencyTracker = new PreviewDependencyTracker();
+    private readonly documentUpdateScheduler: PreviewUpdateScheduler;
+    private readonly dependencyUpdateScheduler: PreviewUpdateScheduler;
 
-    private readonly previewProviders: PreviewDescriptor[] = [
-        focusTreePreviewDef,
-        gfxPreviewDef,
-        technologyPreviewDef,
-        worldMapPreviewDef,
-        eventPreviewDef,
-        guiPreviewDef,
-        mioPreviewDef,
-    ];
-    private readonly previewProvidersMap: Record<string, PreviewDescriptor> = arrayToMap(this.previewProviders, 'type');
-    private readonly dependencySubscriptions: DependencySubscription[] = [];
+    constructor(
+        private readonly options: PreviewManagerOptions,
+    ) {
+        this.previewProvidersMap = arrayToMap(options.previewProviders, 'type');
+        this.previewProviderResolver = new PreviewProviderResolver(options.previewProviders);
+        this.documentUpdateScheduler = options.documentUpdateScheduler ?? new UpdateScheduler<string>(key => key);
+        this.dependencyUpdateScheduler = options.dependencyUpdateScheduler ?? new UpdateScheduler<string>(key => key);
+    }
 
     public register(): vscode.Disposable {
         const disposables: vscode.Disposable[] = [];
@@ -74,7 +70,6 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             await vscode.workspace.openTextDocument(uri);
             await this.showPreviewImpl(uri, panel);
         } catch (e) {
-            error(e);
             panel.dispose();
             debug(`dispose panel ${uriStr} because reopen error`);
         }
@@ -85,7 +80,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private onCloseTextDocument(document: vscode.TextDocument): void {
-        this.previewProviderCache.delete(document.uri.toString());
+        this.previewProviderResolver.clear(document.uri);
         if (!vscode.window.visibleTextEditors.some(e => e.document.uri.toString() === document.uri.toString())) {
             const key = document.uri.toString();
             this.previews[key]?.panel.dispose();
@@ -110,7 +105,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         let shouldShowPreviewButton = false;
         let hoi4PreviewType = '';
         if (textEditor) {
-            const provider = this.findPreviewProvider(textEditor.document);
+            const provider = this.previewProviderResolver.find(textEditor.document);
             if (provider) {
                 shouldShowPreviewButton = true;
                 hoi4PreviewType = provider.type;
@@ -125,8 +120,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private safeUpdateHoi4PreviewContextValue(textEditor: vscode.TextEditor | undefined): void {
         try {
             this.updateHoi4PreviewContextValue(textEditor);
-        } catch (e) {
-            error(e);
+        } catch {
             debug(`Failed to update preview context for ${textEditor?.document.uri.toString() ?? '<no editor>'}`);
             setVscodeContext(ContextName.ShouldShowHoi4Preview, false);
             setVscodeContext(ContextName.ShouldHideHoi4Preview, false);
@@ -158,7 +152,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             return;
         }
 
-        const previewProvider = this.findPreviewProvider(document);
+        const previewProvider = this.previewProviderResolver.find(document);
         if (!previewProvider) {
             vscode.window.showInformationMessage(
                 localize('preview.cantpreviewfile', "Can't preview this file.\nValid types: {0}.", Object.keys(this.previewProvidersMap).join(', ')));
@@ -191,24 +185,28 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             };
         }
 
+        this.previews[key] = this.createPreviewItem(previewProvider, uri, panel, key);
+        await this.previews[key].initializePanelContent(document);
+    }
+
+    private createPreviewItem(previewProvider: StandardPreviewDescriptor, uri: vscode.Uri, panel: vscode.WebviewPanel, key: string): PreviewBase {
         const previewItem = previewProvider.createPreview(uri, panel);
         debug('preview.create', { uri: key, provider: previewProvider.type, deserialized: !!panel });
-        this.previews[key] = previewItem;
 
         previewItem.onDispose(() => {
             const preview = this.previews[key];
             if (preview) {
-                this.removePreviewFromSubscription(preview);
+                this.dependencyTracker.remove(preview);
                 delete this.previews[key];
             }
         });
 
         previewItem.onDependencyChanged((newDependencies) => {
-            this.removePreviewFromSubscription(previewItem);
-            this.addPreviewToSubscription(previewItem, newDependencies);
+            this.dependencyTracker.remove(previewItem);
+            this.dependencyTracker.add(previewItem, newDependencies);
         });
 
-        await previewItem.initializePanelContent(document);
+        return previewItem;
     }
 
     private getPreviewDebugState(uri?: vscode.Uri | string): unknown {
@@ -222,76 +220,9 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         return this.previews[resolvedUri.toString()]?.getDebugState();
     }
 
-    private findPreviewProvider(document: vscode.TextDocument): PreviewDescriptor | undefined {
-        const cacheKey = document.uri.toString();
-        const cached = this.previewProviderCache.get(cacheKey);
-        if (cached?.version === document.version) {
-            return cached.providerType ? this.previewProvidersMap[cached.providerType] : undefined;
-        }
-
-        let bestProvider: PreviewDescriptor | undefined;
-        let bestPriority: number | undefined;
-
-        for (const provider of this.previewProviders) {
-            const priority = this.safeCanPreview(provider, document);
-            if (priority === undefined) {
-                continue;
-            }
-
-            if (bestPriority === undefined || priority < bestPriority) {
-                bestProvider = provider;
-                bestPriority = priority;
-            }
-        }
-
-        this.previewProviderCache.set(cacheKey, {
-            version: document.version,
-            providerType: bestProvider?.type,
-        });
-        return bestProvider;
-    }
-
-    private safeCanPreview(provider: PreviewDescriptor, document: vscode.TextDocument): number | undefined {
-        try {
-            return provider.canPreview(document);
-        } catch (e) {
-            error(e);
-            debug(`Preview provider ${provider.type} failed for ${document.uri.toString()}`);
-            return undefined;
-        }
-    }
-
-    private addPreviewToSubscription(previewItem: PreviewBase, dependencies: string[]): void {
-        for (const dependency of dependencies) {
-            this.dependencySubscriptions.push({
-                segments: dependency.split('/').filter(Boolean),
-                preview: previewItem,
-            });
-        }
-    }
-
-    private removePreviewFromSubscription(previewItem: PreviewBase): void {
-        for (let i = this.dependencySubscriptions.length - 1; i >= 0; i--) {
-            if (this.dependencySubscriptions[i].preview === previewItem) {
-                this.dependencySubscriptions.splice(i, 1);
-            }
-        }
-    }
-
-    private getPreviewItemsNeedsUpdate(uri: string): PreviewBase[] {
-        const previews = new Set<PreviewBase>();
-        for (const subscription of this.dependencySubscriptions) {
-            if (matchPathEnd(uri, subscription.segments)) {
-                previews.add(subscription.preview);
-            }
-        }
-
-        return [...previews];
-    }
-
     private updatePreviewItemsInSubscription(uri: vscode.Uri): void {
         this.dependencyUpdateScheduler.schedule(uri.toString(), 1000, async () => {
-            for (const otherPreview of this.getPreviewItemsNeedsUpdate(uri.toString())) {
+            for (const otherPreview of this.dependencyTracker.getAffected(uri.toString())) {
                 if (uri.toString() === otherPreview.uri.toString()) {
                     continue;
                 }
@@ -312,5 +243,3 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         });
     }
 }
-
-export const previewManager = new PreviewManager();

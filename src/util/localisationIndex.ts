@@ -131,10 +131,10 @@ export function resolveLocalisedTextFromIndex(
     const langKey = localeMapping[language.toLowerCase()] || 'l_english';
     const defaultLangKey = 'l_english';
 
-    return globalIndex[langKey]?.[localisationKey]
-        || workspaceIndex[langKey]?.[localisationKey]
-        || globalIndex[defaultLangKey]?.[localisationKey]
+    return workspaceIndex[langKey]?.[localisationKey]
+        || globalIndex[langKey]?.[localisationKey]
         || workspaceIndex[defaultLangKey]?.[localisationKey]
+        || globalIndex[defaultLangKey]?.[localisationKey]
         || localisationKey;
 }
 

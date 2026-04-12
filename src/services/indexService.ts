@@ -9,9 +9,15 @@ export interface IndexTarget<TSnapshot> {
     telemetryEvent: string;
 }
 
+interface IndexTask {
+    generation: number;
+    promise: Promise<void>;
+}
+
 export class IndexService<TSnapshot> {
     private readonly readyTargets = new Set<string>();
-    private readonly tasks = new Map<string, Promise<void>>();
+    private readonly tasks = new Map<string, IndexTask>();
+    private readonly generations = new Map<string, number>();
 
     constructor(
         private readonly targets: Record<string, IndexTarget<TSnapshot>>,
@@ -22,9 +28,10 @@ export class IndexService<TSnapshot> {
             return Promise.resolve();
         }
 
+        const generation = this.getGeneration(targetId);
         const existingTask = this.tasks.get(targetId);
-        if (existingTask) {
-            return existingTask;
+        if (existingTask?.generation === generation) {
+            return existingTask.promise;
         }
 
         const target = this.targets[targetId];
@@ -37,13 +44,19 @@ export class IndexService<TSnapshot> {
 
         const task = buildTask
             .then(() => {
+                if (this.getGeneration(targetId) !== generation) {
+                    return;
+                }
                 this.readyTargets.add(targetId);
                 sendEvent(target.telemetryEvent, { size: estimatedSize[0].toString() });
             })
             .finally(() => {
-                this.tasks.delete(targetId);
+                const currentTask = this.tasks.get(targetId);
+                if (currentTask?.generation === generation && currentTask.promise === task) {
+                    this.tasks.delete(targetId);
+                }
             });
-        this.tasks.set(targetId, task);
+        this.tasks.set(targetId, { generation, promise: task });
         return task;
     }
 
@@ -55,9 +68,15 @@ export class IndexService<TSnapshot> {
         const target = this.targets[targetId];
         target.reset();
         this.readyTargets.delete(targetId);
+        this.tasks.delete(targetId);
+        this.generations.set(targetId, this.getGeneration(targetId) + 1);
     }
 
     public isReady(targetId: string): boolean {
         return this.readyTargets.has(targetId);
+    }
+
+    private getGeneration(targetId: string): number {
+        return this.generations.get(targetId) ?? 0;
     }
 }

@@ -229,14 +229,10 @@
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.25.3",
-    "copy-webpack-plugin": "^14.0.0",
     "eslint": "^8.57.1",
     "mocha": "^11.7.5",
     "rimraf": "^6.1.3",
-    "ts-loader": "^9.5.4",
-    "typescript": "^6.0.2",
-    "webpack": "^5.105.4",
-    "webpack-cli": "^7.0.2"
+    "typescript": "^6.0.2"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.45",

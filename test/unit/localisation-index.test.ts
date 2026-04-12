@@ -26,29 +26,35 @@ const {
 } = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 
 describe('localisation index helpers', () => {
-    it('prefers the requested language and then falls back to english across global and workspace indexes', () => {
+    it('prefers workspace overrides before vanilla in both requested-language and english fallback lookups', () => {
         const globalIndex = {
             l_korean: {
-                FOCUS_A: '한국어 이름',
+                FOCUS_A: '바닐라 한국어',
+                FOCUS_OVERRIDE: '바닐라 한국어 오버라이드',
             },
             l_english: {
-                FOCUS_A: 'English Name',
-                FOCUS_B: 'English Fallback',
+                FOCUS_A: 'Vanilla English',
+                FOCUS_B: 'Vanilla English Fallback',
+                FOCUS_FALLBACK_OVERRIDE: 'Vanilla English Override',
             },
         };
         const workspaceIndex = {
             l_korean: {
                 FOCUS_C: '모드 한국어',
+                FOCUS_OVERRIDE: '모드 한국어 오버라이드',
             },
             l_english: {
                 FOCUS_D: 'Workspace English',
+                FOCUS_FALLBACK_OVERRIDE: 'Workspace English Override',
             },
         };
 
-        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_A', 'ko', globalIndex, workspaceIndex), '한국어 이름');
-        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_B', 'ko', globalIndex, workspaceIndex), 'English Fallback');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_A', 'ko', globalIndex, workspaceIndex), '바닐라 한국어');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_OVERRIDE', 'ko', globalIndex, workspaceIndex), '모드 한국어 오버라이드');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_B', 'ko', globalIndex, workspaceIndex), 'Vanilla English Fallback');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_C', 'ko', globalIndex, workspaceIndex), '모드 한국어');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_D', 'ja', globalIndex, workspaceIndex), 'Workspace English');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_FALLBACK_OVERRIDE', 'ja', globalIndex, workspaceIndex), 'Workspace English Override');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_UNKNOWN', 'ko', globalIndex, workspaceIndex), 'FOCUS_UNKNOWN');
     });
 });
