@@ -3,7 +3,7 @@ import { ParentInfo, calculateBBox, RenderCommonOptions, normalizeNumberLike } f
 import { htmlEscape } from "../html";
 import { InstantTextBoxType } from "../../hoiformat/gui";
 import { getLocalisedTextQuick } from "../localisationIndex";
-import { localisationIndex } from "../featureflags";
+import { isLocalisationIndexEnabled } from "../featureflags";
 
 export interface RenderInstantTextBoxOptions extends RenderCommonOptions {
 }
@@ -41,6 +41,6 @@ export async function renderInstantTextBox(textbox: HOIPartial<InstantTextBoxTyp
         `)}
         ${options.enableNavigator ? 'navigator navigator-highlight' : ''}
     ">
-        ${htmlEscape(localisationIndex ? (await getLocalisedTextQuick(textbox.text) ?? ' ') : (textbox.text ?? ''))}
+        ${htmlEscape(isLocalisationIndexEnabled() ? (await getLocalisedTextQuick(textbox.text) ?? ' ') : (textbox.text ?? ''))}
     </div>`;
 }

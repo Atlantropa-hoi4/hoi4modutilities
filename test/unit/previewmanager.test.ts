@@ -20,9 +20,17 @@ const sentEvents: string[] = [];
 const contextUpdates: Array<[string, unknown]> = [];
 const errorMessages: string[] = [];
 const infoMessages: string[] = [];
+const activeTabState: { activeTab: { input: unknown } | undefined } = {
+    activeTab: undefined,
+};
+let mockedVscodeModule: unknown;
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
+        if (mockedVscodeModule) {
+            return mockedVscodeModule;
+        }
+
         class Disposable {
             constructor(private readonly fn: () => void = () => undefined) {}
             dispose(): void {
@@ -33,10 +41,18 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             }
         }
 
-        return {
+        class TabInputText {
+            constructor(public readonly uri: FakeUri) {}
+        }
+
+        mockedVscodeModule = {
             Disposable,
+            TabInputText,
             Uri: {
-                parse: (value: string) => ({ toString: () => value }),
+                parse: (value: string) => ({
+                    scheme: value.slice(0, value.indexOf(':')),
+                    toString: () => value,
+                }),
                 joinPath: () => undefined,
             },
             ViewColumn: {
@@ -50,12 +66,19 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidChangeTextDocument: () => new Disposable(),
                 onDidOpenTextDocument: () => new Disposable(),
                 openTextDocument: async (uri: FakeUri) => documents.get(uri.toString()),
+                getWorkspaceFolder: (uri: FakeUri) => uri.toString().startsWith('file:///workspace/')
+                    ? { uri: { toString: () => 'file:///workspace' } }
+                    : undefined,
             },
             window: {
                 activeTextEditor: undefined,
                 visibleTextEditors: [],
                 onDidChangeActiveTextEditor: () => new Disposable(),
                 onDidChangeVisibleTextEditors: () => new Disposable(),
+                tabGroups: {
+                    activeTabGroup: activeTabState,
+                    onDidChangeTabs: () => new Disposable(),
+                },
                 registerWebviewPanelSerializer: () => new Disposable(),
                 createWebviewPanel: () => {
                     const panel = createPanel();
@@ -70,10 +93,12 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 },
             },
         };
+
+        return mockedVscodeModule;
     }
 
     if ((request.endsWith('/util/vsccommon') || request === '../util/vsccommon')
-        && parent?.filename?.includes('previewmanager')) {
+        && (parent?.filename?.includes('previewmanager') || parent?.filename?.includes('previewcontextservice'))) {
         return {
             basename: (uri: FakeUri) => uri.toString().split('/').pop() ?? 'unknown.txt',
             getDocumentByUri: (uri: FakeUri) => documents.get(uri.toString()),
@@ -90,7 +115,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     }
 
     if ((request.endsWith('/context') || request === '../context')
-        && parent?.filename?.includes('previewmanager')) {
+        && (parent?.filename?.includes('previewmanager') || parent?.filename?.includes('previewcontextservice'))) {
         return {
             contextContainer: {
                 current: undefined,
@@ -102,7 +127,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     }
 
     if ((request.endsWith('/util/debug') || request === '../util/debug')
-        && (parent?.filename?.includes('previewmanager') || parent?.filename?.includes('previewproviderresolver'))) {
+        && (parent?.filename?.includes('previewmanager')
+            || parent?.filename?.includes('previewproviderresolver')
+            || parent?.filename?.includes('previewcontextservice'))) {
         return {
             debug: () => undefined,
             error: () => undefined,
@@ -137,6 +164,7 @@ describe('preview manager', () => {
         contextUpdates.length = 0;
         errorMessages.length = 0;
         infoMessages.length = 0;
+        activeTabState.activeTab = undefined;
     });
 
     it('reveals the existing preview instead of opening a duplicate panel', async () => {
@@ -180,20 +208,109 @@ describe('preview manager', () => {
         assert.strictEqual(previews[0].lastChangedDocument, dependentDocument);
     });
 
+    it('uses the preview-provided document debounce when scheduling refreshes', async () => {
+        const document = createDocument('file:///common/focus.txt');
+        const scheduled: Array<{ key: string; delayMs: number }> = [];
+        const manager = new PreviewManager({
+            previewProviders: [createPanelProvider('focus', () => 0, (uri, panel) => new FakePreview(uri, panel, 0) as any) as any],
+            documentUpdateScheduler: {
+                schedule: (key: string, delayMs: number, action: () => void | Promise<void>) => {
+                    scheduled.push({ key, delayMs });
+                    void action();
+                },
+                dispose: () => undefined,
+            },
+            dependencyUpdateScheduler: immediateScheduler(),
+        });
+
+        await manager['showPreviewImpl'](document.uri as any);
+        manager['onChangeTextDocument']({ document: document as any } as any);
+        await Promise.resolve();
+
+        assert.deepStrictEqual(scheduled, [{ key: document.uri.toString(), delayMs: 0 }]);
+    });
+
     it('updates the preview context using the best matching provider priority', () => {
         const document = createDocument('file:///common/context.txt', 3);
         const manager = createManager([
             createPanelProvider('fallback', () => 10),
             createPanelProvider('focus', () => 1),
         ]);
+        activeTabState.activeTab = {
+            input: createTabInputText(document.uri),
+        };
 
         manager['safeUpdateHoi4PreviewContextValue']({ document: document as any } as any);
 
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', true],
             ['server.shouldHideHoi4Preview', false],
+            ['server.shouldShowFocusGfxShine', false],
             ['server.hoi4PreviewType', 'focus'],
         ]);
+    });
+
+    it('shows the shine context only for workspace goals-like gfx tabs', () => {
+        const document = createDocument('file:///workspace/interface/country_goals.gfx', 3);
+        const manager = createManager([
+            createPanelProvider('gfx', () => 0),
+        ]);
+        activeTabState.activeTab = {
+            input: createTabInputText(document.uri),
+        };
+
+        manager['safeUpdateHoi4PreviewContextValue']({ document: document as any } as any);
+
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', true],
+            ['server.shouldHideHoi4Preview', false],
+            ['server.shouldShowFocusGfxShine', true],
+            ['server.hoi4PreviewType', 'gfx'],
+        ]);
+    });
+
+    it('clears the preview context when the active tab is unrelated even if the last text editor was previewable', () => {
+        const document = createDocument('file:///common/context.txt', 3);
+        const manager = createManager([
+            createPanelProvider('focus', () => 1),
+        ]);
+        activeTabState.activeTab = {
+            input: { kind: 'non-text-tab' },
+        };
+
+        manager['safeUpdateHoi4PreviewContextValue']({ document: document as any } as any);
+
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', false],
+            ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowFocusGfxShine', false],
+            ['server.hoi4PreviewType', ''],
+        ]);
+    });
+
+    it('ignores unsupported walkthrough documents without raising a missing-document error', async () => {
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const panel = createPanel();
+
+        await manager['showPreviewImpl']({
+            scheme: 'walkThrough',
+            toString: () => 'walkThrough://vscode_getting_started_page',
+        } as any, panel as any);
+
+        assert.strictEqual(panel.disposeCount, 1);
+        assert.deepStrictEqual(errorMessages, []);
+    });
+
+    it('silently disposes deserialized webview-panel previews that do not point to real text documents', async () => {
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const panel = createPanel();
+
+        await manager.deserializeWebviewPanel(panel as any, {
+            uri: 'webview-panel:webview-panel/webview-server.hoi4ftpreview-bad-state',
+        });
+
+        assert.strictEqual(panel.disposeCount, 1);
+        assert.deepStrictEqual(errorMessages, []);
     });
 });
 
@@ -223,6 +340,11 @@ function createDocument(uriValue: string, version = 1): FakeDocument {
     return document;
 }
 
+function createTabInputText(uri: FakeUri): unknown {
+    const vscode = require('vscode') as { TabInputText?: new (uri: FakeUri) => unknown };
+    return vscode.TabInputText ? new vscode.TabInputText(uri) : { uri };
+}
+
 function createPanel(): FakePanel {
     return {
         webview: { html: '' },
@@ -244,7 +366,7 @@ function createPanelProvider(
 ) {
     return {
         type,
-        kind: 'panel',
+        kind: 'panel' as const,
         canPreview,
         createPreview,
     };
@@ -260,6 +382,7 @@ class FakePreview {
     constructor(
         public readonly uri: FakeUri,
         public readonly panel: FakePanel,
+        private readonly documentChangeDebounceMs = 0,
     ) {}
 
     public onDispose(listener: () => void) {
@@ -277,7 +400,7 @@ class FakePreview {
     }
 
     public getDocumentChangeDebounceMs(): number {
-        return 0;
+        return this.documentChangeDebounceMs;
     }
 
     public async onDocumentChange(document: FakeDocument): Promise<void> {

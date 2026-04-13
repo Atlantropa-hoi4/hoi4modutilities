@@ -10,7 +10,7 @@ import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { useConditionInFocus } from '../../util/featureflags';
+import { isUseConditionInFocusEnabled } from '../../util/featureflags';
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
@@ -328,7 +328,7 @@ function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string
         'window.renderedInlayWindows = ' + JSON.stringify(payload.renderedInlayWindows),
         'window.gridBox = ' + JSON.stringify(payload.gridBox),
         'window.styleNonce = ' + JSON.stringify(payload.styleNonce),
-        'window.useConditionInFocus = ' + useConditionInFocus,
+        'window.useConditionInFocus = ' + isUseConditionInFocusEnabled(),
         'window.xGridSize = ' + payload.xGridSize,
         'window.yGridSize = ' + payload.yGridSize,
         'window.focusToolbarHeight = ' + payload.focusToolbarHeight,
@@ -584,7 +584,7 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
                 ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
-                ${useConditionInFocus ? conditionPresets + conditions : allowbranch}
+                ${isUseConditionInFocusEnabled() ? conditionPresets + conditions : allowbranch}
                 ${inlayWindows}
                 ${warningsButton}
             </div>

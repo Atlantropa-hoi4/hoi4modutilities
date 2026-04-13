@@ -23,8 +23,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     if ((request.endsWith('/util/featureflags') || request === '../../util/featureflags')
         && parent?.filename?.includes('focustree')) {
         return {
-            useConditionInFocus: false,
-            localisationIndex: false,
+            isUseConditionInFocusEnabled: () => false,
+            isLocalisationIndexEnabled: () => false,
         };
     }
 

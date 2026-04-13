@@ -2,7 +2,7 @@
   "name": "hoi4modutilities",
   "displayName": "%hoi4modutilities.displayName%",
   "description": "Utilities for Heart of Iron IV mods developers",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "server (forked from Chaofan Yang)",
   "publisher": "server",
   "icon": "icon.png",
@@ -29,8 +29,6 @@
     "Heart of Iron"
   ],
   "activationEvents": [
-    "onCustomEditor:server.hoi4modutilities.dds",
-    "onCustomEditor:server.hoi4modutilities.tga",
     "onWebviewPanel:server.hoi4ftpreview",
     "onWebviewPanel:server.hoi4worldmappreview",
     "workspaceContains:**/*.gfx",
@@ -129,6 +127,11 @@
         "category": "%hoi4modutilities.category%"
       },
       {
+        "command": "server.hoi4modutilities.generateFocusGfxShine",
+        "title": "%hoi4modutilities.generateFocusGfxShine.title%",
+        "category": "%hoi4modutilities.category%"
+      },
+      {
         "command": "server.hoi4modutilities.selecthoifolder",
         "title": "%hoi4modutilities.selecthoifolder.title%",
         "category": "%hoi4modutilities.category%"
@@ -163,36 +166,47 @@
       "editor/title": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "resourceScheme != webview-panel && resourceExtname =~ /^\\.(txt|gfx|gui|map)$/ && !server.shouldHideHoi4Preview && !server.shouldShowHoi4Preview",
+          "when": "resourceScheme != webview-panel && resourceFilename !~ /^.*goals.*\\.gfx$/ && server.shouldShowHoi4Preview",
           "group": "navigation"
         },
         {
-          "command": "server.hoi4modutilities.preview",
-          "when": "server.shouldShowHoi4Preview && resourceScheme != webview-panel",
+          "command": "server.hoi4modutilities.generateFocusGfxShine",
+          "when": "resourceScheme != webview-panel && server.shouldShowFocusGfxShine",
           "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "resourceScheme != webview-panel && (!server.hoi4MULoaded || server.shouldShowHoi4Preview || resourceExtname =~ /^\\.(txt|gfx|gui|map)$/)"
+          "when": "resourceScheme != webview-panel && (!server.hoi4MULoaded || server.shouldShowHoi4Preview || resourceExtname =~ /^\\.(txt|gfx|gui|map)$/)",
+          "group": "1_preview@1"
+        },
+        {
+          "command": "server.hoi4modutilities.previewworld",
+          "group": "1_preview@2"
+        },
+        {
+          "command": "server.hoi4modutilities.generateFocusGfxShine",
+          "when": "server.shouldShowFocusGfxShine",
+          "group": "2_tools@1"
         },
         {
           "command": "server.hoi4modutilities.scanreferences",
-          "when": "!server.hoi4MULoaded || server.hoi4PreviewType == event"
+          "when": "!server.hoi4MULoaded || server.hoi4PreviewType == event",
+          "group": "2_tools@2"
         },
         {
-          "command": "server.hoi4modutilities.selectmodfile"
+          "command": "server.hoi4modutilities.selectmodfile",
+          "group": "3_setup@1"
         },
         {
-          "command": "server.hoi4modutilities.previewworld"
-        },
-        {
-          "command": "server.hoi4modutilities.selecthoifolder"
+          "command": "server.hoi4modutilities.selecthoifolder",
+          "group": "3_setup@2"
         },
         {
           "command": "server.hoi4modutilities.test",
-          "when": "server.hoi4MUInDev"
+          "when": "server.hoi4MUInDev",
+          "group": "9_dev@1"
         }
       ]
     }
@@ -204,9 +218,15 @@
     "clean:test-ui": "rimraf .vscode-test",
     "build": "node ./scripts/build.mjs --mode=production",
     "build:dev": "node ./scripts/build.mjs --mode=development",
-    "compile-ts": "tsc -p ./ --pretty false --noEmit",
+    "build:watch": "node ./scripts/build.mjs --mode=development --watch",
+    "check-types:extension": "tsc -p ./tsconfig.extension.json --pretty false --noEmit",
+    "check-types:webview": "tsc -p ./tsconfig.webview.json --pretty false --noEmit",
+    "compile-ts": "npm run check-types:extension && npm run check-types:webview",
     "compile-tests": "npm run clean:out && tsc -p ./tsconfig.test.json --pretty false",
-    "watch": "tsc -w -p ./",
+    "watch": "node ./scripts/watch.mjs",
+    "watch:bundle": "npm run build:watch",
+    "watch:typecheck:extension": "tsc -p ./tsconfig.extension.json --pretty false --noEmit --watch",
+    "watch:typecheck:webview": "tsc -p ./tsconfig.webview.json --pretty false --noEmit --watch",
     "vscode:prepublish": "npm run build",
     "lint": "eslint src webviewsrc test --ext .ts",
     "test:unit": "npm run compile-tests && mocha --exit --recursive \"out/test/unit/**/*.test.js\"",

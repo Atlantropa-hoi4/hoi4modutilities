@@ -2,12 +2,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { debounceByInput } from './common';
-import { localisationIndex } from './featureflags';
+import { isLocalisationIndexEnabled } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
 import { Logger } from "./logger";
 import { YAMLException } from "js-yaml";
 import { IndexService } from '../services/indexService';
+import { getConfiguration } from './vsccommon';
 
 type LocalisationData = Record<string, Record<string, string>>;
 
@@ -64,7 +65,7 @@ const localeISOMapping: Record<string, string> = {
 
 export function registerLocalisationIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
-    if (localisationIndex) {
+    if (isLocalisationIndexEnabled()) {
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
         disposables.push(vscode.workspace.onDidCloseTextDocument(onCloseTextDocument));
@@ -77,7 +78,7 @@ export function registerLocalisationIndex(): vscode.Disposable {
 }
 
 export async function getLocalisedTextQuick(localisationKey: string | undefined): Promise<string | undefined> {
-    const previewLocalisation = vscode.workspace.getConfiguration('hoi4ModUtilities').previewLocalisation;
+    const previewLocalisation = getConfiguration().previewLocalisation;
     if (previewLocalisation) {
         return getLocalisedText(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language);
     }
@@ -85,7 +86,7 @@ export async function getLocalisedTextQuick(localisationKey: string | undefined)
 }
 
 export function getLocalisedTextQuickIfReady(localisationKey: string | undefined): string | undefined {
-    const previewLocalisation = vscode.workspace.getConfiguration('hoi4ModUtilities').previewLocalisation;
+    const previewLocalisation = getConfiguration().previewLocalisation;
     if (previewLocalisation) {
         return getLocalisedTextIfReady(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language);
     }
@@ -97,7 +98,7 @@ export async function getLocalisedText(localisationKey: string | undefined, lang
         return localisationKey;
     }
 
-    if (!localisationIndex) {
+    if (!isLocalisationIndexEnabled()) {
         return localisationKey ?? '';
     }
 
@@ -111,7 +112,7 @@ export function getLocalisedTextIfReady(localisationKey: string | undefined, lan
         return localisationKey;
     }
 
-    if (!localisationIndex) {
+    if (!isLocalisationIndexEnabled()) {
         return localisationKey ?? '';
     }
 
@@ -169,7 +170,7 @@ function ensureWorkspaceLocalisationIndexImpl(showStatusBar: boolean): Promise<v
 }
 
 export async function prewarmLocalisationIndex(): Promise<void> {
-    if (!localisationIndex) {
+    if (!isLocalisationIndexEnabled()) {
         return;
     }
 

@@ -4,7 +4,31 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [1.0.0] - 2026/04/08 - Latest
+## [1.0.2] - 2026/04/19 - Latest
+
+### Changed
+* Refactor preview, index, editor, and custom-editor registration around feature-owned catalog modules, keeping contribution ordering stable while making extension wiring easier to evolve.
+* Split TypeScript project configuration into extension-host, webview, and test roles, and refresh local build/watch tasks to match the new workflow.
+* Regroup command-palette exposure around preview, tools, setup, and development flows, and document the current extension architecture under `docs/architecture/overview.md`.
+
+### Fixed
+* Move feature-flag and configuration reads out of module import time, split `PreviewManager` context/session responsibilities into smaller services, and remove redundant custom-editor activation entries now covered by modern VS Code activation.
+* Always resolve imported `focus_tree.shared_focus` data regardless of the condition-in-focus feature flag, fixing shared or joint focus schema and lint coverage.
+* Harden focustree schema/lint unit tests so full-suite execution no longer depends on module-cache or VS Code mock load order.
+
+## [1.0.1] - 2026/04/16
+
+### Changed
+* Commit the esbuild build pipeline (`scripts/build.mjs`, `scripts/clean.mjs`) so a fresh clone can build `dist/extension.js` and the webview bundles without relying on developer-local tooling.
+
+### Fixed
+* Navigate the editor to the `id = <focus_id>` line when clicking a focus in the preview, instead of landing on the outer `focus = { ... }` opening line.
+* Keep focus-click navigation aligned with the current document by scanning the whole file for the focus id and picking the match closest to the webview-supplied offset, so the selection no longer drifts after repeated edits.
+
+### Performance
+* Parallelize focus inlay-window, scripted GUI window, and interface GFX cache builders with `Promise.all`, cutting cold-start latency for focus preview icon and inlay loading on large mods.
+
+## [1.0.0] - 2026/04/08
 
 ### Changed
 * Refresh the project README for the desktop-only, esbuild-based extension workflow and the current release automation path.

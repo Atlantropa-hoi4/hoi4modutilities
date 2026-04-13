@@ -4,7 +4,6 @@ import { ConditionItem, extractConditionValue, extractConditionValues, extractCo
 import { HOIPartial, Raw } from "../../hoiformat/schema";
 import { countryScope } from "../../hoiformat/scope";
 import { randomString } from "../../util/common";
-import { useConditionInFocus } from "../../util/featureflags";
 import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
 import { createFocusPositionEditKey } from "./positioneditcommon";
@@ -73,13 +72,11 @@ export function buildFocusTreesFromFile(
         const parseWarnings: FocusWarning[] = [];
         const focuses = getFocuses(focusTree.focus, conditionExprs, filePath, parseWarnings, constants);
 
-        if (useConditionInFocus) {
-            for (const sharedFocus of focusTree.shared_focus) {
-                if (!sharedFocus) {
-                    continue;
-                }
-                addSharedFocus(focuses, filePath, linkedFocusTrees, sharedFocus, conditionExprs, parseWarnings);
+        for (const sharedFocus of focusTree.shared_focus) {
+            if (!sharedFocus) {
+                continue;
             }
+            addSharedFocus(focuses, filePath, linkedFocusTrees, sharedFocus, conditionExprs, parseWarnings);
         }
 
         validateRelativePositionId(focuses, parseWarnings);

@@ -11,6 +11,7 @@ export namespace ViewType {
 export namespace ContextName {
     export const ShouldHideHoi4Preview = 'server.shouldHideHoi4Preview';
     export const ShouldShowHoi4Preview = 'server.shouldShowHoi4Preview';
+    export const ShouldShowFocusGfxShine = 'server.shouldShowFocusGfxShine';
     export const Hoi4PreviewType = 'server.hoi4PreviewType';
     export const Hoi4MUInDev = 'server.hoi4MUInDev';
     export const Hoi4MULoaded = 'server.hoi4MULoaded';
@@ -20,6 +21,7 @@ export namespace Commands {
     export const Preview = 'server.hoi4modutilities.preview';
     export const PreviewWorld = 'server.hoi4modutilities.previewworld';
     export const ScanReferences = 'server.hoi4modutilities.scanreferences';
+    export const GenerateFocusGfxShine = 'server.hoi4modutilities.generateFocusGfxShine';
     export const SelectModFile = 'server.hoi4modutilities.selectmodfile';
     export const SelectHoiFolder = 'server.hoi4modutilities.selecthoifolder';
     export const Test = 'server.hoi4modutilities.test';

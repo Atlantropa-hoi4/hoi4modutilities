@@ -67,7 +67,7 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     public override getDocumentChangeDebounceMs(): number {
-        return 150;
+        return 0;
     }
 
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {

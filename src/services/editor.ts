@@ -1,16 +1,6 @@
-import { registerCountryColorProvider } from '../util/countryColorProvider';
-import { registerHoiFs } from '../util/hoifs';
-import { registerLocalisationHighlighting } from '../util/localisationHighlighting';
-import { registerModFile } from '../util/modfile';
-import { registerScanReferencesCommand } from '../util/dependency';
 import { ExtensionServices } from './serviceRegistry';
+import { registerFeatureArea } from '../features/catalog';
 
 export function registerEditorServices(services: ExtensionServices): void {
-    services.push(
-        registerModFile(),
-        registerScanReferencesCommand(),
-        registerHoiFs(),
-        registerLocalisationHighlighting(),
-        registerCountryColorProvider(),
-    );
+    services.push(...registerFeatureArea('editor'));
 }

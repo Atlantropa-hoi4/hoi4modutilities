@@ -6,7 +6,7 @@ import { localize } from './i18n';
 import { Logger } from "./logger";
 import { extractFocusIds } from "../previewdef/focustree/schema";
 import { parseHoi4File } from "../hoiformat/hoiparser";
-import { sharedFocusIndex } from "./featureflags";
+import { isSharedFocusIndexEnabled } from "./featureflags";
 import {
     applyFocusFileToIndex,
     createEmptyFocusIndexState,
@@ -53,7 +53,7 @@ const sharedFocusIndexService = new IndexService<FocusIndexState>({
 export function registerSharedFocusIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
 
-    if (sharedFocusIndex) {
+    if (isSharedFocusIndexEnabled()) {
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
         disposables.push(vscode.workspace.onDidCloseTextDocument(onCloseTextDocument));
@@ -94,7 +94,7 @@ function ensureWorkspaceFocusIndexImpl(showStatusBar: boolean): Promise<void> {
 }
 
 export async function prewarmSharedFocusIndex(): Promise<void> {
-    if (!sharedFocusIndex) {
+    if (!isSharedFocusIndexEnabled()) {
         return;
     }
 

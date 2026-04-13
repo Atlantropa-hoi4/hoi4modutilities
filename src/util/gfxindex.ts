@@ -4,7 +4,7 @@ import { parseHoi4File } from '../hoiformat/hoiparser';
 import { getSpriteTypes } from '../hoiformat/spritetype';
 import { debounceByInput, forceError, UserError } from './common';
 import { error } from './debug';
-import { gfxIndex } from './featureflags';
+import { isGfxIndexEnabled } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
 import { uniq } from 'lodash';
@@ -40,7 +40,7 @@ const gfxIndexService = new IndexService<GfxIndexItem>({
 
 export function registerGfxIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
-    if (gfxIndex) {
+    if (isGfxIndexEnabled()) {
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
         disposables.push(vscode.workspace.onDidCloseTextDocument(onCloseTextDocument));
@@ -53,7 +53,7 @@ export function registerGfxIndex(): vscode.Disposable {
 }
 
 export async function getGfxContainerFile(gfxName: string | undefined): Promise<string | undefined> {
-    if (!gfxIndex || !gfxName) {
+    if (!isGfxIndexEnabled() || !gfxName) {
         return undefined;
     }
 
@@ -62,7 +62,7 @@ export async function getGfxContainerFile(gfxName: string | undefined): Promise<
 }
 
 export function tryGetGfxContainerFile(gfxName: string | undefined): string | undefined {
-    if (!gfxIndex || !gfxName) {
+    if (!isGfxIndexEnabled() || !gfxName) {
         return undefined;
     }
 
@@ -102,7 +102,7 @@ function ensureWorkspaceGfxIndexImpl(showStatusBar: boolean): Promise<void> {
 }
 
 export async function prewarmGfxIndex(): Promise<void> {
-    if (!gfxIndex) {
+    if (!isGfxIndexEnabled()) {
         return;
     }
 

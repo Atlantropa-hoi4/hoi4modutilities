@@ -1,10 +1,6 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "Node16",
-    "moduleResolution": "node16",
-    "outDir": "out",
-    "rootDir": ".",
     "lib": [
       "ES2022",
       "DOM"
@@ -14,25 +10,12 @@
       "mocha",
       "vscode"
     ],
-    "sourceMap": true,
-    "strict": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "noFallthroughCasesInSwitch": true,
-    "importHelpers": true
+    "noEmit": true
   },
   "include": [
     "src/**/*.ts",
+    "src/**/*.d.ts",
     "webviewsrc/**/*.ts",
     "test/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    ".vscode-test",
-    "dist",
-    "out",
-    "static",
-    "scripts"
   ]
 }

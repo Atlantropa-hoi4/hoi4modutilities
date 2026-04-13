@@ -1,0 +1,7 @@
+spriteTypes = {
+    spriteType = {
+        name = "GFX_country_goal_sample"
+        texturefile = "gfx/interface/goals/country_goal_sample.dds"
+        noOfFrames = 1
+    }
+}

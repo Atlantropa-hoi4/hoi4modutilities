@@ -18,7 +18,7 @@ import { flatMap, sumBy, min, flatten, chain, uniq } from 'lodash';
 import { StyleTable } from '../../util/styletable';
 import { RenderNodeCommonOptions } from '../../util/hoi4gui/nodecommon';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
-import { localisationIndex } from "../../util/featureflags";
+import { isLocalisationIndexEnabled } from "../../util/featureflags";
 
 const techTreeViewName = 'countrytechtreeview';
 const doctrineTreeViewName = 'countrydoctrineview';
@@ -103,7 +103,7 @@ async function renderTechnologyFolders(technologyTrees: TechnologyTree[], folder
 async function renderFolderSelector(folders: string[], styleTable: StyleTable): Promise<string> {
     const folderOptions = await Promise.all(
         folders.map(async (folder) => {
-            const localizedText = localisationIndex ? `${await getLocalisedTextQuick(folder)} (${folder})` : folder;
+            const localizedText = isLocalisationIndexEnabled() ? `${await getLocalisedTextQuick(folder)} (${folder})` : folder;
             return `<option value="techfolder_${folder}">${localizedText}</option>`;
         })
     );
@@ -379,7 +379,7 @@ async function renderTechnology(
     return `<div
         start="${technology.token?.start}"
         end="${technology.token?.end}"
-        title="${technology.id}${localisationIndex ? `\n${await getLocalisedTextQuick(technology.id)}` : ''}\n(${folder.x}, ${folder.y})"
+        title="${technology.id}${isLocalisationIndexEnabled() ? `\n${await getLocalisedTextQuick(technology.id)}` : ''}\n(${folder.x}, ${folder.y})"
         class="
             navigator 
             ${commonOptions.styleTable.style('navigator', () => `
@@ -447,7 +447,7 @@ async function renderSubTechnology(
     return `<div
         start="${subTechnology.token?.start}"
         end="${subTechnology.token?.end}"
-        title="${subTechnology.id}${localisationIndex ? `\n${await getLocalisedTextQuick(subTechnology.id)}` : ''}\n(${folder.x}, ${folder.y})"
+        title="${subTechnology.id}${isLocalisationIndexEnabled() ? `\n${await getLocalisedTextQuick(subTechnology.id)}` : ''}\n(${folder.x}, ${folder.y})"
         class="
             navigator
             ${commonOptions.styleTable.style('navigator', () => `

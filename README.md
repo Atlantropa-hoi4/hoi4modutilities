@@ -31,6 +31,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - Activation is contextual now: the extension waits for HOI4-relevant files, custom editors, or preview panels instead of activating broadly at startup.
 - Focus tree previews keep their webview context while hidden, so re-opening the same preview should avoid a full bootstrap.
 - The focus tree preview no longer performs a redundant pre-ready full load before the webview handshake, which shortens the first-open path on large trees.
+- Focus inlay windows, scripted GUI windows, and interface GFX caches are built in parallel on first use, so cold-start icon loading on large mods completes faster.
 - Shared indexes for GFX, localisation, and shared focuses are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
 
 ## Settings
@@ -58,12 +59,32 @@ Common commands:
 
 ```bash
 npm ci
+npm run compile-ts
 npm run build
 npm run lint
 npm run test
 npm run test-ui
 npm run package
 ```
+
+Role-specific TypeScript configs:
+
+- `tsconfig.extension.json`: extension-host sources under `src`
+- `tsconfig.webview.json`: browser-facing `webviewsrc` entrypoints plus shared imports
+- `tsconfig.test.json`: emitted unit/integration test compile under `out`
+- `tsconfig.json`: aggregate editor-facing config for the whole workspace
+
+Watch mode:
+
+```bash
+npm run watch
+```
+
+`npm run watch` runs extension-host typecheck, webview typecheck, and esbuild bundle watching in parallel so host/webview regressions surface in the right stream.
+
+Architecture notes:
+
+- [Architecture Overview](docs/architecture/overview.md)
 
 One-shot verification:
 
@@ -78,8 +99,8 @@ npm run verify
 Push a semantic version tag that matches `package.json`:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 GitHub Actions rebuilds the extension on `windows-latest`, validates the tag, runs the verification pipeline, and publishes the generated `.vsix` plus checksum to the matching GitHub Release.

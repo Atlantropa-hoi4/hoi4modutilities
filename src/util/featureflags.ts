@@ -1,13 +1,29 @@
-import { getConfiguration } from "./vsccommon";
+import { getConfiguration } from './vsccommon';
 
-function getFeatureFlags() {
+export function getFeatureFlags(): readonly string[] {
     return getConfiguration().featureFlags ?? [];
 }
 
-const featureFlags = getFeatureFlags();
+function hasFeatureFlag(flag: string): boolean {
+    return getFeatureFlags().includes(flag);
+}
 
-export const useConditionInFocus = !featureFlags.includes('!useConditionInFocus');
-export const eventTreePreview = !featureFlags.includes('!eventTreePreview');
-export const sharedFocusIndex = !featureFlags.includes('!sharedFocusIndex');
-export const gfxIndex = featureFlags.includes('gfxIndex');
-export const localisationIndex = featureFlags.includes('localisationIndex');
+export function isUseConditionInFocusEnabled(): boolean {
+    return !hasFeatureFlag('!useConditionInFocus');
+}
+
+export function isEventTreePreviewEnabled(): boolean {
+    return !hasFeatureFlag('!eventTreePreview');
+}
+
+export function isSharedFocusIndexEnabled(): boolean {
+    return !hasFeatureFlag('!sharedFocusIndex');
+}
+
+export function isGfxIndexEnabled(): boolean {
+    return hasFeatureFlag('gfxIndex');
+}
+
+export function isLocalisationIndexEnabled(): boolean {
+    return hasFeatureFlag('localisationIndex');
+}

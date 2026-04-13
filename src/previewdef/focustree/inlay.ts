@@ -118,21 +118,27 @@ export async function loadFocusInlayWindows(): Promise<ParsedInlayFile> {
 
 async function buildFocusInlayWindowsCache(): Promise<ParsedInlayFileCache> {
     const files = await listFolderFiles(focusInlayWindowsFolder, ".txt");
-    const inlays: FocusTreeInlay[] = [];
-    const warnings: FocusWarning[] = [];
-
-    for (const relativePath of files) {
+    const parsedFiles = await Promise.all(files.map(async relativePath => {
         try {
             const [buffer, uri] = await readFileFromModOrHOI4(relativePath);
             const node = parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString()));
-            const parsed = parseInlayNode(node, relativePath);
-            inlays.push(...parsed.inlays);
-            warnings.push(...parsed.warnings);
+            return { parsed: parseInlayNode(node, relativePath), error: undefined, relativePath };
         } catch (e) {
+            return { parsed: undefined, error: e, relativePath };
+        }
+    }));
+
+    const inlays: FocusTreeInlay[] = [];
+    const warnings: FocusWarning[] = [];
+    for (const entry of parsedFiles) {
+        if (entry.parsed) {
+            inlays.push(...entry.parsed.inlays);
+            warnings.push(...entry.parsed.warnings);
+        } else {
             warnings.push(createParseWarning({
                 code: 'inlay-file-parse-failed',
-                text: localize("TODO", "Failed to parse inlay window file {0}: {1}", relativePath, e instanceof Error ? e.message : String(e)),
-                source: relativePath,
+                text: localize("TODO", "Failed to parse inlay window file {0}: {1}", entry.relativePath, entry.error instanceof Error ? entry.error.message : String(entry.error)),
+                source: entry.relativePath,
             }));
         }
     }
@@ -319,20 +325,26 @@ async function listGuiFiles(): Promise<string[]> {
 
 async function buildScriptedGuiWindowsCache(): Promise<ScriptedGuiWindowsCache> {
     const guiFiles = await listGuiFiles();
-    const windowsByName: ScriptedGuiWindowsCache["windowsByName"] = {};
-
-    for (const guiFile of guiFiles) {
+    const parsedFiles = await Promise.all(guiFiles.map(async guiFile => {
         try {
             const [buffer, uri] = await readFileFromModOrHOI4(guiFile);
             const guiNode = parseHoi4File(buffer.toString().replace(/^\uFEFF/, ""), localize("infile", "In file {0}:\n", uri.toString()));
             const guiFileData = convertNodeToJson<GuiFile>(guiNode, guiFileSchema);
-            for (const [windowName, window] of Object.entries(collectContainerWindows(guiFileData))) {
-                if (!(windowName in windowsByName)) {
-                    windowsByName[windowName] = { file: guiFile, window };
-                }
-            }
+            return { guiFile, windows: collectContainerWindows(guiFileData) };
         } catch {
-            // Ignore malformed GUI files here; the GUI preview already reports them in its own flow.
+            return undefined;
+        }
+    }));
+
+    const windowsByName: ScriptedGuiWindowsCache["windowsByName"] = {};
+    for (const parsed of parsedFiles) {
+        if (!parsed) {
+            continue;
+        }
+        for (const [windowName, window] of Object.entries(parsed.windows)) {
+            if (!(windowName in windowsByName)) {
+                windowsByName[windowName] = { file: parsed.guiFile, window };
+            }
         }
     }
 
@@ -408,19 +420,23 @@ export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ 
 }
 async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
     const gfxFiles = await listFolderFiles(interfaceFolder, ".gfx");
-    const spriteNamesByFile: Record<string, string[]> = {};
-
-    for (const candidateFile of gfxFiles) {
+    const parsedFiles = await Promise.all(gfxFiles.map(async candidateFile => {
         try {
             const [buffer, uri] = await readFileFromModOrHOI4(candidateFile);
             const spriteTypes = getSpriteTypes(parseHoi4File(
                 buffer.toString().replace(/^\uFEFF/, ""),
                 localize("infile", "In file {0}:\n", uri.toString()),
             ));
-            const spriteNames = spriteTypes.map(spriteType => spriteType.name);
-            spriteNamesByFile[candidateFile] = spriteNames;
+            return [candidateFile, spriteTypes.map(spriteType => spriteType.name)] as const;
         } catch {
-            // Ignore unreadable GFX files in the fallback scan.
+            return undefined;
+        }
+    }));
+
+    const spriteNamesByFile: Record<string, string[]> = {};
+    for (const entry of parsedFiles) {
+        if (entry) {
+            spriteNamesByFile[entry[0]] = entry[1];
         }
     }
 

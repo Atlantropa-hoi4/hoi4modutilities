@@ -62,6 +62,20 @@ async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string)
 suite('extension smoke', () => {
     teardown(async () => {
         await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!workspaceRoot) {
+            return;
+        }
+
+        for (const generatedShineUri of [
+            vscode.Uri.joinPath(workspaceRoot, 'interface', 'sample_shine.gfx'),
+            vscode.Uri.joinPath(workspaceRoot, 'interface', 'goals_shine.gfx'),
+            vscode.Uri.joinPath(workspaceRoot, 'interface', 'country_goals_shine.gfx'),
+        ]) {
+            try {
+                await vscode.workspace.fs.delete(generatedShineUri, { recursive: false, useTrash: false });
+            } catch {}
+        }
     });
 
     test('activates and registers public commands', async () => {
@@ -75,6 +89,7 @@ suite('extension smoke', () => {
             Commands.Preview,
             Commands.PreviewWorld,
             Commands.ScanReferences,
+            Commands.GenerateFocusGfxShine,
             Commands.SelectModFile,
             Commands.SelectHoiFolder,
         ]) {
@@ -172,6 +187,40 @@ suite('extension smoke', () => {
 
         await vscode.commands.executeCommand(Commands.Preview);
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample.gfx'), 30000);
+    });
+
+    test('generates a shine gfx file from a goals-like gfx filename', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const sourceUri = vscode.Uri.joinPath(workspaceRoot!, 'interface', 'country_goals.gfx');
+        const targetUri = vscode.Uri.joinPath(workspaceRoot!, 'interface', 'country_goals_shine.gfx');
+        const document = await vscode.workspace.openTextDocument(sourceUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.GenerateFocusGfxShine);
+        await waitFor(async () => {
+            try {
+                await vscode.workspace.fs.stat(targetUri);
+                return true;
+            } catch {
+                return false;
+            }
+        }, 30000);
+
+        const generated = await vscode.workspace.openTextDocument(targetUri);
+        const firstContent = generated.getText();
+        assert.match(firstContent, /name = "GFX_country_goal_sample_shine"/);
+        assert.match(firstContent, /effectFile = "gfx\/FX\/buttonstate\.lua"/);
+        assert.strictEqual((firstContent.match(/name = "GFX_country_goal_sample_shine"/g) ?? []).length, 1);
+
+        await vscode.window.showTextDocument(document);
+        await vscode.commands.executeCommand(Commands.GenerateFocusGfxShine);
+
+        const regenerated = await vscode.workspace.openTextDocument(targetUri);
+        const secondContent = regenerated.getText();
+        assert.strictEqual(secondContent, firstContent);
+        assert.strictEqual((secondContent.match(/name = "GFX_country_goal_sample_shine"/g) ?? []).length, 1);
     });
 
     test('opens a mio preview webview for a representative fixture', async () => {

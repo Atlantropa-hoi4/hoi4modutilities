@@ -6,8 +6,48 @@ import { isSamePath } from './nodecommon';
 import { ConfigurationKey } from '../constants';
 import { normalizeFileOrUriString } from './pathinput';
 
+export type Hoi4ModUtilitiesConfiguration = vscode.WorkspaceConfiguration & {
+    readonly installPath: string;
+    readonly loadDlcContents: boolean;
+    readonly modFile: string;
+    readonly featureFlags: string[];
+    readonly enableSupplyArea: boolean;
+    readonly previewLocalisation: 'Brazilian Portuguese' | 'English' | 'French' | 'German' | 'Japanese' | 'Korean' | 'Polish' | 'Russian' | 'Simplified Chinese' | 'Spanish';
+};
+
+const defaultConfigurationValues = {
+    installPath: '',
+    loadDlcContents: true,
+    modFile: '',
+    featureFlags: [],
+    enableSupplyArea: false,
+    previewLocalisation: 'English',
+} as const satisfies Omit<Hoi4ModUtilitiesConfiguration, keyof vscode.WorkspaceConfiguration>;
+
+const fallbackWorkspaceConfiguration: vscode.WorkspaceConfiguration = {
+    get: <T>(_section: string, defaultValue?: T) => defaultValue as T,
+    has: () => false,
+    inspect: () => undefined,
+    update: async () => undefined,
+};
+
 export function getConfiguration() {
-    return vscode.workspace.getConfiguration(ConfigurationKey);
+    const getWorkspaceConfiguration = vscode.workspace?.getConfiguration;
+    if (typeof getWorkspaceConfiguration !== 'function') {
+        return {
+            ...fallbackWorkspaceConfiguration,
+            ...defaultConfigurationValues,
+            featureFlags: [...defaultConfigurationValues.featureFlags],
+        };
+    }
+
+    const configuration = getWorkspaceConfiguration(ConfigurationKey) as Partial<Hoi4ModUtilitiesConfiguration> | undefined;
+    return {
+        ...fallbackWorkspaceConfiguration,
+        ...defaultConfigurationValues,
+        ...configuration,
+        featureFlags: configuration?.featureFlags ?? [...defaultConfigurationValues.featureFlags],
+    };
 }
 
 export function getDocumentByUri(uri: vscode.Uri): vscode.TextDocument | undefined {
@@ -147,5 +187,5 @@ const languageYmlDict = {
 };
 
 export function getLanguageIdInYml(): string {
-    return languageYmlDict[vscode.workspace.getConfiguration('hoi4ModUtilities').previewLocalisation ?? 'English'] ?? languageYmlDict['English'];
+    return languageYmlDict[getConfiguration().previewLocalisation] ?? languageYmlDict['English'];
 }

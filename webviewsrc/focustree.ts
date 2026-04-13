@@ -1096,6 +1096,7 @@ function navigateToFocusDefinition(focusElement: HTMLElement) {
     const startStr = focusElement.getAttribute('start');
     const endStr = focusElement.getAttribute('end');
     const file = focusElement.getAttribute('file') ?? undefined;
+    const focusId = focusElement.dataset.focusId || undefined;
     const start = !startStr || startStr === 'undefined' ? undefined : parseInt(startStr, 10);
     const end = !endStr ? undefined : parseInt(endStr, 10);
     vscode.postMessage({
@@ -1103,6 +1104,7 @@ function navigateToFocusDefinition(focusElement: HTMLElement) {
         start,
         end,
         file,
+        focusId,
     });
 }
 

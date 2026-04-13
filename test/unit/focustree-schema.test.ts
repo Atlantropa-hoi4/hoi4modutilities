@@ -5,7 +5,7 @@ import { readFixture } from '../testUtils';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
-nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
+const mockLoad = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
             workspace: {
@@ -16,19 +16,24 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
-    return originalLoad.call(this, request, parent, isMain);
+    return originalLoad.call(nodeModule, request, parent, isMain);
 };
-
-const { convertFocusFileNodeToJson, extractFocusIds, getFocusTree, getFocusTreeWithFocusFile } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
+nodeModule._load = mockLoad;
 
 describe('focus tree schema fixtures', () => {
+    after(() => {
+        nodeModule._load = originalLoad;
+    });
+
     it('extracts shared, joint, and national focus ids for indexing', () => {
+        const { extractFocusIds } = loadFocusTreeSchema();
         const ids = extractFocusIds(parseHoi4File(readFixture('focus', 'modern-focuses.txt')));
 
         assert.deepStrictEqual(ids, ['ROOT_FOCUS', 'SHARED_ROOT', 'JOINT_ALPHA']);
     });
 
     it('creates separate joint focus trees and links them from focus_tree shared_focus references', () => {
+        const { convertFocusFileNodeToJson, getFocusTreeWithFocusFile } = loadFocusTreeSchema();
         const constants = {};
         const file = convertFocusFileNodeToJson(parseHoi4File(readFixture('focus', 'modern-focuses.txt')), constants);
         const trees = getFocusTreeWithFocusFile(file, [], 'common/national_focus/modern-focuses.txt', constants);
@@ -49,6 +54,7 @@ describe('focus tree schema fixtures', () => {
     });
 
     it('marks imported shared focuses as read-only for current file drag editing', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const sharedTrees = getFocusTree(
             parseHoi4File(`
                 shared_focus = {
@@ -85,6 +91,7 @@ describe('focus tree schema fixtures', () => {
     });
 
     it('captures editable continuous focus position metadata for local focus trees', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const trees = getFocusTree(
             parseHoi4File(readFixture('focus', 'layout-edit.txt')),
             [],
@@ -102,6 +109,7 @@ describe('focus tree schema fixtures', () => {
     });
 
     it('keeps continuous focus coordinates undefined when the tree does not define continuous_focus_position', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(
             parseHoi4File(`
                 focus_tree = {
@@ -123,6 +131,7 @@ describe('focus tree schema fixtures', () => {
     });
 
     it('collects Conditions options from allow_branch triggers only', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(
             parseHoi4File(`
                 focus_tree = {
@@ -157,3 +166,21 @@ describe('focus tree schema fixtures', () => {
         ]);
     });
 });
+
+function purgeFocusTreeSchemaModules(): void {
+    for (const modulePath of [
+        '../../src/previewdef/focustree/schema',
+        '../../src/previewdef/focustree/focustreeschemahelpers',
+        '../../src/previewdef/focustree/focustreeschematypes',
+        '../../src/previewdef/focustree/focuslint',
+        '../../src/util/featureflags',
+    ]) {
+        delete require.cache[require.resolve(modulePath)];
+    }
+}
+
+function loadFocusTreeSchema(): typeof import('../../src/previewdef/focustree/schema') {
+    nodeModule._load = mockLoad;
+    purgeFocusTreeSchemaModules();
+    return require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
+}

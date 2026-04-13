@@ -5,12 +5,12 @@ import { PreviewBase } from '../previewbase';
 import { PreviewDescriptor } from '../descriptor';
 import { EventsLoader } from './loader';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
-import { eventTreePreview } from '../../util/featureflags';
+import { isEventTreePreviewEnabled } from '../../util/featureflags';
 import { ConfigurationKey } from '../../constants';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 
 function canPreviewEvent(document: vscode.TextDocument) {
-    if (!eventTreePreview) {
+    if (!isEventTreePreviewEnabled()) {
         return undefined;
     }
 

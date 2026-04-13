@@ -17,8 +17,8 @@ function textEscape(value: string): string {
 
 function tryGetLocalizedText(key: string): string | null | undefined {
     try {
-        const { localisationIndex } = require('../../util/featureflags') as { localisationIndex: boolean };
-        if (!localisationIndex) {
+        const { isLocalisationIndexEnabled } = require('../../util/featureflags') as { isLocalisationIndexEnabled: () => boolean };
+        if (!isLocalisationIndexEnabled()) {
             return null;
         }
 

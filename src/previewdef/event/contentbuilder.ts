@@ -14,7 +14,7 @@ import { renderGridBox, GridBoxItem, GridBoxConnection } from '../../util/hoi4gu
 import { Token } from '../../hoiformat/hoiparser';
 import { getSpriteByGfxName } from '../../util/image/imagecache';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
-import { localisationIndex } from "../../util/featureflags";
+import { isLocalisationIndexEnabled } from "../../util/featureflags";
 import { getSharedOptionChildGroups, nextScope, ScopeContext, SharedOptionChildGroup } from './sharedchildren';
 
 export async function renderEventFile(loader: EventsLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
@@ -405,7 +405,7 @@ async function makeEventNode(scope: string, eventNode: EventNode | string, edge:
                     `${edge.randomDays > 0 ? `${edge.days}-${edge.days + edge.randomDays}` : edge.days} ${localize('days', 'day(s)')}` :
                     `${edge.randomHours > 0 ? `${edge.hours}-${edge.hours + edge.randomHours}` : edge.hours} ${localize('hours', 'hour(s)')}`) + '\n' :
                 '') +
-            `${localize('eventtree.scope', 'Scope: ')}${scope}\n${localize('eventtree.title', 'Title: ')}${localisationIndex ? await getLocalisedTextQuick(event.title) : event.title}`;
+            `${localize('eventtree.scope', 'Scope: ')}${scope}\n${localize('eventtree.title', 'Title: ')}${isLocalisationIndexEnabled() ? await getLocalisedTextQuick(event.title) : event.title}`;
 
         const flags = [event.hidden, event.fire_only_once, event.major, eventNode.loop];
         const content = `<p class="
@@ -427,7 +427,7 @@ async function makeEventNode(scope: string, eventNode: EventNode | string, edge:
                     : ''}
             </p>
             <p class="${styleTable.style('paragraph', () => 'margin: 5px 0; text-overflow: ellipsis; overflow: hidden;')}">
-                ${localisationIndex? await getLocalisedTextQuick(event.title) : event.title}
+                ${isLocalisationIndexEnabled() ? await getLocalisedTextQuick(event.title) : event.title}
             </p>`;
         
         const extraAttributes = [];
@@ -470,7 +470,7 @@ async function makeEventNode(scope: string, eventNode: EventNode | string, edge:
         const eventId = eventNode;
         const title = `${localize('eventtree.eventid', 'Event ID: ')}${eventId}\n${localize('eventtree.scope', 'Scope: ')}${scope}`;
         let contentText = '';
-        if (localisationIndex) {
+        if (isLocalisationIndexEnabled()) {
             let localizedTitle = await getLocalisedTextQuick(eventId);
             if (localizedTitle !== eventId && localizedTitle !== null) {
                 contentText += `<br/>${localizedTitle}`;
@@ -503,7 +503,7 @@ function makeIcon(type: string, styleTable: StyleTable): string {
 async function makeOptionNode(option: OptionNode, eventsLoaderResult: EventsLoaderResult, styleTable: StyleTable): Promise<string> {
     let content = option.optionName;
     let title = option.optionName;
-    if (localisationIndex){
+    if (isLocalisationIndexEnabled()) {
         const optionName = await getLocalisedTextQuick(option.optionName);
         content = `${option.optionName} <br/> ${optionName}`;
         title = `${option.optionName} \n ${optionName}`;

@@ -4,7 +4,7 @@ import { parseHoi4File } from '../../src/hoiformat/hoiparser';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
-nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
+const mockLoad = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
             workspace: {
@@ -15,13 +15,17 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
-    return originalLoad.call(this, request, parent, isMain);
+    return originalLoad.call(nodeModule, request, parent, isMain);
 };
-
-const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
+nodeModule._load = mockLoad;
 
 describe('focus tree structural lint', () => {
+    after(() => {
+        nodeModule._load = originalLoad;
+    });
+
     it('detects asymmetric mutually exclusive links and aggregates lint counts on both focuses', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
@@ -49,6 +53,7 @@ describe('focus tree structural lint', () => {
     });
 
     it('detects relative position id without matching prerequisite', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
@@ -71,6 +76,7 @@ describe('focus tree structural lint', () => {
     });
 
     it('detects missing prerequisite and mutually exclusive targets', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
@@ -89,6 +95,7 @@ describe('focus tree structural lint', () => {
     });
 
     it('marks prerequisite cycles without roots as candidate unreachable info', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
@@ -115,6 +122,7 @@ describe('focus tree structural lint', () => {
     });
 
     it('does not flag imported shared targets as missing references', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const sharedTrees = getFocusTree(parseHoi4File(`
             shared_focus = {
                 id = SHARED_ROOT
@@ -142,6 +150,7 @@ describe('focus tree structural lint', () => {
     });
 
     it('orders lint warnings before parse warnings', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
@@ -164,3 +173,21 @@ describe('focus tree structural lint', () => {
         assert.strictEqual(tree.warnings.some((entry: any) => entry.code === 'focus-missing-id'), true);
     });
 });
+
+function purgeFocusTreeSchemaModules(): void {
+    for (const modulePath of [
+        '../../src/previewdef/focustree/schema',
+        '../../src/previewdef/focustree/focustreeschemahelpers',
+        '../../src/previewdef/focustree/focustreeschematypes',
+        '../../src/previewdef/focustree/focuslint',
+        '../../src/util/featureflags',
+    ]) {
+        delete require.cache[require.resolve(modulePath)];
+    }
+}
+
+function loadFocusTreeSchema(): typeof import('../../src/previewdef/focustree/schema') {
+    nodeModule._load = mockLoad;
+    purgeFocusTreeSchemaModules();
+    return require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
+}

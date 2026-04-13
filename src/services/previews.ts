@@ -1,20 +1,14 @@
-import * as vscode from 'vscode';
-import { DDSViewProvider, TGAViewProvider } from '../ddsviewprovider';
-import { ViewType } from '../constants';
-import { worldMap } from '../previewdef/worldmap';
 import { ExtensionServices } from './serviceRegistry';
 import { PreviewManager } from '../previewdef/previewmanager';
-import { defaultPreviewProviders } from '../previewdef/previewproviders';
+import { getPreviewDescriptors, registerFeatureArea } from '../features/catalog';
 
 export function registerPreviewServices(services: ExtensionServices): void {
     const previewManager = new PreviewManager({
-        previewProviders: defaultPreviewProviders,
+        previewProviders: getPreviewDescriptors(),
     });
 
     services.push(
         previewManager.register(),
-        worldMap.register(),
-        vscode.window.registerCustomEditorProvider(ViewType.DDS, new DDSViewProvider()),
-        vscode.window.registerCustomEditorProvider(ViewType.TGA, new TGAViewProvider()),
+        ...registerFeatureArea('preview'),
     );
 }

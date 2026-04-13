@@ -2,11 +2,48 @@ import * as vscode from 'vscode';
 import { localize } from '../util/i18n';
 import { error, debug } from '../util/debug';
 import { dirUri, getDocumentByUri } from '../util/vsccommon';
-import { isEqual } from 'lodash';
+import { isEqual, minBy } from 'lodash';
 import { getFilePathFromMod, getHoiOpenedFileOriginalUri, readFileFromModOrHOI4 } from '../util/fileloader';
 import { mkdirs, writeFile } from '../util/vsccommon';
 import { sendByMessage } from '../util/telemetry';
 import { forceError } from '../util/common';
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function resolveFocusIdSelection(
+    document: vscode.TextDocument,
+    start: number | undefined,
+    end: number | undefined,
+    focusId: string | undefined,
+): vscode.Range | undefined {
+    if (focusId) {
+        const text = document.getText();
+        const pattern = new RegExp(`\\bid\\s*=\\s*${escapeRegExp(focusId)}(?![\\w-])`, 'g');
+        const matches: Array<{ index: number; length: number }> = [];
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text)) !== null) {
+            matches.push({ index: match.index, length: match[0].length });
+        }
+
+        if (matches.length > 0) {
+            const chosen = start !== undefined
+                ? minBy(matches, m => Math.abs(m.index - start))!
+                : matches[0];
+            return new vscode.Range(
+                document.positionAt(chosen.index),
+                document.positionAt(chosen.index + chosen.length),
+            );
+        }
+    }
+
+    if (start === undefined || end === undefined) {
+        return undefined;
+    }
+
+    return new vscode.Range(document.positionAt(start), document.positionAt(end));
+}
 
 export abstract class PreviewBase {
     private cachedDependencies: string[] | undefined = undefined;
@@ -81,13 +118,14 @@ export abstract class PreviewBase {
         this.cachedDependencies = dependencies;
     }
 
-    protected async openOrCopyFile(file: string, start: number | undefined, end: number | undefined): Promise<void> {
+    protected async openOrCopyFile(file: string, start: number | undefined, end: number | undefined, focusId?: string): Promise<void> {
         const filePathInMod = await getFilePathFromMod(file);
         if (filePathInMod !== undefined) {
             const filePathInModWithoutOpened = getHoiOpenedFileOriginalUri(filePathInMod);
             const document = getDocumentByUri(filePathInModWithoutOpened) ?? await vscode.workspace.openTextDocument(filePathInModWithoutOpened);
+            const resolvedRange = resolveFocusIdSelection(document, start, end, focusId);
             await vscode.window.showTextDocument(document, {
-                selection: start !== undefined && end !== undefined ? new vscode.Range(document.positionAt(start), document.positionAt(end)) : undefined,
+                selection: resolvedRange,
                 viewColumn: vscode.ViewColumn.One,
             });
             return;
@@ -116,8 +154,9 @@ export abstract class PreviewBase {
             await writeFile(targetPath, buffer);
 
             const document = await vscode.workspace.openTextDocument(targetPath);
+            const resolvedRange = resolveFocusIdSelection(document, start, end, focusId);
             await vscode.window.showTextDocument(document, {
-                selection: start !== undefined && end !== undefined ? new vscode.Range(document.positionAt(start), document.positionAt(end)) : undefined,
+                selection: resolvedRange,
                 viewColumn: vscode.ViewColumn.One,
             });
 
@@ -151,13 +190,14 @@ export abstract class PreviewBase {
                             if (document === undefined) {
                                 return;
                             }
-        
+
+                            const resolvedRange = resolveFocusIdSelection(document, msg.start, msg.end, msg.focusId);
                             await vscode.window.showTextDocument(this.uri, {
-                                selection: new vscode.Range(document.positionAt(msg.start), document.positionAt(msg.end)),
+                                selection: resolvedRange,
                                 viewColumn: vscode.ViewColumn.One
                             });
                         } else {
-                            await this.openOrCopyFile(msg.file, msg.start, msg.end);
+                            await this.openOrCopyFile(msg.file, msg.start, msg.end, msg.focusId);
                         }
                     }
                     break;

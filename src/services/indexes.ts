@@ -1,12 +1,6 @@
-import { registerGfxIndex } from '../util/gfxindex';
-import { registerLocalisationIndex } from '../util/localisationIndex';
-import { registerSharedFocusIndex } from '../util/sharedFocusIndex';
 import { ExtensionServices } from './serviceRegistry';
+import { registerFeatureArea } from '../features/catalog';
 
 export function registerIndexServices(services: ExtensionServices): void {
-    services.push(
-        registerSharedFocusIndex(),
-        registerGfxIndex(),
-        registerLocalisationIndex(),
-    );
+    services.push(...registerFeatureArea('index'));
 }
