@@ -484,8 +484,36 @@ function escapeHtml(value: string): string {
         .replace(/"/g, '&quot;');
 }
 
-function escapeHtmlAttribute(value: string): string {
-    return escapeHtml(value);
+interface DropdownOptionData {
+    value: string;
+    text: string;
+}
+
+function createDropdownValueSpan(): HTMLSpanElement {
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'value';
+    return valueSpan;
+}
+
+function replaceDivDropdownOptions(select: HTMLDivElement, options: readonly DropdownOptionData[]) {
+    const optionElements = options.map(option => {
+        const optionElement = document.createElement('div');
+        optionElement.className = 'option';
+        optionElement.setAttribute('value', option.value);
+        optionElement.textContent = option.text;
+        return optionElement;
+    });
+    select.replaceChildren(createDropdownValueSpan(), ...optionElements);
+}
+
+function replaceSelectOptions(select: HTMLSelectElement, options: readonly DropdownOptionData[]) {
+    const optionElements = options.map(option => {
+        const optionElement = document.createElement('option');
+        optionElement.value = option.value;
+        optionElement.textContent = option.text;
+        return optionElement;
+    });
+    select.replaceChildren(...optionElements);
 }
 
 function setSelectedExprsFromExprKeys(exprKeys: readonly string[]) {
@@ -572,9 +600,10 @@ function refreshConditionPresetUi(focusTree: FocusTree) {
     }
 
     const presets = getConditionPresetsForTree(focusTree.id);
-    conditionPresetsDropdown.select.innerHTML = `<span class="value"></span>
-        <div class="option" value="__custom__">${feLocalize('TODO', '(Custom)')}</div>
-        ${presets.map(preset => `<div class="option" value="${escapeHtml(preset.id)}">${escapeHtml(preset.name)}</div>`).join('')}`;
+    replaceDivDropdownOptions(conditionPresetsDropdown.select, [
+        { value: '__custom__', text: feLocalize('TODO', '(Custom)') },
+        ...presets.map(preset => ({ value: preset.id, text: preset.name })),
+    ]);
     const selectedPreset = getSelectedConditionPreset(focusTree);
     suppressConditionPresetSelectionChange = true;
     conditionPresetsDropdown.selectedValues$.next([selectedPreset?.id ?? '__custom__']);
@@ -2200,8 +2229,10 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         }
 
         if (conditions) {
-            conditions.select.innerHTML = `<span class="value"></span>
-                ${conditionExprs.map(option => `<div class="option" value='${conditionItemToExprKey(option)}'>${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}</div>`).join('')}`;
+            replaceDivDropdownOptions(conditions.select, conditionExprs.map(option => ({
+                value: conditionItemToExprKey(option),
+                text: `${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}`,
+            })));
             suppressConditionSelectionChange = true;
             conditions.selectedValues$.next(nextSelectedExprKeys);
             suppressConditionSelectionChange = false;
@@ -2219,8 +2250,10 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         }
 
         if (allowBranches) {
-            allowBranches.select.innerHTML = `<span class="value"></span>
-                ${focusTree.allowBranchOptions.map(option => `<div class="option" value="inbranch_${option}">${option}</div>`).join('')}`;
+            replaceDivDropdownOptions(allowBranches.select, focusTree.allowBranchOptions.map(option => ({
+                value: `inbranch_${option}`,
+                text: option,
+            })));
             allowBranches.selectAll();
         }
     }
@@ -2232,8 +2265,10 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         inlayWindowsContainerElement.style.display = visibleInlayWindows.length > 0 ? 'flex' : 'none';
     }
     if (inlayWindowsElement) {
-        inlayWindowsElement.innerHTML = `<span class="value"></span>
-            ${visibleInlayWindows.map(inlay => `<div class="option" value="${inlay.id}">${inlay.id}</div>`).join('')}`;
+        replaceDivDropdownOptions(inlayWindowsElement, visibleInlayWindows.map(inlay => ({
+            value: inlay.id,
+            text: inlay.id,
+        })));
         const selectedInlayWindowId = getSelectedInlayWindowId(focusTree, visibleInlayWindows.map(inlay => inlay.id));
         setSelectedInlayWindowId(focusTree, selectedInlayWindowId);
         inlayWindows?.selectedValues$.next(selectedInlayWindowId ? [selectedInlayWindowId] : []);
@@ -2494,7 +2529,10 @@ function refreshFocusTreeSelectorOptions() {
         return;
     }
 
-    focusesElement.innerHTML = focusTrees.map((focus, i) => `<option value="${i}">${focus.id}</option>`).join('');
+    replaceSelectOptions(focusesElement, focusTrees.map((focus, i) => ({
+        value: i.toString(),
+        text: focus.id,
+    })));
     focusesElement.value = selectedFocusTreeIndex.toString();
 }
 

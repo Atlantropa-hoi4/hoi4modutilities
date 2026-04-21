@@ -288,6 +288,27 @@ describe('preview manager', () => {
         ]);
     });
 
+    it('does not fall back to a stale previewable editor when the active tab uri does not match it', () => {
+        const stalePreviewableDocument = createDocument('file:///common/context.txt', 3);
+        const manager = createManager([
+            createPanelProvider('focus', () => 1),
+        ]);
+        activeTabState.activeTab = {
+            input: createTabInputText({
+                toString: () => 'file:///notes/readme.md',
+            }),
+        };
+
+        manager['safeUpdateHoi4PreviewContextValue']({ document: stalePreviewableDocument as any } as any);
+
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', false],
+            ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowFocusGfxShine', false],
+            ['server.hoi4PreviewType', ''],
+        ]);
+    });
+
     it('ignores unsupported walkthrough documents without raising a missing-document error', async () => {
         const manager = createManager([createPanelProvider('focus', () => 0)]);
         const panel = createPanel();

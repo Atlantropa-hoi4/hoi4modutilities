@@ -14,14 +14,14 @@ describe('extension manifest', () => {
         assert.ok(manifest.activationEvents.includes('workspaceContains:events/*.txt'));
     });
 
-    it('shows the preview entry only when a preview provider resolved the file', () => {
+    it('shows the preview entry only for previewable file-like editor resources', () => {
         const editorTitlePreviewEntries = manifest.contributes.menus['editor/title']
             .filter(entry => entry.command === 'server.hoi4modutilities.preview');
+
         assert.strictEqual(editorTitlePreviewEntries.length, 1);
+        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
         assert.ok(editorTitlePreviewEntries[0].when.includes('resourceFilename !~ /^.*goals.*\\.gfx$/'));
         assert.ok(editorTitlePreviewEntries[0].when.includes('server.shouldShowHoi4Preview'));
-        assert.ok(!editorTitlePreviewEntries[0].when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
-        assert.match(editorTitlePreviewEntries[0].when, /resourceScheme != webview-panel/);
     });
 
     it('contributes the focus GFX shine generator command', () => {
@@ -38,6 +38,7 @@ describe('extension manifest', () => {
 
         assert.strictEqual(editorTitleEntries.length, 1);
         assert.strictEqual(editorTitleEntries[0].group, 'navigation');
+        assert.ok(editorTitleEntries[0].when.includes('isFileSystemResource'));
         assert.ok(editorTitleEntries[0].when.includes('server.shouldShowFocusGfxShine'));
         assert.ok(!editorTitleEntries[0].when.includes('resourceFilename =~ /^.*goals.*\\.gfx$/'));
     });
@@ -45,8 +46,11 @@ describe('extension manifest', () => {
     it('groups command palette entries by preview, tools, and setup flows', () => {
         const commandPaletteEntries = manifest.contributes.menus.commandPalette;
         const entryByCommand = Object.fromEntries(commandPaletteEntries.map(entry => [entry.command, entry]));
+        const previewEntry = entryByCommand['server.hoi4modutilities.preview'];
 
-        assert.strictEqual(entryByCommand['server.hoi4modutilities.preview'].group, '1_preview@1');
+        assert.ok(previewEntry);
+        assert.strictEqual(previewEntry.group, '1_preview@1');
+        assert.ok(!previewEntry.when?.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
         assert.strictEqual(entryByCommand['server.hoi4modutilities.previewworld'].group, '1_preview@2');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.generateFocusGfxShine'].group, '2_tools@1');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.scanreferences'].group, '2_tools@2');

@@ -293,25 +293,31 @@ function addSharedFocus(
     conditionExprs: ConditionItem[],
     warnings: FocusWarning[],
 ) {
-    const sharedFocusTree = sharedFocusTrees.find(sft => sharedFocusId in sft.focuses);
+    const sharedFocusTree = sharedFocusTrees.find(sft =>
+        (sft.kind === 'shared' || sft.kind === 'joint')
+        && sharedFocusId in sft.focuses);
     if (!sharedFocusTree) {
         return;
     }
 
     const sharedFocuses = sharedFocusTree.focuses;
+    const reportedConflicts = new Set<string>();
 
-    focuses[sharedFocusId] = sharedFocuses[sharedFocusId];
-    updateConditionExprsByFocus(sharedFocuses[sharedFocusId], conditionExprs);
+    const sharedFocus = sharedFocuses[sharedFocusId];
+    if (!addImportedSharedFocus(focuses, sharedFocus, filePath, warnings, reportedConflicts)) {
+        return;
+    }
+    updateConditionExprsByFocus(sharedFocus, conditionExprs);
 
     let hasChanged = true;
     while (hasChanged) {
         hasChanged = false;
         for (const key in sharedFocuses) {
-            if (key in focuses) {
+            const focus = sharedFocuses[key];
+            if (focuses[key] === focus) {
                 continue;
             }
 
-            const focus = sharedFocuses[key];
             const allPrerequisites = flatten(focus.prerequisite).filter(p => p in sharedFocuses);
             if (allPrerequisites.length === 0) {
                 continue;
@@ -321,28 +327,9 @@ function addSharedFocus(
                 continue;
             }
 
-            if (focus.id in focuses) {
-                const otherFocus = focuses[focus.id];
-                warnings.push(createParseWarning({
-                    code: 'focus-duplicate-id',
-                    text: localize('focustree.warnings.focusidconflict2', "There're more than one focuses with ID {0} in files: {1}, {2}.", focus.id, filePath, focus.file),
-                    source: focus.id,
-                    relatedFocusIds: [focus.id],
-                    navigations: [
-                        {
-                            file: focus.file,
-                            start: focus.token?.start ?? 0,
-                            end: focus.token?.end ?? 0,
-                        },
-                        {
-                            file: filePath,
-                            start: otherFocus.token?.start ?? 0,
-                            end: otherFocus.token?.end ?? 0,
-                        },
-                    ],
-                }));
+            if (!addImportedSharedFocus(focuses, focus, filePath, warnings, reportedConflicts)) {
+                continue;
             }
-            focuses[key] = focus;
             updateConditionExprsByFocus(focus, conditionExprs);
             hasChanged = true;
         }
@@ -353,6 +340,48 @@ function addSharedFocus(
             warnings.push(warning);
         }
     }
+}
+
+function addImportedSharedFocus(
+    focuses: Record<string, Focus>,
+    focus: Focus,
+    filePath: string,
+    warnings: FocusWarning[],
+    reportedConflicts: Set<string>,
+): boolean {
+    const otherFocus = focuses[focus.id];
+    if (!otherFocus) {
+        focuses[focus.id] = focus;
+        return true;
+    }
+
+    if (otherFocus === focus) {
+        return false;
+    }
+
+    if (!reportedConflicts.has(focus.id)) {
+        reportedConflicts.add(focus.id);
+        warnings.push(createParseWarning({
+            code: 'focus-duplicate-id',
+            text: localize('focustree.warnings.focusidconflict2', "There're more than one focuses with ID {0} in files: {1}, {2}.", focus.id, otherFocus.file ?? filePath, focus.file),
+            source: focus.id,
+            relatedFocusIds: [focus.id],
+            navigations: [
+                {
+                    file: otherFocus.file ?? filePath,
+                    start: otherFocus.token?.start ?? 0,
+                    end: otherFocus.token?.end ?? 0,
+                },
+                {
+                    file: focus.file,
+                    start: focus.token?.start ?? 0,
+                    end: focus.token?.end ?? 0,
+                },
+            ],
+        }));
+    }
+
+    return false;
 }
 
 function updateConditionExprsByFocus(focus: Focus, conditionExprs: ConditionItem[]) {

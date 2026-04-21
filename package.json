@@ -166,19 +166,19 @@
       "editor/title": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "resourceScheme != webview-panel && resourceFilename !~ /^.*goals.*\\.gfx$/ && server.shouldShowHoi4Preview",
+          "when": "resourceExtname =~ /^\\.(txt|gfx|gui|map)$/ && resourceFilename !~ /^.*goals.*\\.gfx$/ && server.shouldShowHoi4Preview",
           "group": "navigation"
         },
         {
           "command": "server.hoi4modutilities.generateFocusGfxShine",
-          "when": "resourceScheme != webview-panel && server.shouldShowFocusGfxShine",
+          "when": "isFileSystemResource && server.shouldShowFocusGfxShine",
           "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "resourceScheme != webview-panel && (!server.hoi4MULoaded || server.shouldShowHoi4Preview || resourceExtname =~ /^\\.(txt|gfx|gui|map)$/)",
+          "when": "resourceScheme != webview-panel && (!server.hoi4MULoaded || server.shouldShowHoi4Preview)",
           "group": "1_preview@1"
         },
         {

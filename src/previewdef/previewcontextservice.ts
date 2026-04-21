@@ -14,6 +14,7 @@ export class PreviewContextService {
         const disposables: vscode.Disposable[] = [];
         disposables.push(vscode.window.onDidChangeActiveTextEditor(this.safeUpdateHoi4PreviewContextValue, this));
         disposables.push(vscode.window.onDidChangeVisibleTextEditors(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
+        disposables.push(vscode.window.tabGroups.onDidChangeTabGroups(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
         disposables.push(vscode.window.tabGroups.onDidChangeTabs(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
         disposables.push(vscode.workspace.onDidOpenTextDocument(() => this.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
 
@@ -66,7 +67,11 @@ export class PreviewContextService {
 
         const activeTabUri = this.getActiveTabUri(activeTab.input);
         if (activeTabUri) {
-            return getDocumentByUri(activeTabUri) ?? textEditor?.document;
+            if (textEditor?.document.uri.toString() === activeTabUri.toString()) {
+                return textEditor.document;
+            }
+
+            return getDocumentByUri(activeTabUri);
         }
 
         return undefined;

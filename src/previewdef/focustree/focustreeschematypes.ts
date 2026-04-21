@@ -264,14 +264,6 @@ export function extractFocusIds(node: Node): string[] {
     const file = convertFocusFileNodeToJson(node, constants);
     const ids: string[] = [];
 
-    for (const tree of file.focus_tree) {
-        for (const focus of tree.focus) {
-            if (focus.id) {
-                ids.push(focus.id);
-            }
-        }
-    }
-
     for (const focus of file.shared_focus) {
         if (focus.id) {
             ids.push(focus.id);

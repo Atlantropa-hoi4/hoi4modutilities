@@ -43,3 +43,15 @@ Stabilization note: `focustree` schema/lint unit failures around imported shared
 Verification note: full post-refactor validation is now complete. `npm run test` passes end-to-end, and `npm run test-ui` also passes when run sequentially after the main test pipeline. A one-off `EBUSY` during an earlier parallel run came from both commands trying to copy the same build artifact at once, not from an extension regression.
 
 Release note: promoted the current refactor/stabilization batch to version 1.0.2, converted CHANGELOG [7mUnreleased[0m to a dated release entry, and aligned package metadata before commit.
+Focus tree review 2026-04-27:
+- [x] Check git status and repository guidance before review.
+- [x] Map Focus Tree implementation, webview, shared index, and tests.
+- [x] Compare supported syntax against current community documentation for national focus, shared focus, joint focus, inlay, and webview expectations.
+- [x] Run typecheck and targeted Focus Tree/shared index unit verification.
+
+Review note: current Focus Tree coverage is broad, but review found follow-up work around shared-focus import/index scoping, imported shared-focus ID collision handling, and webview HTML sanitization. Reverified after refreshing stale node_modules with `npm ci`; `npm run compile-ts`, `npm run compile-tests`, and targeted Focus Tree/shared-index mocha tests passed.
+
+P2 fix note 2026-04-27:
+- [x] Preserve local focus definitions when an imported shared/joint focus has the same ID, and report the duplicate instead of overwriting.
+- [x] Replace Focus Tree webview dropdown/selector HTML string insertion for mod-derived option values with DOM node creation.
+- [x] Reverify with Focus Tree schema/lint/shared-index unit coverage plus extension/webview typechecks.

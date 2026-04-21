@@ -25,11 +25,11 @@ describe('focus tree schema fixtures', () => {
         nodeModule._load = originalLoad;
     });
 
-    it('extracts shared, joint, and national focus ids for indexing', () => {
+    it('extracts only shared and joint focus ids for indexing', () => {
         const { extractFocusIds } = loadFocusTreeSchema();
         const ids = extractFocusIds(parseHoi4File(readFixture('focus', 'modern-focuses.txt')));
 
-        assert.deepStrictEqual(ids, ['ROOT_FOCUS', 'SHARED_ROOT', 'JOINT_ALPHA']);
+        assert.deepStrictEqual(ids, ['SHARED_ROOT', 'JOINT_ALPHA']);
     });
 
     it('creates separate joint focus trees and links them from focus_tree shared_focus references', () => {
@@ -88,6 +88,87 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(focusTree?.focuses.LOCAL_ONLY.layout?.sourceFile, 'common/national_focus/main.txt');
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.isInCurrentFile, false);
         assert.strictEqual(focusTree?.focuses.SHARED_EXTERNAL.layout?.sourceFile, 'common/national_focus/shared.txt');
+    });
+
+    it('keeps local focus when imported shared focus has the same id', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const sharedTrees = getFocusTree(
+            parseHoi4File(`
+                shared_focus = {
+                    id = SHARED_EXTERNAL
+                    x = 2
+                    y = 3
+                }
+            `),
+            [],
+            'common/national_focus/shared.txt',
+        );
+        const trees = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = main_tree
+                    shared_focus = SHARED_EXTERNAL
+                    focus = {
+                        id = SHARED_EXTERNAL
+                        x = 9
+                        y = 9
+                    }
+                }
+            `),
+            sharedTrees,
+            'common/national_focus/main.txt',
+        );
+
+        const focusTree = trees.find(tree => tree.kind === 'focus');
+        const focus = focusTree?.focuses.SHARED_EXTERNAL;
+        assert.ok(focusTree);
+        assert.ok(focus);
+        assert.strictEqual(focus.isInCurrentFile, true);
+        assert.strictEqual(focus.file, 'common/national_focus/main.txt');
+        assert.strictEqual(focus.x, 9);
+        assert.strictEqual(focus.y, 9);
+        assert.ok(focusTree?.warnings.some((entry: any) =>
+            entry.code === 'focus-duplicate-id'
+            && entry.source === 'SHARED_EXTERNAL',
+        ));
+    });
+
+    it('does not import regular focus tree focuses through shared_focus references', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const importedTrees = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = other_tree
+                    focus = {
+                        id = REGULAR_EXTERNAL
+                        x = 2
+                        y = 3
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/other.txt',
+        );
+        const trees = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = main_tree
+                    shared_focus = REGULAR_EXTERNAL
+                    focus = {
+                        id = LOCAL_ONLY
+                        x = 1
+                        y = 1
+                    }
+                }
+            `),
+            importedTrees,
+            'common/national_focus/main.txt',
+        );
+
+        const focusTree = trees.find(tree => tree.kind === 'focus');
+        assert.ok(focusTree);
+        assert.strictEqual(focusTree?.focuses.REGULAR_EXTERNAL, undefined);
+        assert.strictEqual(focusTree?.focuses.LOCAL_ONLY.isInCurrentFile, true);
     });
 
     it('captures editable continuous focus position metadata for local focus trees', () => {
