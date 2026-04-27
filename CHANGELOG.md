@@ -4,7 +4,12 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [1.0.2] - 2026/04/19 - Latest
+## [0.13.7] - 2026/04/27 - Latest
+
+### Fixed
+* Fix Focus Tree `shared_focus` import resolution so only actual shared or joint focuses are imported, local focuses are not overwritten by imported ID conflicts, and mod-derived dropdown values are not interpolated into `innerHTML`.
+
+## [0.13.6] - 2026/04/13
 
 ### Changed
 * Refactor preview, index, editor, and custom-editor registration around feature-owned catalog modules, keeping contribution ordering stable while making extension wiring easier to evolve.
@@ -16,28 +21,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Always resolve imported `focus_tree.shared_focus` data regardless of the condition-in-focus feature flag, fixing shared or joint focus schema and lint coverage.
 * Harden focustree schema/lint unit tests so full-suite execution no longer depends on module-cache or VS Code mock load order.
 
-## [1.0.1] - 2026/04/16
-
-### Changed
-* Commit the esbuild build pipeline (`scripts/build.mjs`, `scripts/clean.mjs`) so a fresh clone can build `dist/extension.js` and the webview bundles without relying on developer-local tooling.
-
-### Fixed
-* Navigate the editor to the `id = <focus_id>` line when clicking a focus in the preview, instead of landing on the outer `focus = { ... }` opening line.
-* Keep focus-click navigation aligned with the current document by scanning the whole file for the focus id and picking the match closest to the webview-supplied offset, so the selection no longer drifts after repeated edits.
-
-### Performance
-* Parallelize focus inlay-window, scripted GUI window, and interface GFX cache builders with `Promise.all`, cutting cold-start latency for focus preview icon and inlay loading on large mods.
-
-## [1.0.0] - 2026/04/08
-
-### Changed
-* Refresh the project README for the desktop-only, esbuild-based extension workflow and the current release automation path.
-* Promote the fork to version `1.0.0` to mark the broader stabilization and tooling modernization work as a fresh release line.
-
-### Fixed
-* Remove a redundant pre-ready Focus Tree refresh path that previously loaded the full preview model before the webview handshake, then threw that work away and rendered the shell again.
-
-## [0.13.23] - 2026/04/08
+## [0.13.5] - 2026/04/06
 
 ### Changed
 * Unify Focus Tree preview startup and refresh around a single shell bootstrap plus snapshot-update protocol, removing the old small-file inline render heuristic and the separate `mode=full|patch` message split.
@@ -46,7 +30,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Fixed
 * Narrow incremental Focus Tree DOM work to changed nodes only while preserving targeted selector and warnings refreshes, and add host/webview timing logs that separate load, diff, render, apply, rebuild, and rebind phases.
 
-## [0.13.22] - 2026/04/06
+## [0.13.4] - 2026/04/04
 
 ### Fixed
 * Cache Focus Preview inlay-window, scripted GUI, and interface GFX fallback discovery so repeated preview loads no longer rescan and reparse those folders on every render.
@@ -57,7 +41,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Skip the expensive localisation-highlighting full-text parse and decoration application path for HOI4 localisation files that currently contain no highlightable inline tokens.
 * Add a budgeted world-map incremental diff path that bails out to a summary refresh sooner when large edits would otherwise spend too long in deep object comparison.
 
-## [0.13.21] - 2026/04/04
+## [0.13.3] - 2026/04/04
 
 ### Added
 * Add a native VS Code RGB color picker for `common/countries/colors.txt`, `common/countries/color.txt`, `common/countries/cosmetic.txt`, and `common/ideologies/*.txt`, so definition color values can be chosen directly from the editor instead of typed by hand.
@@ -69,7 +53,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Fixed
 * Tighten RGB picker range discovery to parsed HOI4 `color` and `color_ui` nodes, preventing the editor from showing color-picker decorations on stray color-like text in supported definition files.
 
-## [0.13.19] - 2026/04/04
+## [0.13.2] - 2026/04/04
 
 ### Added
 * Add edit-mode focus linking: double-click an existing focus to start a parent link line, then click another focus to write the child focus's `prerequisite` and `relative_position_id` back into the current document.
@@ -89,46 +73,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Reuse the same preview-pan session for blank-canvas fallback drags as the original `#dragger` path, restoring smoother empty-space panning while keeping the missed-drag fix.
 * Restyle the focus preview `Edit` toggle as an icon button and anchor it immediately to the right of the `Search` box on the first toolbar row.
 
-## [0.13.18] - 2026/04/04
-
-### Fixed
-* Make repeated blank-space creates choose a unique generated placeholder id such as `TAG_FOCUS_ID_2` when the base placeholder already exists in the current file, preventing ambiguous-focus edit failures.
-
-## [0.13.17] - 2026/04/04
-
-### Fixed
-* Insert newly created focus blocks with a blank line separator from the previous block, derive the placeholder prefix from the focus tree's configured country tag when available, and keep consecutive create operations parse-safe.
-
-## [0.13.16] - 2026/04/04
-
-### Fixed
-* Treat the visible preview canvas below the toolbar as a valid blank-space create surface instead of requiring double clicks to land inside a narrow gridbox DOM container.
-
-## [0.13.15] - 2026/04/04
-
-### Fixed
-* Make blank-space Focus Preview double clicks resolve the real pointer target before deciding whether to create a new focus template, so empty-canvas creates are no longer blocked by misleading container targets.
-
-## [0.13.14] - 2026/04/04
-
-### Fixed
-* Keep the continuous-focus helper behind the rendered focus grid and fall back from stale persisted condition filters when they would otherwise open the preview as an empty canvas.
-
-## [0.13.13] - 2026/04/04
-
-### Changed
-* Expand the blank-space Focus Preview create template to the requested HOI4 scaffold with `icon`, `cost`, and a `completion_reward` log that reuses the new `TAG_FOCUS_ID` placeholder.
-
-## [0.13.12] - 2026/04/04
-
-### Added
-* Allow blank-space double-click creation in Focus Preview `Edit` mode, inserting a snapped focus template into the currently selected local focus tree and selecting the new `TAG_FOCUS_ID` placeholder for immediate typing.
-
-### Changed
-* Add stable tree-level edit metadata for local `focus_tree`, `shared_focus`, and `joint_focus` creation targets so imported dependency trees remain read-only.
-* Refresh the focus preview immediately after a created template is inserted by rerendering the webview from the updated document and skipping the delayed duplicate reload for that same version.
-
-## [0.13.11] - 2026/04/03
+## [0.13.1] - 2026/04/03
 
 ### Added
 * Reintroduce a minimal Focus Preview `Edit` toggle that lets you drag focuses defined in the current file and saves their `x`/`y` positions on mouseup.
@@ -136,49 +81,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Changed
 * Keep drag editing local to current-file `focus`, `shared_focus`, and `joint_focus` entries while leaving imported dependency focuses read-only in the preview.
 * Derive saved local `x`/`y` values from the rendered drop position so `relative_position_id` and active focus `offset` rules stay intact.
-
-## [0.13.10] - 2026/04/03
-
-### Removed
-* Remove the Focus Preview `Edit` feature surface, including its settings, migrations, drag handlers, and layout-edit plumbing, while keeping the rest of the focus preview behavior unchanged.
-
-## [0.13.7] - 2026/04/02
-
-### Fixed
-* Broaden HOI4 localisation highlighting detection to accept spaced or dashed localisation filenames such as `name l_english.yml` and `name-l_english.yaml`, and fall back to inline HOI4 token hints when a file does not advertise itself through a standard path.
-
-## [0.13.6] - 2026/04/02
-
-### Fixed
-* Make HOI4 localisation highlighting recognize normal localisation file paths like `localisation/.../*_l_*.yml` even before the file text is fully parsed, so highlighting appears on typical mod localisation files that were previously skipped by the overly strict text-only detector.
-
-## [0.13.5] - 2026/04/01
-
-### Fixed
-* Keep the fallback preview toolbar button mutually exclusive with the context-driven preview button so focus files show only one preview action.
-* Remove remaining lodash `chain(...).flatMap()` usage from focus preview runtime paths, fixing the focus-preview error `TypeError: (0 , s.chain)(...).flatMap is not a function`.
-
-## [0.13.4] - 2026/04/01
-
-### Fixed
-* Remove lodash `chain()` from preview provider selection. The preview activation path now uses a native priority scan, fixing the runtime error `(0 , m.chain)(...).map is not a function`.
-
-## [0.13.3] - 2026/04/01
-
-### Fixed
-* Prevent preview-provider probing from crashing extension activation when the currently active plaintext editor is an unsupported or unusual document. Preview context detection now degrades safely instead of aborting activation, so localisation highlighting and preview commands can still register.
-
-## [0.13.2] - 2026/04/01
-
-### Fixed
-* Add `onStartupFinished` activation so localisation highlighting and preview context registration still initialize even when language-based activation is missed during editor restore.
-* Switch the preview button fallback visibility to extension-based file matching (`.txt`, `.gfx`, `.gui`, `.map`) so focus preview entry points are not hidden by language-mode differences across companion Paradox extensions.
-
-## [0.13.1] - 2026/04/01
-
-### Fixed
-* Restore activation on `hoi4` and `paradox` language documents so focus previews and localisation highlighting still initialize when another syntax extension changes the language mode.
-* Relax the preview command visibility rules so the toolbar and command palette surface the preview entry again on HOI4 script documents while the forked runtime contexts warm up.
 
 ## [0.13.0] - 2026/04/01
 
