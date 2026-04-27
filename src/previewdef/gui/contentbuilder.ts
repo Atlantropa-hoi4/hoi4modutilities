@@ -8,6 +8,7 @@ import { getHeight, getWidth } from '../../util/hoi4gui/common';
 import { RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { RenderNodeCommonOptions } from '../../util/hoi4gui/nodecommon';
 import { html, htmlEscape } from '../../util/html';
+import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 import { localize } from '../../util/i18n';
 import { getSpriteByGfxName } from '../../util/image/imagecache';
 import { LoaderSession } from '../../util/loader/loader';
@@ -38,7 +39,7 @@ export async function renderGuiFile(loader: GuiFileLoader, uri: vscode.Uri, webv
             baseContent,
             [
                 setPreviewFileUriScript,
-                { content: 'window.containerWindowToggles = ' + JSON.stringify(makeToggleContainerWindowCheckboxes(containerWindows, styleTable)) + ';' },
+                { content: 'window.containerWindowToggles = ' + JSON.stringify(makeToggleContainerWindowToggleItems(containerWindows, styleTable)) + ';' },
                 'guipreview.js',
             ],
             [
@@ -106,7 +107,7 @@ function renderTopBar(folders: string[], styleTable: StyleTable): string {
                 type="text"
                 class="${styleTable.oneTimeStyle('folderSelector', () => `min-width:200px`)}"
             >
-                ${folders.map(folder => `<option value="containerwindow_${folder}">${folder}</option>`)}
+                ${folders.map(folder => `<option value="containerwindow_${htmlAttributeEscape(folder)}">${htmlTextEscape(folder)}</option>`)}
             </select>
         </div>
         <button id="refresh" title="${localize('common.topbar.refresh.title', 'Refresh')}">
@@ -199,7 +200,7 @@ async function renderSingleContainerWindow(
     );
 
     return `<div
-        id="containerwindow_${containerWindow.name}"
+        id="containerwindow_${htmlAttributeEscape(containerWindow.name ?? '')}"
         class="
             containerwindow
             containerwindow_${normalizeForStyle(containerWindow.name ?? '')}
@@ -209,27 +210,32 @@ async function renderSingleContainerWindow(
     </div>`;
 }
 
-function makeToggleContainerWindowCheckboxes(containerWindows: HOIPartial<ContainerWindowType>[], styleTable: StyleTable) {
+interface ToggleContainerWindowItem {
+    id: string;
+    containerWindowName: string;
+    className: string;
+}
+
+function makeToggleContainerWindowToggleItems(containerWindows: HOIPartial<ContainerWindowType>[], styleTable: StyleTable) {
     return arrayToMap(containerWindows.map(cw => {
-        return { name: cw.name ?? '', content: makeToggleContainerWindowCheckboxesRecursively(cw, styleTable, '', 0) };
+        return { name: cw.name ?? '', items: makeToggleContainerWindowToggleItemsRecursively(cw, styleTable, '', 0) };
     }), 'name');
 }
 
-function makeToggleContainerWindowCheckboxesRecursively(containerWindow: HOIPartial<ContainerWindowType>, styleTable: StyleTable, prefix: string, level: number): string {
+function makeToggleContainerWindowToggleItemsRecursively(containerWindow: HOIPartial<ContainerWindowType>, styleTable: StyleTable, prefix: string, level: number): ToggleContainerWindowItem[] {
     const childWindows = [...containerWindow.containerwindowtype, ...containerWindow.windowtype];
     childWindows.sort((a, b) => (a._index ?? 0) - (b._index ?? 0));
-    return childWindows.map(cw => {
+    return childWindows.flatMap(cw => {
         const normalizedName = normalizeForStyle(cw.name ?? '');
-        return `<div class="${styleTable.oneTimeStyle('level-' + level, () => 'padding-left: ' + (level * 20) + 'px;')}">
-            <input
-                type="checkbox"
-                id="toggleContainerWindow_${prefix}${normalizedName}"
-                containerWindowName="${cw.name}"
-                checked="checked"
-                class="toggleContainerWindowCheckbox"
-            />
-        </div>` + makeToggleContainerWindowCheckboxesRecursively(cw, styleTable, prefix + normalizedName + '_', level + 1);
-    }).join('');
+        return [
+            {
+                id: `toggleContainerWindow_${prefix}${normalizedName}`,
+                containerWindowName: cw.name ?? '',
+                className: styleTable.oneTimeStyle('level-' + level, () => 'padding-left: ' + (level * 20) + 'px;') as string,
+            },
+            ...makeToggleContainerWindowToggleItemsRecursively(cw, styleTable, prefix + normalizedName + '_', level + 1),
+        ];
+    });
 }
 
 function defaultGetSprite(gfxFiles: string[]) {

@@ -55,3 +55,22 @@ P2 fix note 2026-04-27:
 - [x] Preserve local focus definitions when an imported shared/joint focus has the same ID, and report the duplicate instead of overwriting.
 - [x] Replace Focus Tree webview dropdown/selector HTML string insertion for mod-derived option values with DOM node creation.
 - [x] Reverify with Focus Tree schema/lint/shared-index unit coverage plus extension/webview typechecks.
+
+Whole-codebase review 2026-04-27:
+- [x] Run baseline typecheck, lint, and unit verification.
+- [x] Inspect architecture, extension entrypoints, preview/webview services, and test coverage for small high-confidence improvements.
+- [x] Implement scoped fixes only where the audit finds concrete risk.
+- [x] Reverify changed behavior and review the final diff.
+
+Review note: baseline `npm run compile-ts`, `npm run lint`, and `npm run test:unit` were green. Audit found remaining raw HTML construction in MIO preview condition options and trait labels/attributes, so MIO now builds condition dropdown options with DOM nodes and shared text/attribute escaping helpers protect MIO/Focus Tree rendered labels. Reverified with targeted html/focusrender/MIO tests, full `npm run test`, and `npm run test-ui`.
+
+Dependency and webview hardening 2026-04-27:
+- [x] Update `lodash` to the audited safe production range and verify production audit is clean.
+- [x] Update package/dev tooling candidates in order: `@vscode/vsce`, `@types/vscode`, `@types/node`, TypeScript, and `@typescript-eslint/*`.
+- [x] Align the minimum VS Code engine with the updated VS Code API typings.
+- [x] Replace GUI preview toggle HTML injection with structured data plus DOM node creation.
+- [x] Render Focus Tree warnings with DOM nodes instead of HTML strings.
+- [x] Reduce touched webview `window as any` usage with typed bootstrap globals.
+- [x] Reverify with compile, lint, unit/integration tests, audit, and VSIX packaging.
+
+Review note: `npm audit --omit=dev` is clean after `lodash` 4.18.1. Full `npm audit` still reports dev-only advisories in the VSCE/Mocha toolchain with odd downgrade suggestions, so those were not forced. Reverified with `npm run test`, `npm run test-ui`, and `npm run package`.

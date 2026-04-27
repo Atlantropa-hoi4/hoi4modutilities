@@ -10,18 +10,64 @@ import { toNumberLike } from "../src/hoiformat/schema";
 import { feLocalize } from './util/i18n';
 import { Mio, MioTrait } from "../src/previewdef/mio/schema";
 
-const mios: Mio[] = (window as any).mios;
+declare global {
+    interface Window {
+        mios: Mio[];
+        renderedTrait: Record<string, Record<string, string>>;
+        gridBox: GridBoxType;
+        styleNonce: string;
+        xGridSize: number;
+    }
+}
+
+const mios: Mio[] = window.mios;
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
 let selectedMioIndex: number = Math.min(mios.length - 1, getState().selectedMioIndex ?? 0);
 let conditions: DivDropdown | undefined = undefined;
+
+function conditionItemToExprKey(expr: ConditionItem): string {
+    return `${expr.scopeName}!|${expr.nodeContent}`;
+}
+
+function exprKeyToConditionItem(exprKey: string): ConditionItem {
+    const separatorIndex = exprKey.indexOf('!|');
+    if (separatorIndex < 0) {
+        return {
+            scopeName: '',
+            nodeContent: exprKey,
+        };
+    }
+
+    return {
+        scopeName: exprKey.substring(0, separatorIndex),
+        nodeContent: exprKey.substring(separatorIndex + 2),
+    };
+}
+
+function createDropdownValueSpan(): HTMLSpanElement {
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'value';
+    return valueSpan;
+}
+
+function replaceConditionOptions(select: HTMLDivElement, conditionExprs: readonly ConditionItem[]) {
+    const optionElements = conditionExprs.map(option => {
+        const optionElement = document.createElement('div');
+        optionElement.className = 'option';
+        optionElement.setAttribute('value', conditionItemToExprKey(option));
+        optionElement.textContent = `${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}`;
+        return optionElement;
+    });
+    select.replaceChildren(createDropdownValueSpan(), ...optionElements);
+}
 
 async function buildContent() {
     const miopreviewplaceholder = document.getElementById('miopreviewplaceholder') as HTMLDivElement;
     
     const styleTable = new StyleTable();
     const mio = mios[selectedMioIndex];
-    const renderedTrait: Record<string, string> = (window as any).renderedTrait[mio.id];
+    const renderedTrait: Record<string, string> = window.renderedTrait[mio.id];
     const traits = Object.values(mio.traits);
 
     const allowBranchOptionsValue: Record<string, boolean> = {};
@@ -32,14 +78,14 @@ async function buildContent() {
         }
     });
 
-    const gridbox: GridBoxType = (window as any).gridBox;
+    const gridbox: GridBoxType = window.gridBox;
 
     const traitPosition: Record<string, NumberPosition> = {};
     calculateTraitVisible(mio, allowBranchOptionsValue);
     const traitGrixBoxItems = traits.map(trait => traitToGridItem(trait, mio, allowBranchOptionsValue, traitPosition)).filter((v): v is GridBoxItem => !!v);
     
     const minX = minBy(Object.values(traitPosition), 'x')?.x ?? 0;
-    const leftPadding = gridbox.position.x._value - Math.min(minX * (window as any).xGridSize, 0);
+    const leftPadding = gridbox.position.x._value - Math.min(minX * window.xGridSize, 0);
 
     const traitPreviewContent = await renderGridBoxCommon({ ...gridbox, position: {...gridbox.position, x: toNumberLike(leftPadding)} }, {
         size: { width: 0, height: 0 },
@@ -52,7 +98,7 @@ async function buildContent() {
         cornerPosition: 0.5,
     });
 
-    miopreviewplaceholder.innerHTML = traitPreviewContent + styleTable.toStyleElement((window as any).styleNonce);
+    miopreviewplaceholder.innerHTML = traitPreviewContent + styleTable.toStyleElement(window.styleNonce);
 
     subscribeNavigators();
 }
@@ -113,11 +159,8 @@ function updateSelectedMio(clearCondition: boolean) {
     }
 
     if (conditions) {
-        conditions.select.innerHTML = `<span class="value"></span>
-            ${conditionExprs.map(option =>
-                `<div class="option" value='${option.scopeName}!|${option.nodeContent}'>${option.scopeName ? `[${option.scopeName}]` : ''}${option.nodeContent}</div>`
-            ).join('')}`;
-        conditions.selectedValues$.next(clearCondition ? [] : selectedExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
+        replaceConditionOptions(conditions.select, conditionExprs);
+        conditions.selectedValues$.next(clearCondition ? [] : selectedExprs.map(conditionItemToExprKey));
     }
 
     const warnings = document.getElementById('warnings') as HTMLTextAreaElement | null;
@@ -235,22 +278,9 @@ window.addEventListener('load', tryRun(async function() {
     if (conditionsElement) {
         conditions = new DivDropdown(conditionsElement, true);
         
-        conditions.selectedValues$.next(selectedExprs.map(e => `${e.scopeName}!|${e.nodeContent}`));
+        conditions.selectedValues$.next(selectedExprs.map(conditionItemToExprKey));
         conditions.selectedValues$.subscribe(async (selection) => {
-            selectedExprs = selection.map<ConditionItem>(selection => {
-                const index = selection.indexOf('!|');
-                if (index === -1) {
-                    return {
-                        scopeName: '',
-                        nodeContent: selection,
-                    };
-                } else {
-                    return {
-                        scopeName: selection.substring(0, index),
-                        nodeContent: selection.substring(index + 2),
-                    };
-                }
-            });
+            selectedExprs = selection.map(exprKeyToConditionItem);
 
             setState({ selectedExprs });
             

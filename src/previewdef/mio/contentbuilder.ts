@@ -4,6 +4,7 @@ import { localize, i18nTableAsScript } from '../../util/i18n';
 import { forceError, randomString } from '../../util/common';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
 import { html, htmlEscape } from '../../util/html';
+import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 import { GridBoxType } from '../../hoiformat/gui';
 import { MioLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
@@ -146,7 +147,7 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
             <select id="mios" class="select multiple-select" tabindex="0" role="combobox">
                 ${await Promise.all(mios.map(async (mio, i) => {
                     const localizedText = isLocalisationIndexEnabled() ? `(${mio.id}) ${await getLocalisedTextQuick(mio.id)}` : mio.id;
-                    return `<option value="${i}">${localizedText}</option>`;
+                    return `<option value="${i}">${htmlTextEscape(localizedText)}</option>`;
                 })).then(options => options.join(''))}
             </select>
         </div>`;
@@ -177,6 +178,8 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
 
 async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
     const traitIcon = trait.icon;
+    const traitLabel = isLocalisationIndexEnabled() ? await getLocalisedTextQuick(trait.name) ?? '' : '';
+    const traitTitle = `${trait.id}${traitLabel ? `\n${traitLabel}` : ''}\n({{position}})`;
     if (traitIcon) {
         const iconObject = traitIcon ? await getTraitIcon(traitIcon, gfxFiles) : null;
         styleTable.style('trait-icon-' + normalizeForStyle(traitIcon ?? '-empty'), () => 
@@ -221,8 +224,8 @@ async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: st
         "
         start="${trait.token?.start}"
         end="${trait.token?.end}"
-        ${file === trait.file ? '' : `file="${trait.file}"`}
-        title="${trait.id}${isLocalisationIndexEnabled() ? `\n${await getLocalisedTextQuick(trait.name)}` : ''}\n({{position}})">
+        ${file === trait.file ? '' : `file="${htmlAttributeEscape(trait.file)}"`}
+        title="${htmlAttributeEscape(traitTitle)}">
             <div class="
                 ${styleTable.style('effect-host', () => `
                     text-align: center;
@@ -254,7 +257,7 @@ async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: st
                 position: relative;
                 z-index: 5;
             `)}">
-            ${trait.id}
+            ${htmlTextEscape(trait.id)}
             </span>
             <br/>
             <span
@@ -266,7 +269,7 @@ async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: st
                 position: relative;
                 z-index: 5;
             `)}">
-            ${isLocalisationIndexEnabled() ? `${await getLocalisedTextQuick(trait.name)}` : ''}
+            ${htmlTextEscape(traitLabel)}
             </span>
         </div>
     </div>`;

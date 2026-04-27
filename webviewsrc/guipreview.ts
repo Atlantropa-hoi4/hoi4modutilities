@@ -5,6 +5,41 @@ import { setState, getState, scrollToState, tryRun, subscribeRefreshButton } fro
 const existingCheckboxes: Checkbox[] = [];
 let toggleVisibilityContentVisible = getState().toggleVisibilityContentVisible;
 
+interface ToggleContainerWindowItem {
+    id: string;
+    containerWindowName: string;
+    className: string;
+}
+
+interface ToggleContainerWindowGroup {
+    items: ToggleContainerWindowItem[];
+}
+
+declare global {
+    interface Window {
+        containerWindowToggles: Record<string, ToggleContainerWindowGroup | undefined>;
+    }
+}
+
+function replaceToggleVisibilityContent(host: HTMLDivElement, items: readonly ToggleContainerWindowItem[]) {
+    const itemElements = items.map(item => {
+        const itemElement = document.createElement('div');
+        if (item.className) {
+            itemElement.className = item.className;
+        }
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = item.id;
+        checkbox.setAttribute('containerWindowName', item.containerWindowName);
+        checkbox.checked = true;
+        checkbox.className = 'toggleContainerWindowCheckbox';
+        itemElement.appendChild(checkbox);
+        return itemElement;
+    });
+    host.replaceChildren(...itemElements);
+}
+
 function folderChange(folder: string) {
     const elements = document.getElementsByClassName('containerwindow');
     setState({ folder: folder });
@@ -24,11 +59,11 @@ function setupContainerWindowToggles(folder: string) {
     const containerWindowVisibilities: Record<string, boolean> = getState().containerWindowVisibilities ?? {};
     const toggleVisibilityContentInner = document.getElementById('toggleVisibilityContentInner') as HTMLDivElement;
     const containerWindowName = folder.replace('containerwindow_', '');
-    toggleVisibilityContentInner.innerHTML = (window as any).containerWindowToggles[containerWindowName]?.content ?? '';
+    replaceToggleVisibilityContent(toggleVisibilityContentInner, window.containerWindowToggles[containerWindowName]?.items ?? []);
     const checkboxes = document.getElementsByClassName('toggleContainerWindowCheckbox');
     
     const toggleVisibility = document.getElementById('toggleVisibility') as HTMLButtonElement;
-    toggleVisibility.disabled = toggleVisibilityContentInner.innerHTML === '';
+    toggleVisibility.disabled = toggleVisibilityContentInner.childElementCount === 0;
     if (toggleVisibility.disabled) {
         toggleVisibilityContentVisible = false;
         refreshToggleVisibilityContent();

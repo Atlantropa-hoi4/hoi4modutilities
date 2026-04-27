@@ -3,6 +3,8 @@ import { contextContainer } from '../context';
 import { StyleTable } from './styletable';
 import { randomString } from './common';
 
+export { htmlAttributeEscape, htmlTextEscape } from './htmlescape';
+
 export interface DynamicScript {
     content: string;
 }

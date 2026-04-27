@@ -41,6 +41,25 @@ import { FocusTreeContentUpdateDecision, FocusTreeContentUpdateMessage, getFocus
 import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } from "./focustree/messageapply";
 import { createFocusTreeWebviewInitialState } from "./focustree/state";
 
+declare global {
+    interface Window {
+        useConditionInFocus: boolean;
+        focusTrees: FocusTree[];
+        persistedConditionPresetsByTree: FocusConditionPresetsByTree;
+        focusPositionDocumentVersion?: number;
+        focusPositionActiveFile?: string;
+        xGridSize: number;
+        yGridSize?: number;
+        focusToolbarHeight?: number;
+        previewedFileUri?: string;
+        focusTreeTraceEnabled?: boolean;
+        gridBox: GridBoxType;
+        renderedFocus?: Record<string, string>;
+        renderedInlayWindows?: Record<string, string>;
+        styleNonce: string;
+    }
+}
+
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
 
@@ -80,13 +99,13 @@ function search(searchContent: string, navigate: boolean = true) {
     return searchedFocus;
 }
 
-const useConditionInFocus: boolean = (window as any).useConditionInFocus;
-let focusTrees: FocusTree[] = (window as any).focusTrees;
+const useConditionInFocus: boolean = window.useConditionInFocus;
+let focusTrees: FocusTree[] = window.focusTrees;
 type PendingFocusLinkType = 'prerequisite' | 'exclusive';
 const restoredState = getState();
 const initialWebviewState = createFocusTreeWebviewInitialState(
     restoredState,
-    (window as any).persistedConditionPresetsByTree,
+    window.persistedConditionPresetsByTree,
 );
 
 let selectedExprs: ConditionItem[] = initialWebviewState.selectedExprs;
@@ -111,8 +130,8 @@ let currentCompletableFocusIds: ReadonlySet<string> = new Set();
 type FocusPositionDragBinding = { element: HTMLElement; eventName: 'mousedown' | 'pointerdown'; handler: EventListener };
 let focusPositionDragBindings: Record<string, FocusPositionDragBinding> = {};
 let focusTreeSnapshotVersion: number = 0;
-let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
-let focusPositionActiveFile: string = (window as any).focusPositionActiveFile ?? '';
+let focusPositionDocumentVersion: number = window.focusPositionDocumentVersion ?? 0;
+let focusPositionActiveFile: string = window.focusPositionActiveFile ?? '';
 const contentBuildGuard = new LatestOnlyBuildGuard();
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
@@ -125,9 +144,9 @@ let suppressConditionSelectionChange = false;
 let suppressConditionPresetSelectionChange = false;
 let pendingConditionPresetTargetTreeId: string | undefined = undefined;
 let pendingConditionPresetExprKeys: string[] = [];
-let xGridSize: number = (window as any).xGridSize;
-let yGridSize: number = (window as any).yGridSize ?? 130;
-const focusToolbarHeight: number = (window as any).focusToolbarHeight ?? 68;
+let xGridSize: number = window.xGridSize;
+let yGridSize: number = window.yGridSize ?? 130;
+const focusToolbarHeight: number = window.focusToolbarHeight ?? 68;
 const continuousFocusWidth = 770;
 const continuousFocusHeight = 380;
 const continuousFocusLeftAnchorOffset = 59;
@@ -197,7 +216,7 @@ function postFocusTreeDiagnostics(
     const selectedOption = selectorElement?.selectedOptions?.[0];
     const snapshot: FocusTreeDiagnosticSnapshot = {
         stage,
-        previewedFileUri: (window as any).previewedFileUri,
+        previewedFileUri: window.previewedFileUri,
         focusTreeCount: focusTrees.length,
         selectedFocusTreeIndex,
         selectedFocusTreeId,
@@ -216,7 +235,7 @@ function postFocusTreeDiagnostics(
         timestamp: Date.now(),
     };
 
-    if ((window as any).focusTreeTraceEnabled) {
+    if (window.focusTreeTraceEnabled) {
         console.debug('[focustree] diagnostics', snapshot);
     }
 
@@ -474,14 +493,6 @@ function getTreeConditionExprKeys(focusTree: FocusTree): string[] {
                     && !e.nodeContent.startsWith('has_completed_focus = ')))
             .map(conditionItemToExprKey),
     );
-}
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 interface DropdownOptionData {
@@ -2103,8 +2114,8 @@ async function buildContent(): Promise<boolean> {
         return false;
     }
 
-    const gridbox: GridBoxType = (window as any).gridBox;
-    const renderedFocusMap = (window as any).renderedFocus ?? {};
+    const gridbox: GridBoxType = window.gridBox;
+    const renderedFocusMap = window.renderedFocus ?? {};
     const explicitSelectedExprKeys = getSelectedExprKeysForFocusTree(focusTree);
     const renderSelectedExprKeys = explicitSelectedExprKeys.length > 0
         ? explicitSelectedExprKeys
@@ -2185,7 +2196,7 @@ async function buildContent(): Promise<boolean> {
     applyContinuousFocusElementPosition(focusTree);
     currentGridLeftPadding = leftPadding;
     currentGridTopPadding = topPadding;
-    focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement((window as any).styleNonce);
+    focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement(window.styleNonce);
     const minimumCanvasWidth = currentGridLeftPadding + Math.max(stableLayout.maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(stableLayout.maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
     currentCanvasWidth = minimumCanvasWidth;
@@ -2299,37 +2310,46 @@ function renderWarningsPanel(focusTree: FocusTree) {
         return;
     }
 
+    warningsElement.replaceChildren();
+
     if (focusTree.warnings.length === 0) {
-        warningsElement.innerHTML = `<div>${escapeHtml(feLocalize('TODO', 'No warnings.'))}</div>`;
+        const noWarningsElement = document.createElement('div');
+        noWarningsElement.textContent = feLocalize('TODO', 'No warnings.');
+        warningsElement.appendChild(noWarningsElement);
         return;
     }
 
     const classes = getWarningPanelClassNames();
-    warningsElement.innerHTML = focusTree.warnings.map((warning, index) => {
+    focusTree.warnings.forEach((warning, index) => {
         const hasNavigation = !!warning.navigations?.length;
         const severityClass = warning.severity === 'warning' ? classes.warning : classes.info;
         const entryClass = [classes.entry, severityClass, hasNavigation ? '' : classes.entryMuted].filter(Boolean).join(' ');
         const navigationText = warning.navigations?.length
             ? feLocalize('TODO', 'Navigate')
             : feLocalize('TODO', 'No navigation');
-        return `<button
-            type="button"
-            class="${entryClass}"
-            data-warning-index="${index}"
-            ${hasNavigation ? '' : 'disabled'}
-            title="${escapeHtml(formatStructuredWarning(warning))}">
-                <span class="${classes.meta}">${escapeHtml(`[${warning.severity}][${warning.code}][${warning.kind}][${warning.source}]`)}</span>
-                <span class="${classes.text}">${escapeHtml(warning.text)}</span>
-                <span class="${classes.meta}">${escapeHtml(navigationText)}</span>
-            </button>`;
-    }).join('');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = entryClass;
+        button.dataset.warningIndex = index.toString();
+        button.disabled = !hasNavigation;
+        button.title = formatStructuredWarning(warning);
 
-    warningsElement.querySelectorAll<HTMLButtonElement>('[data-warning-index]').forEach(button => {
+        const metaElement = document.createElement('span');
+        metaElement.className = classes.meta;
+        metaElement.textContent = `[${warning.severity}][${warning.code}][${warning.kind}][${warning.source}]`;
+
+        const textElement = document.createElement('span');
+        textElement.className = classes.text;
+        textElement.textContent = warning.text;
+
+        const navigationElement = document.createElement('span');
+        navigationElement.className = classes.meta;
+        navigationElement.textContent = navigationText;
+
+        button.append(metaElement, textElement, navigationElement);
         button.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
-            const index = Number(button.dataset.warningIndex ?? '-1');
-            const warning = focusTree.warnings[index];
             const navigation = warning?.navigations?.[0];
             if (!warning || !navigation) {
                 return;
@@ -2342,6 +2362,7 @@ function renderWarningsPanel(focusTree: FocusTree) {
                 file: navigation.file,
             });
         });
+        warningsElement.appendChild(button);
     });
 }
 
@@ -2368,7 +2389,7 @@ function renderCurrentFocusHtml(
     context?: FocusRenderContext,
 ): string | undefined {
     const focus = focusTree.focuses[focusId];
-    const renderedFocus = context?.renderedFocus ?? (window as any).renderedFocus ?? {};
+    const renderedFocus = context?.renderedFocus ?? window.renderedFocus ?? {};
     if (!focus) {
         return undefined;
     }
@@ -2499,7 +2520,7 @@ function renderInlayWindows(focusTree: FocusTree, exprs: ConditionItem[]): strin
         return '';
     }
 
-    const renderedInlayWindows: Record<string, string> = (window as any).renderedInlayWindows ?? {};
+    const renderedInlayWindows: Record<string, string> = window.renderedInlayWindows ?? {};
     const template = renderedInlayWindows[selectedInlayWindow.id] ?? '';
     return selectedInlayWindow.scriptedImages.reduce((content, slot) => {
         const activeOption = getActiveInlayOption(slot.gfxOptions, exprs);
@@ -2564,7 +2585,7 @@ function applyFocusTreePatches(focusTreePatches: Array<{ treeId: string; tree: F
         .forEach(focusTree => invalidateCachedFocusTreeLayoutPlan(focusTree));
     focusTreePatches.forEach(patch => invalidateCachedFocusTreeLayoutPlan(patch.tree));
     focusTrees = focusTrees.map(focusTree => patchByTreeId.get(focusTree.id) ?? focusTree);
-    (window as any).focusTrees = focusTrees;
+    window.focusTrees = focusTrees;
     clearMissingPendingPlaceholderFocusIds();
 }
 
@@ -2578,7 +2599,7 @@ function applyStringMapPatch(
         return;
     }
 
-    const currentValue: Record<string, string> = { ...((window as any)[targetWindowKey] ?? {}) };
+    const currentValue: Record<string, string> = { ...(window[targetWindowKey] ?? {}) };
     if (changedEntries) {
         Object.assign(currentValue, changedEntries);
     }
@@ -2587,7 +2608,7 @@ function applyStringMapPatch(
             delete currentValue[key];
         });
     }
-    (window as any)[targetWindowKey] = currentValue;
+    window[targetWindowKey] = currentValue;
 }
 
 function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
@@ -2605,7 +2626,7 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
         },
         setFocusPositionActiveFile: nextFocusPositionActiveFile => {
             focusPositionActiveFile = nextFocusPositionActiveFile;
-            (window as any).focusPositionActiveFile = nextFocusPositionActiveFile;
+            window.focusPositionActiveFile = nextFocusPositionActiveFile;
         },
         getCurrentSelectionTreeId,
         setSelectedFocusTreeById,
@@ -2613,12 +2634,12 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
             focusTrees.forEach(focusTree => invalidateCachedFocusTreeLayoutPlan(focusTree));
             nextFocusTrees.forEach(focusTree => invalidateCachedFocusTreeLayoutPlan(focusTree));
             focusTrees = nextFocusTrees;
-            (window as any).focusTrees = nextFocusTrees;
+            window.focusTrees = nextFocusTrees;
             clearMissingPendingPlaceholderFocusIds();
         },
         applyFocusTreePatches,
         setRenderedFocus: renderedFocus => {
-            (window as any).renderedFocus = renderedFocus;
+            window.renderedFocus = renderedFocus;
             clearPendingPlaceholderFocusIdsForRenderedMap(renderedFocus);
         },
         patchRenderedFocus: (changedEntries, removedKeys) => {
@@ -2626,7 +2647,7 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
             clearPendingPlaceholderFocusIdsForRenderedMap(changedEntries);
         },
         setRenderedInlayWindows: renderedInlayWindows => {
-            (window as any).renderedInlayWindows = renderedInlayWindows;
+            window.renderedInlayWindows = renderedInlayWindows;
         },
         patchRenderedInlayWindows: (changedEntries, removedKeys) => {
             applyStringMapPatch('renderedInlayWindows', changedEntries, removedKeys);
@@ -2634,15 +2655,15 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
         refreshFocusTreeSelectorOptions,
         refreshWarningsButtonVisibility,
         setGridBox: gridBox => {
-            (window as any).gridBox = gridBox;
+            window.gridBox = gridBox as GridBoxType;
         },
         setGridSizeX: nextXGridSize => {
             xGridSize = nextXGridSize;
-            (window as any).xGridSize = nextXGridSize;
+            window.xGridSize = nextXGridSize;
         },
         setGridSizeY: nextYGridSize => {
             yGridSize = nextYGridSize;
-            (window as any).yGridSize = nextYGridSize;
+            window.yGridSize = nextYGridSize;
         },
         replaceDynamicStyleCss: replaceFocusTreeDynamicStyles,
     });

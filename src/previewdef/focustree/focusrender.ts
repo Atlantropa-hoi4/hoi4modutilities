@@ -1,19 +1,12 @@
 import { Focus } from './schema';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
+import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 
 export const focusIconSidePadding = 12;
 export const focusIconTopOffset = 10;
 export const focusTextMarginTop = 85;
 export const focusIconBottomGap = 4;
 export const focusDefaultPlaceholderSize = 56;
-
-function attributeEscape(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
-function textEscape(value: string): string {
-    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 function tryGetLocalizedText(key: string): string | null | undefined {
     try {
@@ -69,8 +62,8 @@ export function renderFocusHtmlTemplate(
     const sharedStyles = ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
     const localizedText = resolveFocusLocalizationText(focus);
     const textContent = `
-        <span class="${sharedStyles.codeLineClass}">${textEscape(focus.id)}</span>
-        ${localizedText ? `<span class="${sharedStyles.localizationLineClass}">${textEscape(localizedText)}</span>` : ''}
+        <span class="${sharedStyles.codeLineClass}">${htmlTextEscape(focus.id)}</span>
+        ${localizedText ? `<span class="${sharedStyles.localizationLineClass}">${htmlTextEscape(localizedText)}</span>` : ''}
     `;
 
     return `<div
@@ -80,10 +73,10 @@ export function renderFocusHtmlTemplate(
     "
     start="${focus.token?.start}"
     end="${focus.token?.end}"
-    ${file === focus.file ? '' : `file="${focus.file}"`}
-    data-focus-id="${attributeEscape(focus.id)}"
+    ${file === focus.file ? '' : `file="${htmlAttributeEscape(focus.file)}"`}
+    data-focus-id="${htmlAttributeEscape(focus.id)}"
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}">
+    data-focus-source-file="${htmlAttributeEscape(focus.layout?.sourceFile ?? focus.file)}">
         <div class="focus-checkbox ${sharedStyles.checkboxClass}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>
