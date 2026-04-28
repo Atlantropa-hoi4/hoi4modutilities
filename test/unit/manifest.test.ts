@@ -19,10 +19,15 @@ describe('extension manifest', () => {
             .filter(entry => entry.command === 'server.hoi4modutilities.preview');
 
         assert.strictEqual(editorTitlePreviewEntries.length, 1);
-        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceScheme =~ /^(file|untitled)$/'));
-        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
-        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceFilename !~ /^.*goals.*\\.gfx$/'));
-        assert.ok(editorTitlePreviewEntries[0].when.includes('server.shouldShowHoi4Preview'));
+        assert.strictEqual(editorTitlePreviewEntries[0].when, 'server.shouldShowHoi4PreviewTitle');
+    });
+
+    it('keeps the preview command disabled unless the active resource is previewable', () => {
+        const command = manifest.contributes.commands
+            .find(entry => entry.command === 'server.hoi4modutilities.preview');
+
+        assert.ok(command);
+        assert.strictEqual(command.enablement, 'isFileSystemResource && server.shouldShowHoi4Preview');
     });
 
     it('contributes the focus GFX shine generator command', () => {
@@ -52,6 +57,9 @@ describe('extension manifest', () => {
         assert.ok(previewEntry);
         assert.strictEqual(previewEntry.group, '1_preview@1');
         assert.ok(!previewEntry.when?.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
+        assert.ok(previewEntry.when?.includes('isFileSystemResource'));
+        assert.ok(previewEntry.when?.includes('server.shouldShowHoi4Preview'));
+        assert.ok(!previewEntry.when?.includes('!server.hoi4MULoaded'));
         assert.strictEqual(entryByCommand['server.hoi4modutilities.previewworld'].group, '1_preview@2');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.generateFocusGfxShine'].group, '2_tools@1');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.scanreferences'].group, '2_tools@2');

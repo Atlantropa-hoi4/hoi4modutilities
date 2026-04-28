@@ -29,6 +29,7 @@ export class PreviewContextService {
             debug(`Failed to update preview context for ${textEditor?.document.uri.toString() ?? '<no editor>'}`);
             setVscodeContext(ContextName.ShouldShowHoi4Preview, false);
             setVscodeContext(ContextName.ShouldHideHoi4Preview, false);
+            setVscodeContext(ContextName.ShouldShowHoi4PreviewTitle, false);
             setVscodeContext(ContextName.ShouldShowFocusGfxShine, false);
             setVscodeContext(ContextName.Hoi4PreviewType, '');
         }
@@ -40,6 +41,7 @@ export class PreviewContextService {
 
     private updateHoi4PreviewContextValue(textEditor: vscode.TextEditor | undefined): void {
         let shouldShowPreviewButton = false;
+        let shouldShowPreviewTitleButton = false;
         let shouldShowFocusGfxShine = false;
         let hoi4PreviewType = '';
         const activeDocument = this.resolveActivePreviewContextDocument(textEditor);
@@ -47,6 +49,7 @@ export class PreviewContextService {
             const provider = this.previewProviderResolver.find(activeDocument);
             if (provider) {
                 shouldShowPreviewButton = true;
+                shouldShowPreviewTitleButton = this.canShowPreviewTitleButton(activeDocument);
                 hoi4PreviewType = provider.type;
             }
 
@@ -55,11 +58,16 @@ export class PreviewContextService {
 
         setVscodeContext(ContextName.ShouldShowHoi4Preview, shouldShowPreviewButton);
         setVscodeContext(ContextName.ShouldHideHoi4Preview, !shouldShowPreviewButton);
+        setVscodeContext(ContextName.ShouldShowHoi4PreviewTitle, shouldShowPreviewTitleButton);
         setVscodeContext(ContextName.ShouldShowFocusGfxShine, shouldShowFocusGfxShine);
         setVscodeContext(ContextName.Hoi4PreviewType, hoi4PreviewType);
     }
 
     private resolveActivePreviewContextDocument(textEditor: vscode.TextEditor | undefined): vscode.TextDocument | undefined {
+        if (!textEditor) {
+            return undefined;
+        }
+
         const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         if (!activeTab) {
             return undefined;
@@ -70,7 +78,7 @@ export class PreviewContextService {
             return undefined;
         }
 
-        if (textEditor?.document.uri.toString() === activeTabUri.toString()) {
+        if (textEditor.document.uri.toString() === activeTabUri.toString()) {
             return textEditor.document;
         }
 
@@ -84,6 +92,15 @@ export class PreviewContextService {
 
         const lowerBasename = basename(document.uri).toLowerCase();
         return lowerBasename.endsWith('.gfx') && lowerBasename.includes('goals');
+    }
+
+    private canShowPreviewTitleButton(document: vscode.TextDocument): boolean {
+        if (document.uri.scheme !== 'file') {
+            return false;
+        }
+
+        const lowerBasename = basename(document.uri).toLowerCase();
+        return !(lowerBasename.endsWith('.gfx') && lowerBasename.includes('goals'));
     }
 
     private canUsePreviewContextUri(uri: vscode.Uri): boolean {

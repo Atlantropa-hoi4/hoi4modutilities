@@ -81,3 +81,13 @@ Preview command context fix 2026-04-28:
 - [x] Reverify with targeted preview-manager and manifest unit tests.
 
 Review note: fixed stale Preview HOI4 file visibility by clearing preview context when there is no resolved active tab, then added a file/untitled resource guard to the editor-title menu contribution. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted preview-manager plus manifest mocha tests, and `npm run lint`.
+
+Follow-up note: Extension details tabs can still carry resource-like title menu context, so the editor-title preview action now requires VS Code's `isFileSystemResource` context rather than only checking `resourceScheme`.
+
+Strict visibility note: removed the command-palette unloaded fallback for `Preview HOI4 file`; it now requires both `isFileSystemResource` and the resolved `server.shouldShowHoi4Preview` provider context. Reverified the packed VSIX manifest contains the strict editor-title and command-palette conditions.
+
+Stale context note: Extensions details tabs can leave stale tab resource data behind while `activeTextEditor` is undefined, so preview context resolution now clears immediately when there is no active text editor.
+
+Command guard note: added command-level `enablement` for `Preview HOI4 file` and made unsupported command execution silently clear preview context instead of showing "Can't preview this file".
+
+Visibility note: editor-title visibility now uses only the extension-owned `server.shouldShowHoi4PreviewTitle` context, so stale VS Code resource contexts can disable neither hide nor show the button by themselves.

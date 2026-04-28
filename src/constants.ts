@@ -11,6 +11,7 @@ export namespace ViewType {
 export namespace ContextName {
     export const ShouldHideHoi4Preview = 'server.shouldHideHoi4Preview';
     export const ShouldShowHoi4Preview = 'server.shouldShowHoi4Preview';
+    export const ShouldShowHoi4PreviewTitle = 'server.shouldShowHoi4PreviewTitle';
     export const ShouldShowFocusGfxShine = 'server.shouldShowFocusGfxShine';
     export const Hoi4PreviewType = 'server.hoi4PreviewType';
     export const Hoi4MUInDev = 'server.hoi4MUInDev';

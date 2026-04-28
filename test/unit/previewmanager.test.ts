@@ -230,6 +230,24 @@ describe('preview manager', () => {
         assert.deepStrictEqual(scheduled, [{ key: document.uri.toString(), delayMs: 0 }]);
     });
 
+    it('silently ignores an unsupported preview command and clears stale preview context', async () => {
+        const document = createDocument('file:///notes/readme.md');
+        const manager = createManager([
+            createPanelProvider('focus', () => undefined),
+        ]);
+
+        await manager['showPreviewImpl'](document.uri as any);
+
+        assert.deepStrictEqual(infoMessages, []);
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', false],
+            ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowHoi4PreviewTitle', false],
+            ['server.shouldShowFocusGfxShine', false],
+            ['server.hoi4PreviewType', ''],
+        ]);
+    });
+
     it('updates the preview context using the best matching provider priority', () => {
         const document = createDocument('file:///common/context.txt', 3);
         const manager = createManager([
@@ -245,6 +263,7 @@ describe('preview manager', () => {
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', true],
             ['server.shouldHideHoi4Preview', false],
+            ['server.shouldShowHoi4PreviewTitle', true],
             ['server.shouldShowFocusGfxShine', false],
             ['server.hoi4PreviewType', 'focus'],
         ]);
@@ -264,6 +283,7 @@ describe('preview manager', () => {
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', true],
             ['server.shouldHideHoi4Preview', false],
+            ['server.shouldShowHoi4PreviewTitle', false],
             ['server.shouldShowFocusGfxShine', true],
             ['server.hoi4PreviewType', 'gfx'],
         ]);
@@ -283,6 +303,7 @@ describe('preview manager', () => {
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', false],
             ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowHoi4PreviewTitle', false],
             ['server.shouldShowFocusGfxShine', false],
             ['server.hoi4PreviewType', ''],
         ]);
@@ -300,6 +321,27 @@ describe('preview manager', () => {
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', false],
             ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowHoi4PreviewTitle', false],
+            ['server.shouldShowFocusGfxShine', false],
+            ['server.hoi4PreviewType', ''],
+        ]);
+    });
+
+    it('clears the preview context when the active editor is not a text editor even if the tab uri is stale', () => {
+        const stalePreviewableDocument = createDocument('file:///common/context.txt', 3);
+        const manager = createManager([
+            createPanelProvider('focus', () => 1),
+        ]);
+        activeTabState.activeTab = {
+            input: createTabInputText(stalePreviewableDocument.uri),
+        };
+
+        manager['safeUpdateHoi4PreviewContextValue'](undefined);
+
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', false],
+            ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowHoi4PreviewTitle', false],
             ['server.shouldShowFocusGfxShine', false],
             ['server.hoi4PreviewType', ''],
         ]);
@@ -321,6 +363,7 @@ describe('preview manager', () => {
         assert.deepStrictEqual(contextUpdates, [
             ['server.shouldShowHoi4Preview', false],
             ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowHoi4PreviewTitle', false],
             ['server.shouldShowFocusGfxShine', false],
             ['server.hoi4PreviewType', ''],
         ]);

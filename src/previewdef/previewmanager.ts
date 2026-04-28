@@ -78,6 +78,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private showPreview(uri?: vscode.Uri): Promise<void> {
+        this.previewContextService.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor);
         return this.showPreviewImpl(uri);
     }
 
@@ -139,8 +140,6 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
         const previewProvider = this.previewProviderResolver.find(document);
         if (!previewProvider) {
-            vscode.window.showInformationMessage(
-                localize('preview.cantpreviewfile', "Can't preview this file.\nValid types: {0}.", Object.keys(this.previewProvidersMap).join(', ')));
             panel?.dispose();
             debug(`dispose panel ${uri} because no preview provider`);
             this.previewContextService.clearPreviewContext();
