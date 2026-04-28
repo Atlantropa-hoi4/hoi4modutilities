@@ -166,7 +166,7 @@
       "editor/title": [
         {
           "command": "server.hoi4modutilities.preview",
-          "when": "resourceExtname =~ /^\\.(txt|gfx|gui|map)$/ && resourceFilename !~ /^.*goals.*\\.gfx$/ && server.shouldShowHoi4Preview",
+          "when": "resourceScheme =~ /^(file|untitled)$/ && resourceExtname =~ /^\\.(txt|gfx|gui|map)$/ && resourceFilename !~ /^.*goals.*\\.gfx$/ && server.shouldShowHoi4Preview",
           "group": "navigation"
         },
         {

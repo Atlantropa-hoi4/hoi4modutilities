@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import Module = require('module');
 
-type FakeUri = { toString(): string };
+type FakeUri = { scheme?: string; path?: string; toString(): string };
 type FakeDocument = { uri: FakeUri; version: number };
 type FakePanel = {
     webview: { html: string };
@@ -288,6 +288,23 @@ describe('preview manager', () => {
         ]);
     });
 
+    it('clears the preview context when no active tab is resolved instead of reusing a stale editor', () => {
+        const stalePreviewableDocument = createDocument('file:///common/context.txt', 3);
+        const manager = createManager([
+            createPanelProvider('focus', () => 1),
+        ]);
+        activeTabState.activeTab = undefined;
+
+        manager['safeUpdateHoi4PreviewContextValue']({ document: stalePreviewableDocument as any } as any);
+
+        assert.deepStrictEqual(contextUpdates, [
+            ['server.shouldShowHoi4Preview', false],
+            ['server.shouldHideHoi4Preview', true],
+            ['server.shouldShowFocusGfxShine', false],
+            ['server.hoi4PreviewType', ''],
+        ]);
+    });
+
     it('does not fall back to a stale previewable editor when the active tab uri does not match it', () => {
         const stalePreviewableDocument = createDocument('file:///common/context.txt', 3);
         const manager = createManager([
@@ -354,11 +371,29 @@ function immediateScheduler() {
 
 function createDocument(uriValue: string, version = 1): FakeDocument {
     const document = {
-        uri: { toString: () => uriValue },
+        uri: createUri(uriValue),
         version,
     };
     documents.set(uriValue, document);
     return document;
+}
+
+function createUri(uriValue: string): FakeUri {
+    const schemeEnd = uriValue.indexOf(':');
+    const scheme = schemeEnd >= 0 ? uriValue.slice(0, schemeEnd) : undefined;
+    const parsed = (() => {
+        try {
+            return new URL(uriValue);
+        } catch {
+            return undefined;
+        }
+    })();
+
+    return {
+        scheme,
+        path: parsed?.pathname ?? uriValue,
+        toString: () => uriValue,
+    };
 }
 
 function createTabInputText(uri: FakeUri): unknown {

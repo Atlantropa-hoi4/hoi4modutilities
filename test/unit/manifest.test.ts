@@ -19,6 +19,7 @@ describe('extension manifest', () => {
             .filter(entry => entry.command === 'server.hoi4modutilities.preview');
 
         assert.strictEqual(editorTitlePreviewEntries.length, 1);
+        assert.ok(editorTitlePreviewEntries[0].when.includes('resourceScheme =~ /^(file|untitled)$/'));
         assert.ok(editorTitlePreviewEntries[0].when.includes('resourceExtname =~ /^\\.(txt|gfx|gui|map)$/'));
         assert.ok(editorTitlePreviewEntries[0].when.includes('resourceFilename !~ /^.*goals.*\\.gfx$/'));
         assert.ok(editorTitlePreviewEntries[0].when.includes('server.shouldShowHoi4Preview'));

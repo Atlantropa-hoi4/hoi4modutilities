@@ -74,3 +74,10 @@ Dependency and webview hardening 2026-04-27:
 - [x] Reverify with compile, lint, unit/integration tests, audit, and VSIX packaging.
 
 Review note: `npm audit --omit=dev` is clean after `lodash` 4.18.1. Full `npm audit` still reports dev-only advisories in the VSCE/Mocha toolchain with odd downgrade suggestions, so those were not forced. Reverified with `npm run test`, `npm run test-ui`, and `npm run package`.
+
+Preview command context fix 2026-04-28:
+- [x] Stop reusing a stale previewable text editor when VS Code cannot resolve an active tab.
+- [x] Guard the editor-title preview action to file/untitled resources before applying previewability context.
+- [x] Reverify with targeted preview-manager and manifest unit tests.
+
+Review note: fixed stale Preview HOI4 file visibility by clearing preview context when there is no resolved active tab, then added a file/untitled resource guard to the editor-title menu contribution. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted preview-manager plus manifest mocha tests, and `npm run lint`.

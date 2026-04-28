@@ -62,19 +62,19 @@ export class PreviewContextService {
     private resolveActivePreviewContextDocument(textEditor: vscode.TextEditor | undefined): vscode.TextDocument | undefined {
         const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
         if (!activeTab) {
-            return textEditor?.document;
+            return undefined;
         }
 
         const activeTabUri = this.getActiveTabUri(activeTab.input);
-        if (activeTabUri) {
-            if (textEditor?.document.uri.toString() === activeTabUri.toString()) {
-                return textEditor.document;
-            }
-
-            return getDocumentByUri(activeTabUri);
+        if (!activeTabUri || !this.canUsePreviewContextUri(activeTabUri)) {
+            return undefined;
         }
 
-        return undefined;
+        if (textEditor?.document.uri.toString() === activeTabUri.toString()) {
+            return textEditor.document;
+        }
+
+        return getDocumentByUri(activeTabUri);
     }
 
     private canShowFocusGfxShine(document: vscode.TextDocument): boolean {
@@ -84,6 +84,10 @@ export class PreviewContextService {
 
         const lowerBasename = basename(document.uri).toLowerCase();
         return lowerBasename.endsWith('.gfx') && lowerBasename.includes('goals');
+    }
+
+    private canUsePreviewContextUri(uri: vscode.Uri): boolean {
+        return uri.scheme === 'file' || uri.scheme === 'untitled';
     }
 
     private getActiveTabUri(input: unknown): vscode.Uri | undefined {
