@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { resolveFocusIconGfxFiles } from '../../src/previewdef/focustree/focusicongfx';
+import { resolveFocusIconGfxAssets, resolveFocusIconGfxFiles } from '../../src/previewdef/focustree/focusicongfx';
 
 describe('focus icon gfx resolver', () => {
     it('keeps indexed files and only scans unresolved icon names', async () => {
@@ -75,5 +75,42 @@ describe('focus icon gfx resolver', () => {
             'interface/broken.gfx',
             'interface/valid.gfx',
         ]);
+    });
+
+    it('returns texture files for matched indexed and fallback sprites', async () => {
+        const result = await resolveFocusIconGfxAssets(
+            ['GFX_indexed', 'GFX_fallback', 'GFX_unresolved'],
+            {
+                resolveIndexedFile: async (gfxName) => gfxName === 'GFX_indexed' ? 'interface/indexed.gfx' : undefined,
+                listInterfaceGfxFiles: async () => ['interface/fallback.gfx'],
+                readSpriteNames: async () => ['GFX_fallback'],
+                readSpriteTextureFiles: async (gfxFile) => {
+                    if (gfxFile === 'interface/indexed.gfx') {
+                        return { GFX_indexed: 'gfx/interface/goals/indexed.dds' };
+                    }
+                    if (gfxFile === 'interface/fallback.gfx') {
+                        return {
+                            GFX_fallback: 'gfx\\interface\\goals\\fallback.tga',
+                            GFX_other: 'gfx/interface/goals/other.dds',
+                        };
+                    }
+                    return {};
+                },
+            },
+        );
+
+        assert.deepStrictEqual(result.gfxFiles.sort(), [
+            'interface/fallback.gfx',
+            'interface/indexed.gfx',
+        ]);
+        assert.deepStrictEqual(result.gfxFileByIconName, {
+            GFX_fallback: 'interface/fallback.gfx',
+            GFX_indexed: 'interface/indexed.gfx',
+        });
+        assert.deepStrictEqual(result.textureFiles.sort(), [
+            'gfx/interface/goals/fallback.tga',
+            'gfx/interface/goals/indexed.dds',
+        ]);
+        assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_unresolved']);
     });
 });

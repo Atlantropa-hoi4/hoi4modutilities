@@ -36,6 +36,7 @@ export interface FocusTreeRenderPayload {
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     gfxFiles: string[];
+    focusIconGfxFileByName: Record<string, string>;
     gridBox: HOIPartial<GridBoxType>;
     dynamicStyleCss: string;
     styleNonce: string;
@@ -56,6 +57,7 @@ export interface FocusTreeRenderBaseState {
     allInlays: FocusTree["inlayWindows"][number][];
     focusById: Record<string, Focus>;
     gfxFiles: string[];
+    focusIconGfxFileByName: Record<string, string>;
     gridBox: HOIPartial<GridBoxType>;
     xGridSize: number;
     yGridSize: number;
@@ -185,6 +187,7 @@ export async function buildFocusTreeRenderBaseState(
         allInlays,
         focusById,
         gfxFiles: loadResult.result.gfxFiles,
+        focusIconGfxFileByName: loadResult.result.focusIconGfxFileByName,
         gridBox,
         xGridSize,
         yGridSize,
@@ -209,7 +212,14 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     if (baseState.deferredAssetLoad) {
         prepareDeferredFocusIconStyles(baseState.allFocuses, styleTable, baseState.xGridSize, baseState.yGridSize);
     } else {
-        await prepareFocusIconStyles(baseState.allFocuses, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize);
+        await prepareFocusIconStyles(
+            baseState.allFocuses,
+            styleTable,
+            baseState.gfxFiles,
+            baseState.focusIconGfxFileByName,
+            baseState.xGridSize,
+            baseState.yGridSize,
+        );
     }
     const renderedFocus: Record<string, string> = {};
     for (const focus of baseState.allFocuses) {
@@ -235,24 +245,25 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
 
     return {
         payload: {
-        focusTrees: baseState.focusTrees,
-        selectedTreeId: baseState.focusTrees[0]?.id,
-        renderedFocus,
-        renderedInlayWindows,
-        gfxFiles: baseState.gfxFiles,
-        gridBox: baseState.gridBox,
-        dynamicStyleCss: styleTable.toStyleContent(),
-        styleNonce: Math.random().toString(36).slice(2),
-        xGridSize: baseState.xGridSize,
-        yGridSize: baseState.yGridSize,
-        focusToolbarHeight,
-        focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
-        focusPositionActiveFile: baseState.focusPositionActiveFile,
-        conditionPresetsByTree: baseState.conditionPresetsByTree,
-        hasFocusSelector: baseState.hasFocusSelector,
-        hasWarningsButton: baseState.hasWarningsButton,
-        deferredAssetLoad: baseState.deferredAssetLoad,
-    },
+            focusTrees: baseState.focusTrees,
+            selectedTreeId: baseState.focusTrees[0]?.id,
+            renderedFocus,
+            renderedInlayWindows,
+            gfxFiles: baseState.gfxFiles,
+            focusIconGfxFileByName: baseState.focusIconGfxFileByName,
+            gridBox: baseState.gridBox,
+            dynamicStyleCss: styleTable.toStyleContent(),
+            styleNonce: Math.random().toString(36).slice(2),
+            xGridSize: baseState.xGridSize,
+            yGridSize: baseState.yGridSize,
+            focusToolbarHeight,
+            focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
+            focusPositionActiveFile: baseState.focusPositionActiveFile,
+            conditionPresetsByTree: baseState.conditionPresetsByTree,
+            hasFocusSelector: baseState.hasFocusSelector,
+            hasWarningsButton: baseState.hasWarningsButton,
+            deferredAssetLoad: baseState.deferredAssetLoad,
+        },
         metrics: {
             focusRenderDurationMs,
             inlayRenderDurationMs,
@@ -348,6 +359,7 @@ function createEmptyFocusTreeRenderPayload(
         renderedFocus: {},
         renderedInlayWindows: {},
         gfxFiles: [],
+        focusIconGfxFileByName: {},
         gridBox: {
             position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
             format: toStringAsSymbolIgnoreCase('up'),
@@ -750,6 +762,7 @@ async function prepareFocusIconStyles(
     focuses: readonly Focus[],
     styleTable: StyleTable,
     gfxFiles: string[],
+    focusIconGfxFileByName: Record<string, string>,
     xGridSize: number,
     yGridSize: number,
 ): Promise<void> {
@@ -767,7 +780,7 @@ async function prepareFocusIconStyles(
     };
 
     await Promise.all(uniqueIconNames.map(async iconName => {
-        const iconResolution = await resolveFocusIcon(iconName, gfxFiles);
+        const iconResolution = await resolveFocusIcon(iconName, gfxFiles, focusIconGfxFileByName[iconName]);
         if (iconResolution.kind === 'resolved-files') {
             iconDiagnostics.resolvedFromResolvedFilesCount += 1;
         } else if (iconResolution.kind === 'gfx-scan') {
@@ -835,8 +848,11 @@ type FocusIconResolution =
     | { kind: 'gfx-scan'; image: Image }
     | { kind: 'default'; image: Image | undefined };
 
-async function resolveFocusIcon(name: string, gfxFiles: string[]): Promise<FocusIconResolution> {
-    const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(name, gfxFiles);
+async function resolveFocusIcon(name: string, gfxFiles: string[], mappedGfxFile?: string): Promise<FocusIconResolution> {
+    const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(
+        name,
+        mappedGfxFile ? [mappedGfxFile] : gfxFiles,
+    );
     if (resolvedFileSprite !== undefined) {
         return {
             kind: 'resolved-files',

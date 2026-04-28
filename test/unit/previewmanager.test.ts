@@ -20,6 +20,9 @@ const sentEvents: string[] = [];
 const contextUpdates: Array<[string, unknown]> = [];
 const errorMessages: string[] = [];
 const infoMessages: string[] = [];
+const watchedAssetChanges: Array<(uri: FakeUri) => void> = [];
+const watchedAssetCreates: Array<(uri: FakeUri) => void> = [];
+const watchedAssetDeletes: Array<(uri: FakeUri) => void> = [];
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
     activeTab: undefined,
 };
@@ -65,6 +68,21 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidCloseTextDocument: () => new Disposable(),
                 onDidChangeTextDocument: () => new Disposable(),
                 onDidOpenTextDocument: () => new Disposable(),
+                createFileSystemWatcher: () => ({
+                    onDidChange: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                        watchedAssetChanges.push(thisArg ? listener.bind(thisArg) : listener);
+                        return new Disposable();
+                    },
+                    onDidCreate: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                        watchedAssetCreates.push(thisArg ? listener.bind(thisArg) : listener);
+                        return new Disposable();
+                    },
+                    onDidDelete: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                        watchedAssetDeletes.push(thisArg ? listener.bind(thisArg) : listener);
+                        return new Disposable();
+                    },
+                    dispose: () => undefined,
+                }),
                 openTextDocument: async (uri: FakeUri) => documents.get(uri.toString()),
                 getWorkspaceFolder: (uri: FakeUri) => uri.toString().startsWith('file:///workspace/')
                     ? { uri: { toString: () => 'file:///workspace' } }
@@ -77,6 +95,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidChangeVisibleTextEditors: () => new Disposable(),
                 tabGroups: {
                     activeTabGroup: activeTabState,
+                    onDidChangeTabGroups: () => new Disposable(),
                     onDidChangeTabs: () => new Disposable(),
                 },
                 registerWebviewPanelSerializer: () => new Disposable(),
@@ -164,6 +183,9 @@ describe('preview manager', () => {
         contextUpdates.length = 0;
         errorMessages.length = 0;
         infoMessages.length = 0;
+        watchedAssetChanges.length = 0;
+        watchedAssetCreates.length = 0;
+        watchedAssetDeletes.length = 0;
         activeTabState.activeTab = undefined;
     });
 
@@ -206,6 +228,32 @@ describe('preview manager', () => {
         assert.strictEqual(sourcePreview.changeCount, 1);
         assert.strictEqual(previews[0].changeCount, 1);
         assert.strictEqual(previews[0].lastChangedDocument, dependentDocument);
+    });
+
+    it('refreshes dependent previews when a watched image dependency changes', async () => {
+        const dependentDocument = createDocument('file:///workspace/common/preview.txt');
+        const previews: FakePreview[] = [];
+        const manager = createManager([
+            createPanelProvider('focus', () => 0, (uri, panel) => {
+                const preview = new FakePreview(uri, panel);
+                previews.push(preview);
+                return preview as any;
+            }),
+        ]);
+        const disposable = manager.register();
+
+        try {
+            await manager['showPreviewImpl'](dependentDocument.uri as any);
+            previews[0].emitDependencies(['gfx/interface/goals/icon.dds']);
+
+            watchedAssetChanges.forEach(listener => listener(createUri('file:///workspace/gfx/interface/goals/icon.dds')));
+            await Promise.resolve();
+
+            assert.strictEqual(previews[0].changeCount, 1);
+            assert.strictEqual(previews[0].lastChangedDocument, dependentDocument);
+        } finally {
+            disposable.dispose();
+        }
     });
 
     it('uses the preview-provided document debounce when scheduling refreshes', async () => {

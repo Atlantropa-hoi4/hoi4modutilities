@@ -66,6 +66,15 @@ export async function getSpriteByGfxNameFromResolvedFiles(name: string, gfxFileP
     return undefined;
 }
 
+export async function getSpriteTextureFilesByGfxFile(gfxFilePath: string): Promise<Record<string, string | undefined>> {
+    const gfxMap = await gfxMapCache.get(gfxFilePath);
+    const result: Record<string, string> = {};
+    for (const [name, sprite] of Object.entries(gfxMap)) {
+        result[name] = sprite.texturefile;
+    }
+    return result;
+}
+
 async function spriteCacheExpiryToken(key: string, spritePromise: Promise<Sprite | undefined>): Promise<string> {
     const [gfxFilePath] = key.split('?');
     const gfxToken = await hoiFileExpiryToken(gfxFilePath);

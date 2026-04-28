@@ -16,6 +16,7 @@ import type { PreviewBase } from './previewbase';
 import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor';
 
 type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
+const previewAssetWatcherGlob = '**/*.{dds,tga,png}';
 
 interface PreviewManagerOptions {
     previewProviders: PreviewDescriptor[];
@@ -51,6 +52,11 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
+        const assetWatcher = vscode.workspace.createFileSystemWatcher(previewAssetWatcherGlob);
+        disposables.push(assetWatcher);
+        disposables.push(assetWatcher.onDidChange(this.onDidChangeWatchedAsset, this));
+        disposables.push(assetWatcher.onDidCreate(this.onDidChangeWatchedAsset, this));
+        disposables.push(assetWatcher.onDidDelete(this.onDidChangeWatchedAsset, this));
         disposables.push(this.previewContextService.register());
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
         disposables.push(new vscode.Disposable(() => this.documentUpdateScheduler.dispose()));
@@ -102,6 +108,10 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         }
 
         this.updatePreviewItemsInSubscription(document.uri);
+    }
+
+    private onDidChangeWatchedAsset(uri: vscode.Uri): void {
+        this.updatePreviewItemsInSubscription(uri);
     }
 
     private safeUpdateHoi4PreviewContextValue(textEditor: vscode.TextEditor | undefined): void {

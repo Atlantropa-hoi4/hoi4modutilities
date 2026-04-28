@@ -3,6 +3,7 @@ import Module = require('module');
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
+const resolvedFileCalls: Array<{ name: string; gfxFiles: string[] }> = [];
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -39,9 +40,12 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     if ((request.endsWith('/util/image/imagecache') || request === '../../util/image/imagecache')
         && parent?.filename?.includes('contentbuilder')) {
         return {
-            getSpriteByGfxNameFromResolvedFiles: async (name: string) => name === 'GFX_FOCUS_A'
-                ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
-                : undefined,
+            getSpriteByGfxNameFromResolvedFiles: async (name: string, gfxFiles: string[]) => {
+                resolvedFileCalls.push({ name, gfxFiles });
+                return name === 'GFX_FOCUS_A'
+                    ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
+                    : undefined;
+            },
             getSpriteByGfxName: async () => undefined,
             getImageByPath: async () => ({ width: 64, height: 64, uri: 'default-icon.png' }),
         };
@@ -55,6 +59,10 @@ const {
 } = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
 
 describe('focustree contentbuilder', () => {
+    beforeEach(() => {
+        resolvedFileCalls.length = 0;
+    });
+
     after(() => {
         nodeModule._load = originalLoad;
     });
@@ -104,6 +112,7 @@ describe('focustree contentbuilder', () => {
             allInlays: [],
             focusById: { FOCUS_A: focus },
             gfxFiles: ['interface/custom_icons.gfx'],
+            focusIconGfxFileByName: {},
             gridBox: { position: { x: 0, y: 0 } },
             xGridSize: 96,
             yGridSize: 130,
@@ -119,6 +128,7 @@ describe('focustree contentbuilder', () => {
         assert.strictEqual(result.payload.deferredAssetLoad, true);
         assert.doesNotMatch(result.payload.dynamicStyleCss, /test-icon\.png/);
         assert.match(result.payload.dynamicStyleCss, /background:\s*grey/);
+        assert.deepStrictEqual(resolvedFileCalls, []);
     });
 
     it('hides the inlay selector by default in the shell markup', async () => {
@@ -140,6 +150,7 @@ describe('focustree contentbuilder', () => {
             allInlays: [],
             focusById: {},
             gfxFiles: [],
+            focusIconGfxFileByName: {},
             gridBox: { position: { x: 0, y: 0 } },
             xGridSize: 96,
             yGridSize: 130,
@@ -155,5 +166,69 @@ describe('focustree contentbuilder', () => {
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-common\s*\{/);
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-icon-slot\s*\{/);
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-span\s*\{/);
+    });
+
+    it('reuses resolved focus icon gfx files while preparing icon styles', async () => {
+        const focus = {
+            id: 'FOCUS_A',
+            layoutEditKey: 'focus_a',
+            x: 0,
+            y: 0,
+            icon: [{ icon: 'GFX_FOCUS_A', condition: { _type: 'and', items: [] } }],
+            availableIfCapitulated: false,
+            hasAiWillDo: false,
+            hasCompletionReward: false,
+            prerequisite: [],
+            prerequisiteGroupCount: 0,
+            prerequisiteFocusCount: 0,
+            exclusive: [],
+            exclusiveCount: 0,
+            hasAllowBranch: false,
+            inAllowBranch: [],
+            allowBranch: undefined,
+            relativePositionId: undefined,
+            offset: [],
+            token: undefined,
+            file: 'common/national_focus/test.txt',
+            isInCurrentFile: true,
+            lintWarningCount: 0,
+            lintInfoCount: 0,
+        };
+        const focusTree = {
+            id: 'tree_a',
+            kind: 'focus',
+            focuses: { FOCUS_A: focus },
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            inlayConditionExprs: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState({
+            focusTrees: [focusTree],
+            allFocuses: [focus],
+            allInlays: [],
+            focusById: { FOCUS_A: focus },
+            gfxFiles: ['interface/mapped_icons.gfx', 'interface/other_icons.gfx'],
+            focusIconGfxFileByName: { GFX_FOCUS_A: 'interface/mapped_icons.gfx' },
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: false,
+        } as any);
+
+        assert.match(result.payload.dynamicStyleCss, /test-icon\.png/);
+        assert.deepStrictEqual(resolvedFileCalls, [
+            { name: 'GFX_FOCUS_A', gfxFiles: ['interface/mapped_icons.gfx'] },
+        ]);
     });
 });

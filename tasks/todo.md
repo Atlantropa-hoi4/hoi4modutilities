@@ -91,3 +91,23 @@ Stale context note: Extensions details tabs can leave stale tab resource data be
 Command guard note: added command-level `enablement` for `Preview HOI4 file` and made unsupported command execution silently clear preview context instead of showing "Can't preview this file".
 
 Visibility note: editor-title visibility now uses only the extension-owned `server.shouldShowHoi4PreviewTitle` context, so stale VS Code resource contexts can disable neither hide nor show the button by themselves.
+
+Focus tree icon dependency fix 2026-04-28:
+- [x] Include resolved focus icon `texturefile` paths in preview dependencies.
+- [x] Refresh dependent previews when watched image asset files change.
+- [x] Reverify with focused resolver, preview-manager, and Focus Tree tests.
+
+Review note: Focus Tree icon GFX resolution now returns both container `.gfx` files and matched sprite `texturefile` paths, with texture lookup reusing the per-GFX sprite cache. PreviewManager also watches workspace `.dds`, `.tga`, and `.png` asset changes and refreshes dependent previews through the existing dependency tracker. Reverified with compile, lint, targeted Focus Tree/preview-manager mocha coverage, and full `npm run test:unit`.
+
+Focus tree missing icon warning fix 2026-04-28:
+- [x] Return unresolved icon names from Focus Tree icon GFX resolution.
+- [x] Add preview warnings for focuses that reference unresolved icon GFX names.
+- [x] Reverify with focused icon warning/resolver tests and Focus Tree coverage.
+
+Review note: unresolved focus icon GFX names now flow out of icon resolution and are converted into `focus-icon-gfx-missing` parse warnings with focus navigation metadata during full asset loads. Deferred first render still stays lightweight; the full hydration pass supplies the warning state. Reverified with targeted Focus Tree icon tests, compile, lint, and full `npm run test:unit`.
+
+Focus tree icon resolution reuse fix 2026-04-28:
+- [x] Preserve the resolved icon name to `.gfx` file mapping from the Focus Tree icon resolver.
+- [x] Reuse that mapping during icon CSS generation instead of probing every resolved `.gfx` file again.
+- [x] Include the mapping in render style dependency metadata so changed icon resolution triggers a full style refresh.
+- [x] Reverify with focused contentbuilder/render-patch tests plus standard compile/lint/unit checks.

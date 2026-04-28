@@ -18,11 +18,14 @@ import {
 import { sortFocusWarnings } from "./focuslint";
 import { FocusSpacingLoader } from "./focusspacing";
 import { NumberPosition } from "../../util/common";
-import { resolveFocusIconGfxFiles } from "./focusicongfx";
+import { resolveFocusIconGfxAssets } from "./focusicongfx";
+import { getSpriteTextureFilesByGfxFile } from "../../util/image/imagecache";
+import { addMissingFocusIconWarnings } from "./focusiconwarnings";
 
 export interface FocusTreeLoaderResult {
     focusTrees: FocusTree[];
     gfxFiles: string[];
+    focusIconGfxFileByName: Record<string, string>;
     focusSpacing?: NumberPosition;
     deferredAssetLoad?: boolean;
 }
@@ -147,24 +150,30 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ...loadedInlayFiles,
             ...allInlays.map(inlay => inlay.file),
         ]));
-        const iconGfxFiles = await resolveFocusIconGfxFiles(focusIconNames, {
+        const iconGfxAssets = await resolveFocusIconGfxAssets(focusIconNames, {
             resolveIndexedFile: async gfxName => tryGetGfxContainerFile(gfxName),
             listInterfaceGfxFiles: getCachedInterfaceGfxFiles,
             readSpriteNames: getCachedInterfaceGfxSpriteNames,
+            readSpriteTextureFiles: getSpriteTextureFilesByGfxFile,
         });
 
         const gfxDependencies = [
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
-            ...iconGfxFiles,
+            ...iconGfxAssets.gfxFiles,
             ...guiResolution.guiFiles,
             ...inlayGfxResolution.resolvedFiles,
         ];
+        const textureDependencies = iconGfxAssets.textureFiles;
+        if (!deferAssetLoad && iconGfxAssets.unresolvedIconNames.length > 0) {
+            addMissingFocusIconWarnings(focusTrees, iconGfxAssets.unresolvedIconNames);
+        }
 
         return {
             result: {
                 focusTrees,
                 gfxFiles: uniq([...gfxDependencies, focusesGFX]),
+                focusIconGfxFileByName: iconGfxAssets.gfxFileByIconName,
                 focusSpacing,
                 deferredAssetLoad: deferAssetLoad,
             },
@@ -173,6 +182,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusesGFX,
                 focusTreeGuiFile,
                 ...gfxDependencies,
+                ...textureDependencies,
                 ...uniqueInlayFiles,
                 ...focusTreeDependencies,
                 ...mergeInLoadResult(focusSpacingDepFiles, 'dependencies'),
