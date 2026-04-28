@@ -24,24 +24,32 @@ function tryGetLocalizedText(key: string): string | null | undefined {
     }
 }
 
+async function tryGetLocalizedTextAsync(key: string): Promise<string | null | undefined> {
+    try {
+        const { isLocalisationIndexEnabled } = require('../../util/featureflags') as { isLocalisationIndexEnabled: () => boolean };
+        if (!isLocalisationIndexEnabled()) {
+            return null;
+        }
+
+        const { getLocalisedTextQuick } = require('../../util/localisationIndex') as {
+            getLocalisedTextQuick: (text: string) => Promise<string | undefined>;
+        };
+        return getLocalisedTextQuick(key);
+    } catch {
+        return null;
+    }
+}
+
 export function resolveFocusLocalizationText(
     focus: Pick<Focus, 'id' | 'text'>,
     resolveText: (key: string) => string | null | undefined = tryGetLocalizedText,
 ): string | undefined {
-    if (!focus.text) {
-        const defaultLocalizedText = resolveText(focus.id);
-        return defaultLocalizedText && defaultLocalizedText !== focus.id
-            ? defaultLocalizedText
-            : undefined;
-    }
-
-    const explicitLocalizedText = resolveText(focus.text);
-    if (explicitLocalizedText && explicitLocalizedText !== focus.text) {
-        return explicitLocalizedText;
-    }
-
-    if (focus.text !== focus.id) {
-        return focus.text;
+    const textKey = focus.text && focus.text !== focus.id ? focus.text : undefined;
+    if (textKey) {
+        const explicitLocalizedText = resolveText(textKey);
+        if (explicitLocalizedText && explicitLocalizedText !== textKey) {
+            return explicitLocalizedText;
+        }
     }
 
     const defaultLocalizedText = resolveText(focus.id);
@@ -50,17 +58,53 @@ export function resolveFocusLocalizationText(
         : undefined;
 }
 
+export async function resolveFocusLocalizationTextAsync(
+    focus: Pick<Focus, 'id' | 'text'>,
+    resolveText: (key: string) => Promise<string | null | undefined> = tryGetLocalizedTextAsync,
+): Promise<string | undefined> {
+    const textKey = focus.text && focus.text !== focus.id ? focus.text : undefined;
+    if (textKey) {
+        const explicitLocalizedText = await resolveText(textKey);
+        if (explicitLocalizedText && explicitLocalizedText !== textKey) {
+            return explicitLocalizedText;
+        }
+    }
+
+    const defaultLocalizedText = await resolveText(focus.id);
+    return defaultLocalizedText && defaultLocalizedText !== focus.id
+        ? defaultLocalizedText
+        : undefined;
+}
+
+export async function resolveFocusLocalizationTextById(
+    focuses: readonly Pick<Focus, 'id' | 'text'>[],
+    resolveText?: (key: string) => Promise<string | null | undefined>,
+): Promise<Record<string, string>> {
+    const entries = await Promise.all(focuses.map(async focus => {
+        const text = await resolveFocusLocalizationTextAsync(focus, resolveText);
+        return [focus.id, text] as const;
+    }));
+
+    const textById: Record<string, string> = {};
+    for (const [focusId, text] of entries) {
+        if (text) {
+            textById[focusId] = text;
+        }
+    }
+    return textById;
+}
+
 export function renderFocusHtmlTemplate(
     focus: Focus,
     styleTable: StyleTable,
     file: string,
     xGridSize: number,
     yGridSize: number,
+    localizedText: string | undefined = resolveFocusLocalizationText(focus),
 ): string {
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const sharedStyles = ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
-    const localizedText = resolveFocusLocalizationText(focus);
     const textContent = `
         <span class="${sharedStyles.codeLineClass}">${htmlTextEscape(focus.id)}</span>
         ${localizedText ? `<span class="${sharedStyles.localizationLineClass}">${htmlTextEscape(localizedText)}</span>` : ''}

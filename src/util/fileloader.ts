@@ -83,6 +83,18 @@ export async function getFilePathFromModOrHOI4(relativePath: string, options?: {
             return absolutePath;
         }
 
+        for (const modRoot of await getSelectedModRootFolders()) {
+            const findPath = vscode.Uri.joinPath(modRoot, relativePath);
+            if (await isFile(findPath)) {
+                absolutePath = findPath;
+                break;
+            }
+        }
+
+        if (absolutePath !== undefined) {
+            return absolutePath;
+        }
+
         const replacePaths = await getReplacePaths();
         if (replacePaths) {
             const relativePathDir = path.dirname(relativePath);
@@ -230,6 +242,15 @@ export async function listFilesFromModOrHOI4(relativePath: string, options?: { m
             }
         }
 
+        for (const modRoot of await getSelectedModRootFolders()) {
+            const findPath = vscode.Uri.joinPath(modRoot, relativePath);
+            if (await isDirectory(findPath)) {
+                try {
+                    result.push(...await readFunction(findPath));
+                } catch(e) {}
+            }
+        }
+
         const replacePaths = await getReplacePaths();
         if (replacePaths) {
             for (const replacePath of replacePaths) {
@@ -338,17 +359,19 @@ const replacePathsCache = new PromiseCache({
 });
 
 interface ModFile {
+    path?: string;
     replace_path: string[];
 }
 
 const modFileSchema: SchemaDef<ModFile> = {
+    path: "string",
     replace_path: {
         _innerType: "string",
         _type: "array",
     },
 };
 
-async function getReplacePaths(): Promise<string[] | undefined> {
+async function getSelectedModFile(): Promise<vscode.Uri | undefined> {
     const conf = getConfiguration();
     let modFile = fileOrUriStringToUri(conf.modFile);
 
@@ -365,6 +388,12 @@ async function getReplacePaths(): Promise<string[] | undefined> {
         }
     }
 
+    return modFile;
+}
+
+async function getReplacePaths(): Promise<string[] | undefined> {
+    const modFile = await getSelectedModFile();
+
     try {
         if (modFile && await isFile(modFile)) {
             const result = await replacePathsCache.get(modFile.toString());
@@ -377,6 +406,60 @@ async function getReplacePaths(): Promise<string[] | undefined> {
 
     updateSelectedModFileStatus(modFile, true);
     return undefined;
+}
+
+async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
+    const modFile = await getSelectedModFile();
+    if (!modFile || !await isFile(modFile)) {
+        return [];
+    }
+
+    let descriptorPath: string | undefined;
+    try {
+        const content = (await readFile(modFile)).toString();
+        const node = parseHoi4File(content, localize('infile', 'In file {0}:\n', modFile));
+        descriptorPath = convertNodeToJson<ModFile>(node, modFileSchema).path;
+    } catch (e) {
+        error(e);
+    }
+
+    const roots: vscode.Uri[] = [];
+    for (const candidate of getModRootCandidatePaths(modFile.fsPath, descriptorPath)) {
+        const uri = vscode.Uri.file(candidate);
+        if (await isDirectory(uri) && roots.every(root => !isSameUri(root, uri))) {
+            roots.push(uri);
+        }
+    }
+
+    return roots;
+}
+
+export function getModRootCandidatePaths(modFilePath: string, descriptorPath?: string): string[] {
+    const normalizedModFilePath = path.normalize(modFilePath);
+    const modFileDirectory = path.dirname(normalizedModFilePath);
+    const candidates: string[] = [];
+    const addCandidate = (candidate: string | undefined) => {
+        if (candidate && !candidates.some(existing => isSamePath(existing, candidate))) {
+            candidates.push(candidate);
+        }
+    };
+
+    if (path.basename(normalizedModFilePath).toLowerCase() === 'descriptor.mod') {
+        addCandidate(modFileDirectory);
+    }
+
+    if (descriptorPath) {
+        const normalizedDescriptorPath = descriptorPath.split(/[\\/]+/).join(path.sep);
+        if (path.isAbsolute(normalizedDescriptorPath)) {
+            addCandidate(normalizedDescriptorPath);
+        } else {
+            addCandidate(path.resolve(modFileDirectory, normalizedDescriptorPath));
+            addCandidate(path.resolve(path.dirname(modFileDirectory), normalizedDescriptorPath));
+        }
+    }
+
+    addCandidate(modFileDirectory);
+    return candidates;
 }
 
 async function getReplacePathsFromModFile(absolutePath: string): Promise<string[]> {

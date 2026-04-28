@@ -25,6 +25,7 @@ import {
     focusIconTopOffset,
     focusTextMarginTop,
     renderFocusHtmlTemplate,
+    resolveFocusLocalizationTextById,
 } from './focusrender';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
@@ -221,6 +222,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.yGridSize,
         );
     }
+    const focusLocalizationTextById = await resolveFocusLocalizationTextById(baseState.allFocuses);
     const renderedFocus: Record<string, string> = {};
     for (const focus of baseState.allFocuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
@@ -229,6 +231,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.focusPositionActiveFile,
             baseState.xGridSize,
             baseState.yGridSize,
+            focusLocalizationTextById[focus.id],
         ).replace(/\s\s+/g, ' ');
     }
     const focusRenderDurationMs = Date.now() - focusRenderStart;
@@ -287,24 +290,24 @@ async function buildFocusTreeRenderState(
     };
 }
 
-export function renderFocusTreeFocusHtmlMap(
+export async function renderFocusTreeFocusHtmlMap(
     baseState: FocusTreeRenderBaseState,
     focusIds: readonly string[],
-): Record<string, string> {
+): Promise<Record<string, string>> {
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = {};
-    for (const focusId of focusIds) {
-        const focus = baseState.focusById[focusId];
-        if (!focus) {
-            continue;
-        }
-
+    const focuses = focusIds
+        .map(focusId => baseState.focusById[focusId])
+        .filter((focus): focus is Focus => !!focus);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextById(focuses);
+    for (const focus of focuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,
             styleTable,
             baseState.focusPositionActiveFile,
             baseState.xGridSize,
             baseState.yGridSize,
+            focusLocalizationTextById[focus.id],
         ).replace(/\s\s+/g, ' ');
     }
 

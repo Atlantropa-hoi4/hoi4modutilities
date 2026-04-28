@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { contextContainer } from '../../context';
+import { ConfigurationKey } from '../../constants';
 import { localize } from '../../util/i18n';
 import { matchPathEnd } from '../../util/nodecommon';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
@@ -35,6 +36,7 @@ export class FocusTreePreview extends PreviewBase {
     private readonly relativeFilePath: string;
     private readonly session: FocusTreePreviewSession;
     private readonly editCommandHandler: FocusTreeEditCommandHandler;
+    private readonly configurationHandler: vscode.Disposable;
     private persistedConditionPresetsByTree: FocusConditionPresetsByTree;
     private latestDiagnostics: unknown;
 
@@ -55,6 +57,11 @@ export class FocusTreePreview extends PreviewBase {
             relativeFilePath: this.relativeFilePath,
             webview: this.panel.webview,
             session: this.session,
+        });
+        this.configurationHandler = vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration(`${ConfigurationKey}.previewLocalisation`)) {
+                this.reload();
+            }
         });
     }
 
@@ -105,6 +112,11 @@ export class FocusTreePreview extends PreviewBase {
         }
 
         return this.editCommandHandler.handleMessage(msg);
+    }
+
+    public dispose(): void {
+        super.dispose();
+        this.configurationHandler.dispose();
     }
 
     private async resolveConditionPresetName(initialValue?: string): Promise<void> {

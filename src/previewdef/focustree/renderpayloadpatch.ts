@@ -3,7 +3,7 @@ import { GridBoxType } from "../../hoiformat/gui";
 import { StyleTable } from "../../util/styletable";
 import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
-import { renderFocusHtmlTemplate } from "./focusrender";
+import { renderFocusHtmlTemplate, resolveFocusLocalizationTextById } from "./focusrender";
 import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
 
 export interface FocusTreeRenderCache {
@@ -138,7 +138,7 @@ export async function createFocusTreeRenderUpdate(
         return { kind: 'full' };
     }
 
-    const renderedFocusPatch = renderChangedFocusHtmlMap(nextBaseState, focusSignatureDiff.changedKeys);
+    const renderedFocusPatch = await renderChangedFocusHtmlMap(nextBaseState, focusSignatureDiff.changedKeys);
 
     const changedSlots = new Set<FocusTreeContentSlot>();
     if (changedTreeIds.length > 0) {
@@ -463,24 +463,24 @@ function mergeStringMap(
     return result;
 }
 
-function renderChangedFocusHtmlMap(
+async function renderChangedFocusHtmlMap(
     baseState: FocusTreeRenderBaseState,
     focusIds: readonly string[],
-): Record<string, string> {
+): Promise<Record<string, string>> {
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = {};
-    for (const focusId of focusIds) {
-        const focus = baseState.focusById[focusId];
-        if (!focus) {
-            continue;
-        }
-
+    const focuses = focusIds
+        .map(focusId => baseState.focusById[focusId])
+        .filter((focus): focus is Focus => !!focus);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextById(focuses);
+    for (const focus of focuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,
             styleTable,
             baseState.focusPositionActiveFile,
             baseState.xGridSize,
             baseState.yGridSize,
+            focusLocalizationTextById[focus.id],
         ).replace(/\s\s+/g, ' ');
     }
 

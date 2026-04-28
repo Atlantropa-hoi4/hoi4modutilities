@@ -12,6 +12,9 @@ import { getConfiguration } from './vsccommon';
 
 type LocalisationData = Record<string, Record<string, string>>;
 
+const supportedLocalisationLangPattern = 'l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese';
+const localisationIndexFilePattern = new RegExp(`(?:^|[ _-])(${supportedLocalisationLangPattern})\\.yml$`, 'i');
+
 const globalLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationIndex: LocalisationData = {};
 const localisationIndexService = new IndexService<Record<string, string>>({
@@ -142,14 +145,14 @@ export function resolveLocalisedTextFromIndex(
 async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: false, hoi4: true, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
-        .filter(f => /.*_(l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese)\.yml$/i.test(f));
+        .filter(isLocalisationIndexFilePath);
     await Promise.all(localisationFiles.map(f => fillLocalisationItems('localisation/' + f, globalLocalisationIndex, options, estimatedSize)));
 }
 
 async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: true, hoi4: false, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
-        .filter(f => /.*_(l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese)\.yml$/i.test(f));
+        .filter(isLocalisationIndexFilePath);
     await Promise.all(localisationFiles.map(f => fillLocalisationItems('localisation/' + f, workspaceLocalisationIndex, options, estimatedSize)));
 }
 
@@ -341,7 +344,7 @@ function removeWorkspaceLocalisationIndex(file: vscode.Uri) {
     if (wsFolder) {
         const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
         if (relative && relative.startsWith('localisation/')) {
-            const langKey = getLangKeyFromPath(relative);
+            const langKey = getLocalisationIndexLangKeyFromPath(relative);
             delete workspaceLocalisationIndex[langKey];
         }
     }
@@ -357,7 +360,11 @@ function addWorkspaceLocalisationIndex(file: vscode.Uri) {
     }
 }
 
-function getLangKeyFromPath(filePath: string): string {
-    const match = filePath.match(/.*_(l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese)\.yml$/i);
-    return match ? match[1] : 'l_english';
+export function isLocalisationIndexFilePath(filePath: string): boolean {
+    return localisationIndexFilePattern.test(filePath);
+}
+
+export function getLocalisationIndexLangKeyFromPath(filePath: string): string {
+    const match = filePath.match(localisationIndexFilePattern);
+    return match ? match[1].toLowerCase() : 'l_english';
 }

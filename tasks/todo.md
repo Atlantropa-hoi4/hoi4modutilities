@@ -111,3 +111,19 @@ Focus tree icon resolution reuse fix 2026-04-28:
 - [x] Reuse that mapping during icon CSS generation instead of probing every resolved `.gfx` file again.
 - [x] Include the mapping in render style dependency metadata so changed icon resolution triggers a full style refresh.
 - [x] Reverify with focused contentbuilder/render-patch tests plus standard compile/lint/unit checks.
+
+Focus tree localization display 2026-04-28:
+- [x] Render actual localized focus text under each focus id using the configured preview language.
+- [x] Avoid showing unresolved localization keys as if they were real localized text.
+- [x] Refresh Focus Tree previews when the preview localization setting changes.
+- [x] Reverify with focused Focus Tree render tests plus standard compile/lint/unit checks.
+
+Localisation index filename compatibility 2026-04-28:
+- [x] Accept localisation filenames such as `MEO - New Soul l_korean.yml`.
+- [x] Keep existing underscore and dash language suffix filename support.
+- [x] Reverify with localisation index tests plus standard compile/lint/unit checks.
+
+Selected mod root file loading 2026-04-28:
+- [x] Search the selected `.mod` or `descriptor.mod` content root in addition to opened workspace folders.
+- [x] Support launcher `.mod` files whose descriptor path points to `mod/<folder>`.
+- [x] Reverify with fileloader/localisation/focus render tests plus standard compile/lint/unit checks.

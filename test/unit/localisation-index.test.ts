@@ -22,6 +22,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const {
+    getLocalisationIndexLangKeyFromPath,
+    isLocalisationIndexFilePath,
     resolveLocalisedTextFromIndex,
 } = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 
@@ -56,5 +58,19 @@ describe('localisation index helpers', () => {
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_D', 'ja', globalIndex, workspaceIndex), 'Workspace English');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_FALLBACK_OVERRIDE', 'ja', globalIndex, workspaceIndex), 'Workspace English Override');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_UNKNOWN', 'ko', globalIndex, workspaceIndex), 'FOCUS_UNKNOWN');
+    });
+
+    it('accepts localisation index files with space or dash before the language suffix', () => {
+        assert.strictEqual(isLocalisationIndexFilePath('english/test_l_english.yml'), true);
+        assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul l_korean.yml'), true);
+        assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul-l_korean.yml'), true);
+        assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul_l_korean.yml'), true);
+        assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul l_korean.yaml'), false);
+        assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul.yml'), false);
+    });
+
+    it('extracts the localisation language key from non-underscore file names', () => {
+        assert.strictEqual(getLocalisationIndexLangKeyFromPath('korean/MEO - New Soul l_korean.yml'), 'l_korean');
+        assert.strictEqual(getLocalisationIndexLangKeyFromPath('english/test_l_english.yml'), 'l_english');
     });
 });

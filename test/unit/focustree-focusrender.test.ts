@@ -1,6 +1,10 @@
 import * as assert from 'assert';
 import { StyleTable } from '../../src/util/styletable';
-import { renderFocusHtmlTemplate, resolveFocusLocalizationText } from '../../src/previewdef/focustree/focusrender';
+import {
+    renderFocusHtmlTemplate,
+    resolveFocusLocalizationText,
+    resolveFocusLocalizationTextById,
+} from '../../src/previewdef/focustree/focusrender';
 
 describe('focustree focus render', () => {
     it('prefers an explicit text key over the default id localisation', () => {
@@ -25,13 +29,13 @@ describe('focustree focus render', () => {
         assert.strictEqual(result, 'Localized focus title');
     });
 
-    it('falls back to the explicit focus text key when localized text is not ready yet', () => {
+    it('does not display an unresolved explicit focus text key as localization', () => {
         const result = resolveFocusLocalizationText(
             { id: 'FOCUS_ID', text: 'FOCUS_TEXT_KEY' } as any,
             key => key,
         );
 
-        assert.strictEqual(result, 'FOCUS_TEXT_KEY');
+        assert.strictEqual(result, undefined);
     });
 
     it('renders the localization line beneath the focus id', () => {
@@ -48,10 +52,30 @@ describe('focustree focus render', () => {
             'common/national_focus/test.txt',
             96,
             130,
+            'Localized focus title',
         );
 
         assert.match(html, /FOCUS_ID/);
-        assert.match(html, /FOCUS_TEXT_KEY/);
+        assert.match(html, /Localized focus title/);
         assert.match(html, /focus-localization-line/);
+    });
+
+    it('resolves actual focus localization text for multiple focuses', async () => {
+        const result = await resolveFocusLocalizationTextById(
+            [
+                { id: 'FOCUS_A', text: 'FOCUS_A_TEXT' },
+                { id: 'FOCUS_B', text: undefined },
+                { id: 'FOCUS_MISSING', text: 'FOCUS_MISSING_TEXT' },
+            ] as any,
+            async key => ({
+                FOCUS_A_TEXT: 'Focus A localized',
+                FOCUS_B: 'Focus B localized',
+            }[key] ?? key),
+        );
+
+        assert.deepStrictEqual(result, {
+            FOCUS_A: 'Focus A localized',
+            FOCUS_B: 'Focus B localized',
+        });
     });
 });
