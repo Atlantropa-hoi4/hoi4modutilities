@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { countryColorFeature } from './countrycolors';
 import { eventTreeFeature } from './eventtree';
 import { focusTreeFeature } from './focustree';
+import { formatterFeature } from './formatter';
 import { gfxFeature } from './gfx';
 import { guiFeature } from './gui';
 import { imageFeature } from './images';
@@ -27,6 +28,7 @@ export const extensionFeatures: readonly ExtensionFeature[] = [
     referencesFeature,
     localisationFeature,
     countryColorFeature,
+    formatterFeature,
 ];
 
 export function getPreviewDescriptors(): PreviewDescriptor[] {

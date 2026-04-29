@@ -9,9 +9,15 @@ describe('extension manifest', () => {
         assert.ok(!manifest.activationEvents.some(event => event.startsWith('onCustomEditor:')));
         assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
         assert.strictEqual(manifest.l10n, './l10n');
+        assert.ok(manifest.activationEvents.includes('workspaceContains:common/**/*.txt'));
         assert.ok(manifest.activationEvents.includes('workspaceContains:common/national_focus/*.txt'));
         assert.ok(manifest.activationEvents.includes('workspaceContains:common/technologies/*.txt'));
         assert.ok(manifest.activationEvents.includes('workspaceContains:events/*.txt'));
+        assert.ok(manifest.activationEvents.includes('workspaceContains:events/**/*.txt'));
+        assert.ok(manifest.activationEvents.includes('workspaceContains:history/**/*.txt'));
+        assert.ok(manifest.activationEvents.includes('workspaceContains:country_metadata/**/*.txt'));
+        assert.ok(manifest.activationEvents.includes('workspaceContains:interface/**/*.gui'));
+        assert.ok(manifest.activationEvents.includes('workspaceContains:interface/**/*.gfx'));
     });
 
     it('shows the preview entry only for previewable file-like editor resources', () => {

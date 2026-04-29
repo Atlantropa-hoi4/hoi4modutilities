@@ -134,3 +134,54 @@ Parser compatibility 2026-04-29:
 - [x] Reverify with parser regressions, full unit coverage, lint, typecheck, and read-only game/mod sweep.
 
 Review note: improved `parseHoi4File` compatibility for vanilla and Kaiserreich script syntax without changing the public parser API. The read-only sweep over the provided game and mod paths now leaves only source/prose exclusions: unbalanced vanilla script files plus `interface/credits.txt`.
+
+HOI4 formatter v1 2026-04-29:
+- [x] Add a token-based formatter core for script and GUI/GFX profiles without changing the parser public API.
+- [x] Register a VS Code document formatting provider through the existing editor feature registry.
+- [x] Keep map/localisation/root prose files out of formatter scope.
+- [x] Cover Kaiserreich-style spacing, comments, inline blocks, names lists, GUI coordinate blocks, and provider path filtering with unit tests.
+- [x] Reverify with typecheck, unit tests, lint, and a read-only Kaiserreich format/parse sweep.
+
+Review note: added a VS Code document formatter backed by a token-preserving HOI4 formatter profile for script and GUI/GFX files. Reverified with `npm run compile-ts`, `npm run test:unit`, `npm run lint`, and a read-only Kaiserreich Dev Build in-memory format/parse sweep over 5,049 supported files with 0 failures.
+
+HOI4 formatter range/on-type support 2026-04-29:
+- [x] Add range formatting support that formats selected full lines with surrounding indentation context.
+- [x] Add on-type formatting support for Enter and `}` indentation edits.
+- [x] Cover range formatting and on-type provider behavior with unit tests.
+- [x] Reverify with typecheck, unit tests, lint, and a read-only Kaiserreich format/parse sweep.
+
+Formatter readability regression 2026-04-29:
+- [x] Preserve Kaiserreich-style grouped blank lines in decision/effect blocks.
+- [x] Preserve short inline blocks such as `allowed = { always = no }` and `white_peace = { tag = MEO }`.
+- [x] Add an explicit regression for the reported `MEO_defend_success` decision style.
+
+Formatter aggressive standardisation 2026-04-29:
+- [x] Trim trailing whitespace in real full-line and inline comments.
+- [x] Remove empty inline comment markers such as `focus = { #`.
+- [x] Collapse consecutive blank lines to a single blank line.
+- [x] Confirm the TFR Korea focus file preview now reduces trailing whitespace lines to 0 without editing the mod file.
+
+Formatter Kaiserreich structural spacing 2026-04-29:
+- [x] Add blank-line separation before repeated `focus`/shared focus blocks and root event blocks.
+- [x] Add blank-line separation around section comments before following focus blocks.
+- [x] Keep nested short inline blocks untouched while applying structural spacing.
+- [x] Confirm the TFR Korea focus preview now adds Kaiserreich-style focus block spacing in memory only.
+
+Formatter inline block standardisation 2026-04-29:
+- [x] Collapse simple multiline effect blocks such as `country_event = { id = korea.52 }`.
+- [x] Keep multiline-preferred blocks such as `limit`, `every_country`, `completion_reward`, and `focus` expanded.
+- [x] Cover the Kaiserreich-style inline effect case with formatter regression tests.
+
+Kaiserreich formatter recheck 2026-04-29:
+- [x] Re-scan Kaiserreich script files for inline vs simple multiline block style.
+- [x] Narrow automatic collapse to inline-preferred effect/condition/scope blocks after finding focus graph blocks are commonly multiline.
+- [x] Keep `prerequisite`, `mutually_exclusive`, and generic `trigger` blocks expanded unless already inline in source.
+
+Formatter event call inline collapse 2026-04-29:
+- [x] Collapse short multi-line event calls such as `country_event = { id = korea.535 days = 60 }`.
+- [x] Keep the collapse limited to simple body lines with no comments or nested multiline blocks.
+- [x] Avoid applying multi-body collapse to generic scope condition blocks such as multi-line `FROM`.
+
+Formatter total review 2026-04-29:
+- [x] Re-check formatter provider registration, path classifier, activation events, and Kaiserreich read-only sweep.
+- [x] Align contextual activation globs with formatter-supported `common`, `events`, `history`, `country_metadata`, and nested GUI/GFX paths.
