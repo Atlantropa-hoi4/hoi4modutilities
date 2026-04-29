@@ -127,3 +127,10 @@ Selected mod root file loading 2026-04-28:
 - [x] Search the selected `.mod` or `descriptor.mod` content root in addition to opened workspace folders.
 - [x] Support launcher `.mod` files whose descriptor path points to `mod/<folder>`.
 - [x] Reverify with fileloader/localisation/focus render tests plus standard compile/lint/unit checks.
+
+Parser compatibility 2026-04-29:
+- [x] Accept signed/trailing-dot numeric values and preserve dotted date-like values as symbolic tokens.
+- [x] Parse longest-match comparison operators, permissive HOI4 bare symbols, and anonymous block lists.
+- [x] Reverify with parser regressions, full unit coverage, lint, typecheck, and read-only game/mod sweep.
+
+Review note: improved `parseHoi4File` compatibility for vanilla and Kaiserreich script syntax without changing the public parser API. The read-only sweep over the provided game and mod paths now leaves only source/prose exclusions: unbalanced vanilla script files plus `interface/credits.txt`.

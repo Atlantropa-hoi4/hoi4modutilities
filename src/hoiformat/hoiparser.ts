@@ -106,11 +106,11 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
 type HOITokenType = 'comment' | 'symbol' | 'operator' | 'string' | 'number' | 'unitnumber' | 'eof';
 const tokenRegexStrings: Record<HOITokenType, [string, number]> = {
     comment: ['#.*(?:[\\r\\n]|$)', 0],
-    symbol: ['(?:\\d+\\.)?[a-zA-Z_@\\[\\]][\\w:\\._@\\[\\]\\-\\?\\^\\/\\u00A0-\\u024F|]*', 40],
-    operator: ['[={}<>;,]|>=|<=|!=', 10],
+    operator: ['>=|<=|!=|[={}<>;,]', 10],
     string: ['"(?:\\\\"|\\\\\\\\|[^"])*"', 10],
-    number: ['-?\\d*\\.\\d+|-?\\d+|0x\\d+', 50],
-    unitnumber: ['(?:-?\\d*\\.\\d+|-?\\d+)(?:%%?)', 49],
+    unitnumber: ['[+-]?(?:0x[0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+))(?:%%?)', 49],
+    number: ['[+-]?(?:0x[0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+))(?![\\w.])', 50],
+    symbol: ['[^\\s#={}<>!,;]+', 60],
     eof: ['$', 1000],
 };
 
@@ -137,8 +137,27 @@ export function parseHoi4File(input: string, errorMessagePrefix: string = ''): N
 
 function parseNode(tokens: Tokenizer<HOITokenType>): Node {
     const name = tokens.next();
-    if (name.type !== 'string' && name.type !== 'symbol' && name.type !== 'number') {
-        tokens.throw("Expect name to be symbol, string or number", true);
+    if (name.value === '{') {
+        const value = parseBlockContent(tokens);
+        const right = tokens.next();
+        if (right.value !== '}') {
+            tokens.throw("Expect a '}'", true);
+        }
+        return {
+            name: null,
+            nameToken: null,
+            operator: null,
+            operatorToken: null,
+            value,
+            valueStartToken: name,
+            valueEndToken: right,
+            valueAttachment: null,
+            valueAttachmentToken: null,
+        };
+    }
+
+    if (name.type !== 'string' && name.type !== 'symbol' && name.type !== 'number' && name.type !== 'unitnumber') {
+        tokens.throw("Expect name to be symbol, string, number or unit number", true);
     }
 
     let nextToken = tokens.peek();
@@ -219,7 +238,7 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOI
         case 'number':
             const nextTokenValue = nextToken.value;
             return [
-                nextTokenValue.startsWith('0x') ? parseInt(nextTokenValue.substr(2), 16) : parseFloat(nextTokenValue),
+                parseNumberToken(nextTokenValue),
                 nextToken,
                 nextToken,
             ];
@@ -247,6 +266,16 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOI
     }
     
     tokens.throw("Expect string, number, symbol, or {", true);
+}
+
+function parseNumberToken(value: string): number {
+    const sign = value.startsWith('-') ? -1 : 1;
+    const unsignedValue = value.replace(/^[+-]/, '');
+    if (unsignedValue.toLowerCase().startsWith('0x')) {
+        return sign * parseInt(unsignedValue.substring(2), 16);
+    }
+
+    return parseFloat(value);
 }
 
 function parseBlockContent(tokens: Tokenizer<HOITokenType>): Node[] {
