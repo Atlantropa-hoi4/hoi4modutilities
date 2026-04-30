@@ -347,3 +347,10 @@ Focus Tree default index prewarm 2026-04-30:
 - [x] Reverify manifest/default settings plus standard compile/lint/unit/build checks.
 
 Review note: real TFR-Korea testing differed from the smoke setup because the workspace had no feature flags, while the smoke explicitly enabled `gfxIndex` and `localisationIndex`. The extension now enables those indexes without requiring opt-in flags and actually registers the existing prewarm timer, so large-mod previews can have GFX/localisation data ready before the Focus Tree panel requests its first content. If localisation indexes are already ready at panel initialization, Focus Tree now sends a full initial snapshot instead of a deferred placeholder snapshot. In the default-setting TFR smoke, `featureFlags` stayed `[]` while `gfxIndex` and `localisationIndex` were enabled, and the first full content snapshot produced 317 localized labels plus 524 icon background images.
+
+Focus Tree TFR localisation fallback 2026-04-30:
+- [x] Confirm `TFR-Korea/.vscode/settings.json` does not set `hoi4ModUtilities.previewLocalisation`.
+- [x] Add workspace-language fallback when requested language and English localisation are missing.
+- [x] Cover Korean-only workspace fallback with localisation index unit coverage.
+
+Review note: TFR-Korea has no `previewLocalisation` workspace override, so the extension defaulted to `English`; for Korean-only focus keys this made the localisation index return the unresolved key even though `l_korean` entries were indexed. Localisation resolution now falls back to any available workspace language after requested-language and English lookups fail, so Korean-only mod workspaces can still display text without per-workspace preview language setup. Reverified with targeted localisation/Focus Tree tests, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run build`, and `git diff --check`.

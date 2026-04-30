@@ -27,6 +27,12 @@ const {
     resolveLocalisedTextFromIndex,
 } = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 
+nodeModule._load = originalLoad;
+delete require.cache[require.resolve('../../src/util/featureflags')];
+delete require.cache[require.resolve('../../src/util/fileloader')];
+delete require.cache[require.resolve('../../src/util/modfile')];
+delete require.cache[require.resolve('../../src/util/vsccommon')];
+
 describe('localisation index helpers', () => {
     it('prefers workspace overrides before vanilla in both requested-language and english fallback lookups', () => {
         const globalIndex = {
@@ -58,6 +64,17 @@ describe('localisation index helpers', () => {
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_D', 'ja', globalIndex, workspaceIndex), 'Workspace English');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_FALLBACK_OVERRIDE', 'ja', globalIndex, workspaceIndex), 'Workspace English Override');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_UNKNOWN', 'ko', globalIndex, workspaceIndex), 'FOCUS_UNKNOWN');
+    });
+
+    it('falls back to an available workspace language when requested and english text are missing', () => {
+        const globalIndex = {};
+        const workspaceIndex = {
+            l_korean: {
+                FOCUS_KOR_ONLY: '한국어만 있는 중점',
+            },
+        };
+
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_KOR_ONLY', 'en', globalIndex, workspaceIndex), '한국어만 있는 중점');
     });
 
     it('accepts localisation index files with space or dash before the language suffix', () => {

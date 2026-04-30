@@ -140,7 +140,28 @@ export function resolveLocalisedTextFromIndex(
         || globalIndex[langKey]?.[localisationKey]
         || workspaceIndex[defaultLangKey]?.[localisationKey]
         || globalIndex[defaultLangKey]?.[localisationKey]
+        || resolveLocalisedTextFromAvailableWorkspaceLanguage(localisationKey, workspaceIndex, [langKey, defaultLangKey])
         || localisationKey;
+}
+
+function resolveLocalisedTextFromAvailableWorkspaceLanguage(
+    localisationKey: string,
+    workspaceIndex: LocalisationData,
+    skippedLangKeys: string[],
+): string | undefined {
+    const skipped = new Set(skippedLangKeys);
+    for (const langKey of Object.keys(workspaceIndex).sort()) {
+        if (skipped.has(langKey)) {
+            continue;
+        }
+
+        const text = workspaceIndex[langKey]?.[localisationKey];
+        if (text !== undefined) {
+            return text;
+        }
+    }
+
+    return undefined;
 }
 
 async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<void> {
