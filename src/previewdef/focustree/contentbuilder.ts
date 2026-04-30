@@ -479,14 +479,18 @@ function renderWarningContainer(styleTable: StyleTable) {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 4px;
+        gap: 6px;
         width: 100%;
-        padding: 8px 10px;
+        height: auto;
+        min-height: 56px;
+        padding: 10px 12px;
         border: 1px solid var(--vscode-panel-border);
+        box-sizing: border-box;
         background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background));
         color: var(--vscode-editor-foreground);
         text-align: left;
         font: inherit;
+        line-height: 1.35;
         cursor: pointer;
     `);
     styleTable.style('warnings-entry', () => `
@@ -500,6 +504,7 @@ function renderWarningContainer(styleTable: StyleTable) {
     const warningMetaClass = styleTable.style('warnings-entry-meta', () => `
         color: var(--vscode-descriptionForeground);
         font-size: 11px;
+        line-height: 1.25;
     `);
     const warningTextClass = styleTable.style('warnings-entry-text', () => `
         white-space: pre-wrap;
@@ -536,7 +541,7 @@ function renderWarningContainer(styleTable: StyleTable) {
             overflow: auto;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
         `)}"></div>
         <div id="warnings-entry-template" style="display:none"
             data-warning-entry-class="${warningEntryClass}"

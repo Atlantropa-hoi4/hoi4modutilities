@@ -187,6 +187,19 @@ describe('focustree contentbuilder', () => {
         assert.match(html, /\.st-warnings-entry:active\s*\{[^}]*transform:\s*none;[^}]*transition:\s*none;/);
     });
 
+    it('prevents warning entries from inheriting the global icon button size', async () => {
+        const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+        const html = contentbuilder.renderFocusTreeShellHtml(
+            { toString: () => 'file:///focus.txt' } as any,
+            {} as any,
+            1,
+            {},
+        );
+
+        assert.match(html, /\.st-warnings-entry\s*\{[^}]*width:\s*100%;[^}]*height:\s*auto;[^}]*min-height:\s*56px;/);
+        assert.match(html, /\.st-warnings\s*\{[^}]*gap:\s*12px;/);
+    });
+
     it('registers shared focus card styles even before any real focus html is rendered', async () => {
         const result = await buildFocusTreeRenderPayloadFromBaseState({
             focusTrees: [],
