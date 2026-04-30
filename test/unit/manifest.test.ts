@@ -42,6 +42,7 @@ describe('extension manifest', () => {
 
         assert.ok(command);
         assert.strictEqual(command.title, '%hoi4modutilities.generateFocusGfxShine.title%');
+        assert.strictEqual(command.icon, '$(sparkle)');
     });
 
     it('shows the shine generator in editor title for goals gfx files', () => {

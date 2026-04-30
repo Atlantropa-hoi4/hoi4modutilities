@@ -139,6 +139,7 @@
       {
         "command": "server.hoi4modutilities.generateFocusGfxShine",
         "title": "%hoi4modutilities.generateFocusGfxShine.title%",
+        "icon": "$(sparkle)",
         "category": "%hoi4modutilities.category%"
       },
       {
