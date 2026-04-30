@@ -77,7 +77,11 @@ export function subscribeNavigators(root: ParentNode = document) {
             const file = this.attributes.getNamedItem('file')?.value;
             const start = !startStr || startStr === 'undefined' ? undefined : parseInt(startStr);
             const end = !endStr ? undefined : parseInt(endStr);
-            navigateText(start, end, file);
+            const focusId = this.dataset.focusId || undefined;
+            const documentVersion = typeof (window as any).focusPositionDocumentVersion === 'number'
+                ? (window as any).focusPositionDocumentVersion
+                : undefined;
+            navigateText(start, end, file, focusId, documentVersion);
         });
     }
 }
@@ -138,12 +142,20 @@ export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOff
     });
 }
 
-function navigateText(start: number | undefined, end: number | undefined, file: string | undefined): void {
+function navigateText(
+    start: number | undefined,
+    end: number | undefined,
+    file: string | undefined,
+    focusId?: string,
+    documentVersion?: number,
+): void {
     vscode.postMessage({
         command: 'navigate',
         start,
         end,
         file,
+        focusId,
+        documentVersion,
     });
 };
 

@@ -1146,6 +1146,7 @@ function navigateToFocusDefinition(focusElement: HTMLElement) {
         end,
         file,
         focusId,
+        documentVersion: focusPositionDocumentVersion,
     });
 }
 
@@ -2349,6 +2350,7 @@ function renderWarningsPanel(focusTree: FocusTree) {
                 end: navigation.end,
                 file: navigation.file,
                 select: false,
+                documentVersion: focusPositionDocumentVersion,
             });
         });
         warningsElement.appendChild(button);
@@ -2635,6 +2637,7 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
         getDocumentVersion: () => focusPositionDocumentVersion,
         setDocumentVersion: documentVersion => {
             focusPositionDocumentVersion = documentVersion;
+            window.focusPositionDocumentVersion = documentVersion;
         },
         setFocusPositionActiveFile: nextFocusPositionActiveFile => {
             focusPositionActiveFile = nextFocusPositionActiveFile;
@@ -2886,6 +2889,7 @@ window.addEventListener('load', tryRun(async function() {
         }
 
         focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+        window.focusPositionDocumentVersion = focusPositionDocumentVersion;
         if (message.command === 'createFocusTemplateApplied'
             && message.treeEditKey !== undefined
             && message.focusId !== undefined
