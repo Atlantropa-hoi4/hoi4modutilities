@@ -13,6 +13,7 @@ export interface FocusTreeRenderCache {
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     focusIconGfxFileByName: Record<string, string>;
+    focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
     dynamicStyleCss: string;
     xGridSize: number;
@@ -60,6 +61,7 @@ export function createFocusTreeRenderCache(
         payload.yGridSize,
         payload.gfxFiles,
         payload.focusIconGfxFileByName,
+        payload.focusIconStyleSignature,
     );
     return {
         snapshotVersion: previousVersion + 1,
@@ -68,6 +70,7 @@ export function createFocusTreeRenderCache(
         renderedFocus: payload.renderedFocus,
         renderedInlayWindows: payload.renderedInlayWindows,
         focusIconGfxFileByName: payload.focusIconGfxFileByName,
+        focusIconStyleSignature: payload.focusIconStyleSignature ?? '',
         gridBox: payload.gridBox,
         dynamicStyleCss: payload.dynamicStyleCss,
         xGridSize: payload.xGridSize,
@@ -119,6 +122,7 @@ export async function createFocusTreeRenderUpdate(
         nextBaseState.yGridSize,
         nextBaseState.gfxFiles,
         nextBaseState.focusIconGfxFileByName,
+        nextBaseState.focusIconStyleSignature,
     );
 
     if (!previous || shouldUseFullRender(previous, nextBaseState, nextMetadata)) {
@@ -156,6 +160,7 @@ export async function createFocusTreeRenderUpdate(
         renderedFocus: mergeStringMap(previous.renderedFocus, renderedFocusPatch, focusSignatureDiff.removedKeys),
         renderedInlayWindows: previous.renderedInlayWindows,
         focusIconGfxFileByName: nextBaseState.focusIconGfxFileByName,
+        focusIconStyleSignature: nextBaseState.focusIconStyleSignature ?? '',
         gridBox: nextBaseState.gridBox,
         dynamicStyleCss: previous.dynamicStyleCss,
         xGridSize: nextBaseState.xGridSize,
@@ -230,6 +235,7 @@ function deriveRenderStateMetadata(
     yGridSize: number,
     gfxFiles: readonly string[] = [],
     focusIconGfxFileByName: Readonly<Record<string, string>> = {},
+    focusIconStyleSignature: string = '',
 ): DerivedRenderStateMetadata {
     const treePatchSignatures: Record<string, string> = {};
     const treeStructureSignatures: Record<string, string> = {};
@@ -240,6 +246,7 @@ function deriveRenderStateMetadata(
         yGridSize,
         [...gfxFiles].sort(),
         Object.entries(focusIconGfxFileByName).sort(([left], [right]) => left.localeCompare(right)),
+        focusIconStyleSignature,
     ];
 
     for (const tree of focusTrees) {

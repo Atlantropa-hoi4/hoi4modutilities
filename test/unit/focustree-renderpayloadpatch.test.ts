@@ -268,6 +268,56 @@ describe('focus tree render payload patching', () => {
         assert.strictEqual(result.kind, 'full');
     });
 
+    it('falls back to a full snapshot when icon texture expiry changes', async () => {
+        const previous = createFocusTreeRenderCache({
+            focusTrees: [createTree('tree_a', 'FOCUS_A')],
+            renderedFocus: {
+                FOCUS_A: '<div>A</div>',
+            },
+            renderedInlayWindows: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '.a {}',
+            xGridSize: 96,
+            yGridSize: 130,
+            gfxFiles: ['interface/shared.gfx'],
+            focusIconGfxFileByName: { GFX_FOCUS_A: 'interface/shared.gfx' },
+            focusIconStyleSignature: 'texture@mtime-1',
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            styleNonce: 'nonce',
+            focusToolbarHeight: 68,
+        } as any);
+
+        const tree = createTree('tree_a', 'FOCUS_A');
+        const result = await createFocusTreeRenderUpdate(previous, {
+            focusTrees: [tree],
+            focusById: {
+                FOCUS_A: tree.focuses.FOCUS_A,
+            },
+            allFocuses: [
+                tree.focuses.FOCUS_A,
+            ],
+            allInlays: [],
+            gfxFiles: ['interface/shared.gfx'],
+            focusIconGfxFileByName: { GFX_FOCUS_A: 'interface/shared.gfx' },
+            focusIconStyleSignature: 'texture@mtime-2',
+            gridBox: previous.gridBox,
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 2,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+        } as any);
+
+        assert.strictEqual(result.kind, 'full');
+    });
+
     it('falls back to a full snapshot when a focus icon resolves to a different gfx file', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],

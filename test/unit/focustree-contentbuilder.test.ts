@@ -4,6 +4,7 @@ import Module = require('module');
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
 const resolvedFileCalls: Array<{ name: string; gfxFiles: string[] }> = [];
+const broadScanCalls: string[] = [];
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -46,7 +47,10 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                     ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
                     : undefined;
             },
-            getSpriteByGfxName: async () => undefined,
+            getSpriteByGfxName: async (name: string) => {
+                broadScanCalls.push(name);
+                return undefined;
+            },
             getImageByPath: async () => ({ width: 64, height: 64, uri: 'default-icon.png' }),
         };
     }
@@ -61,6 +65,7 @@ const {
 describe('focustree contentbuilder', () => {
     beforeEach(() => {
         resolvedFileCalls.length = 0;
+        broadScanCalls.length = 0;
     });
 
     after(() => {
@@ -214,6 +219,16 @@ describe('focustree contentbuilder', () => {
             focusById: { FOCUS_A: focus },
             gfxFiles: ['interface/mapped_icons.gfx', 'interface/other_icons.gfx'],
             focusIconGfxFileByName: { GFX_FOCUS_A: 'interface/mapped_icons.gfx' },
+            focusIconAssetResolution: {
+                gfxFiles: ['interface/mapped_icons.gfx'],
+                gfxFileByIconName: { GFX_FOCUS_A: 'interface/mapped_icons.gfx' },
+                textureFiles: ['gfx/interface/goals/focus_a.dds'],
+                textureFileByIconName: { GFX_FOCUS_A: 'gfx/interface/goals/focus_a.dds' },
+                textureExpiryTokenByIconName: { GFX_FOCUS_A: 'mtime-1' },
+                unresolvedIconNames: [],
+                styleSignature: 'focus-a',
+            },
+            focusIconStyleSignature: 'focus-a',
             gridBox: { position: { x: 0, y: 0 } },
             xGridSize: 96,
             yGridSize: 130,
@@ -230,5 +245,79 @@ describe('focustree contentbuilder', () => {
         assert.deepStrictEqual(resolvedFileCalls, [
             { name: 'GFX_FOCUS_A', gfxFiles: ['interface/mapped_icons.gfx'] },
         ]);
+        assert.deepStrictEqual(broadScanCalls, []);
+    });
+
+    it('uses the default icon for unresolved focus icons without broad gfx scans', async () => {
+        const focus = {
+            id: 'FOCUS_A',
+            layoutEditKey: 'focus_a',
+            x: 0,
+            y: 0,
+            icon: [{ icon: 'GFX_MISSING', condition: { _type: 'and', items: [] } }],
+            availableIfCapitulated: false,
+            hasAiWillDo: false,
+            hasCompletionReward: false,
+            prerequisite: [],
+            prerequisiteGroupCount: 0,
+            prerequisiteFocusCount: 0,
+            exclusive: [],
+            exclusiveCount: 0,
+            hasAllowBranch: false,
+            inAllowBranch: [],
+            allowBranch: undefined,
+            relativePositionId: undefined,
+            offset: [],
+            token: undefined,
+            file: 'common/national_focus/test.txt',
+            isInCurrentFile: true,
+            lintWarningCount: 0,
+            lintInfoCount: 0,
+        };
+        const focusTree = {
+            id: 'tree_a',
+            kind: 'focus',
+            focuses: { FOCUS_A: focus },
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            inlayConditionExprs: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState({
+            focusTrees: [focusTree],
+            allFocuses: [focus],
+            allInlays: [],
+            focusById: { FOCUS_A: focus },
+            gfxFiles: ['interface/other_icons.gfx'],
+            focusIconGfxFileByName: {},
+            focusIconAssetResolution: {
+                gfxFiles: [],
+                gfxFileByIconName: {},
+                textureFiles: [],
+                textureFileByIconName: {},
+                textureExpiryTokenByIconName: {},
+                unresolvedIconNames: ['GFX_MISSING'],
+                styleSignature: 'missing',
+            },
+            focusIconStyleSignature: 'missing',
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: false,
+        } as any);
+
+        assert.match(result.payload.dynamicStyleCss, /default-icon\.png/);
+        assert.deepStrictEqual(resolvedFileCalls, []);
+        assert.deepStrictEqual(broadScanCalls, []);
     });
 });

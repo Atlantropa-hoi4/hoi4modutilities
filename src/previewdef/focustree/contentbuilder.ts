@@ -17,6 +17,7 @@ import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 import { fitFocusIconToBounds } from './focusiconlayout';
 import { FocusConditionPresetsByTree } from './conditionpresets';
+import { createEmptyFocusIconAssetResolution, FocusIconAssetResolution } from './focusicongfx';
 import {
     ensureFocusTemplateStyles,
     focusDefaultPlaceholderSize,
@@ -38,6 +39,8 @@ export interface FocusTreeRenderPayload {
     renderedInlayWindows: Record<string, string>;
     gfxFiles: string[];
     focusIconGfxFileByName: Record<string, string>;
+    focusIconAssetResolution: FocusIconAssetResolution;
+    focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
     dynamicStyleCss: string;
     styleNonce: string;
@@ -59,6 +62,8 @@ export interface FocusTreeRenderBaseState {
     focusById: Record<string, Focus>;
     gfxFiles: string[];
     focusIconGfxFileByName: Record<string, string>;
+    focusIconAssetResolution: FocusIconAssetResolution;
+    focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
     xGridSize: number;
     yGridSize: number;
@@ -189,6 +194,8 @@ export async function buildFocusTreeRenderBaseState(
         focusById,
         gfxFiles: loadResult.result.gfxFiles,
         focusIconGfxFileByName: loadResult.result.focusIconGfxFileByName,
+        focusIconAssetResolution: loadResult.result.focusIconAssetResolution,
+        focusIconStyleSignature: loadResult.result.focusIconAssetResolution.styleSignature,
         gridBox,
         xGridSize,
         yGridSize,
@@ -205,6 +212,8 @@ export async function buildFocusTreeRenderBaseState(
 export async function buildFocusTreeRenderPayloadFromBaseState(
     baseState: FocusTreeRenderBaseState,
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
+    const focusIconAssetResolution = baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution();
+    const focusIconStyleSignature = baseState.focusIconStyleSignature ?? focusIconAssetResolution.styleSignature;
     const styleTable = new StyleTable();
     const maxFocusIconWidth = Math.max(baseState.xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
@@ -216,8 +225,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
         await prepareFocusIconStyles(
             baseState.allFocuses,
             styleTable,
-            baseState.gfxFiles,
-            baseState.focusIconGfxFileByName,
+            focusIconAssetResolution,
             baseState.xGridSize,
             baseState.yGridSize,
         );
@@ -254,6 +262,8 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             renderedInlayWindows,
             gfxFiles: baseState.gfxFiles,
             focusIconGfxFileByName: baseState.focusIconGfxFileByName,
+            focusIconAssetResolution,
+            focusIconStyleSignature,
             gridBox: baseState.gridBox,
             dynamicStyleCss: styleTable.toStyleContent(),
             styleNonce: Math.random().toString(36).slice(2),
@@ -356,6 +366,7 @@ function createEmptyFocusTreeRenderPayload(
     documentVersion: number,
     conditionPresetsByTree: FocusConditionPresetsByTree,
 ): FocusTreeRenderPayload {
+    const emptyIconAssetResolution = createEmptyFocusIconAssetResolution();
     return {
         focusTrees: [],
         selectedTreeId: undefined,
@@ -363,6 +374,8 @@ function createEmptyFocusTreeRenderPayload(
         renderedInlayWindows: {},
         gfxFiles: [],
         focusIconGfxFileByName: {},
+        focusIconAssetResolution: emptyIconAssetResolution,
+        focusIconStyleSignature: emptyIconAssetResolution.styleSignature,
         gridBox: {
             position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
             format: toStringAsSymbolIgnoreCase('up'),
@@ -764,8 +777,7 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
 async function prepareFocusIconStyles(
     focuses: readonly Focus[],
     styleTable: StyleTable,
-    gfxFiles: string[],
-    focusIconGfxFileByName: Record<string, string>,
+    focusIconAssetResolution: FocusIconAssetResolution,
     xGridSize: number,
     yGridSize: number,
 ): Promise<void> {
@@ -775,19 +787,21 @@ async function prepareFocusIconStyles(
     const uniqueIconNames = Array.from(new Set(
         focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
     ));
+    const unresolvedIconNames = new Set(focusIconAssetResolution.unresolvedIconNames);
     const iconDiagnostics = {
         resolvedFromResolvedFilesCount: 0,
-        resolvedFromGfxScanCount: 0,
         defaultFallbackCount: 0,
         unresolvedGfxNames: [] as string[],
     };
 
     await Promise.all(uniqueIconNames.map(async iconName => {
-        const iconResolution = await resolveFocusIcon(iconName, gfxFiles, focusIconGfxFileByName[iconName]);
+        const iconResolution = await resolveFocusIcon(
+            iconName,
+            focusIconAssetResolution.gfxFileByIconName[iconName],
+            unresolvedIconNames.has(iconName),
+        );
         if (iconResolution.kind === 'resolved-files') {
             iconDiagnostics.resolvedFromResolvedFilesCount += 1;
-        } else if (iconResolution.kind === 'gfx-scan') {
-            iconDiagnostics.resolvedFromGfxScanCount += 1;
         } else {
             iconDiagnostics.defaultFallbackCount += 1;
             iconDiagnostics.unresolvedGfxNames.push(iconName);
@@ -806,7 +820,6 @@ async function prepareFocusIconStyles(
 
     debug('Focus tree icon diagnostics', {
         resolvedFromResolvedFilesCount: iconDiagnostics.resolvedFromResolvedFilesCount,
-        resolvedFromGfxScanCount: iconDiagnostics.resolvedFromGfxScanCount,
         defaultFallbackCount: iconDiagnostics.defaultFallbackCount,
         unresolvedGfxNames: iconDiagnostics.unresolvedGfxNames.slice(0, 20),
     });
@@ -848,27 +861,17 @@ function prepareDeferredFocusIconStyles(
 
 type FocusIconResolution =
     | { kind: 'resolved-files'; image: Image }
-    | { kind: 'gfx-scan'; image: Image }
     | { kind: 'default'; image: Image | undefined };
 
-async function resolveFocusIcon(name: string, gfxFiles: string[], mappedGfxFile?: string): Promise<FocusIconResolution> {
-    const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(
-        name,
-        mappedGfxFile ? [mappedGfxFile] : gfxFiles,
-    );
-    if (resolvedFileSprite !== undefined) {
-        return {
-            kind: 'resolved-files',
-            image: resolvedFileSprite.image,
-        };
-    }
-
-    const scannedSprite = await getSpriteByGfxName(name, gfxFiles);
-    if (scannedSprite !== undefined) {
-        return {
-            kind: 'gfx-scan',
-            image: scannedSprite.image,
-        };
+async function resolveFocusIcon(name: string, mappedGfxFile?: string, isUnresolved: boolean = false): Promise<FocusIconResolution> {
+    if (mappedGfxFile && !isUnresolved) {
+        const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(name, [mappedGfxFile]);
+        if (resolvedFileSprite !== undefined) {
+            return {
+                kind: 'resolved-files',
+                image: resolvedFileSprite.image,
+            };
+        }
     }
 
     return {
@@ -878,5 +881,6 @@ async function resolveFocusIcon(name: string, gfxFiles: string[], mappedGfxFile?
 }
 
 export async function getFocusIcon(name: string, gfxFiles: string[]): Promise<Image | undefined> {
-    return (await resolveFocusIcon(name, gfxFiles)).image;
+    const resolvedFileSprite = await getSpriteByGfxNameFromResolvedFiles(name, gfxFiles);
+    return resolvedFileSprite?.image ?? (await getImageByPath(defaultFocusIcon));
 }

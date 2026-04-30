@@ -112,6 +112,14 @@ Focus tree icon resolution reuse fix 2026-04-28:
 - [x] Include the mapping in render style dependency metadata so changed icon resolution triggers a full style refresh.
 - [x] Reverify with focused contentbuilder/render-patch tests plus standard compile/lint/unit checks.
 
+Focus tree icon loading refactor 2026-04-30:
+- [x] Return a single focus icon asset resolution object with `.gfx`, texture, expiry, unresolved, and style-signature data.
+- [x] Use the asset resolution in loader dependencies, warning generation, icon CSS rendering, and render cache style invalidation.
+- [x] Preserve deferred placeholder rendering without icon image lookup.
+- [x] Reverify with focused Focus Tree icon tests plus standard compile/lint/unit checks.
+
+Review note: Focus Tree icon loading now carries one asset-resolution object from load through render, including texture expiry tokens in the style signature so asset-only changes force a full icon CSS refresh. Full icon CSS generation now uses the resolved `.gfx` mapping and unresolved-name list instead of broad rescans, while deferred first render still emits grey placeholders without image lookup. Reverified with focused icon/session/preview-manager mocha coverage, `npm run compile-ts`, `npm run lint`, and full `npm run test:unit`.
+
 Focus tree localization display 2026-04-28:
 - [x] Render actual localized focus text under each focus id using the configured preview language.
 - [x] Avoid showing unresolved localization keys as if they were real localized text.

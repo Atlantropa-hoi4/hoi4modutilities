@@ -113,4 +113,35 @@ describe('focus icon gfx resolver', () => {
         ]);
         assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_unresolved']);
     });
+
+    it('includes texture expiry tokens in the style signature', async () => {
+        const first = await resolveFocusIconGfxAssets(
+            ['GFX_icon'],
+            {
+                resolveIndexedFile: async () => 'interface/icons.gfx',
+                listInterfaceGfxFiles: async () => [],
+                readSpriteNames: async () => [],
+                readSpriteTextureFiles: async () => ({ GFX_icon: 'gfx/interface/goals/icon.dds' }),
+                readTextureExpiryToken: async () => 'mtime-1',
+            },
+        );
+        const second = await resolveFocusIconGfxAssets(
+            ['GFX_icon'],
+            {
+                resolveIndexedFile: async () => 'interface/icons.gfx',
+                listInterfaceGfxFiles: async () => [],
+                readSpriteNames: async () => [],
+                readSpriteTextureFiles: async () => ({ GFX_icon: 'gfx/interface/goals/icon.dds' }),
+                readTextureExpiryToken: async () => 'mtime-2',
+            },
+        );
+
+        assert.deepStrictEqual(first.textureFileByIconName, {
+            GFX_icon: 'gfx/interface/goals/icon.dds',
+        });
+        assert.deepStrictEqual(first.textureExpiryTokenByIconName, {
+            GFX_icon: 'mtime-1',
+        });
+        assert.notStrictEqual(first.styleSignature, second.styleSignature);
+    });
 });
