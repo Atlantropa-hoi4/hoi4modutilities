@@ -180,9 +180,23 @@ export async function prewarmLocalisationIndex(): Promise<void> {
         return;
     }
 
+    await whenLocalisationIndexReady({ showStatusBar: false });
+}
+
+export function isLocalisationIndexReady(): boolean {
+    return !isLocalisationIndexEnabled()
+        || (localisationIndexService.isReady('global') && localisationIndexService.isReady('workspace'));
+}
+
+export async function whenLocalisationIndexReady(options?: { showStatusBar?: boolean }): Promise<void> {
+    if (!isLocalisationIndexEnabled()) {
+        return;
+    }
+
+    const showStatusBar = options?.showStatusBar ?? true;
     await Promise.all([
-        ensureGlobalLocalisationIndexImpl(false),
-        ensureWorkspaceLocalisationIndexImpl(false),
+        ensureGlobalLocalisationIndexImpl(showStatusBar),
+        ensureWorkspaceLocalisationIndexImpl(showStatusBar),
     ]);
 }
 

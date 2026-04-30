@@ -243,9 +243,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     }
     const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
     const localisationResolveStart = Date.now();
-    const focusLocalizationTextById = baseState.deferredAssetLoad
-        ? {}
-        : await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
     const focusTemplateRenderStart = Date.now();
     const renderedFocus: Record<string, string> = {};
@@ -256,7 +254,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.focusPositionActiveFile,
             baseState.xGridSize,
             baseState.yGridSize,
-            baseState.deferredAssetLoad ? '' : focusLocalizationTextById[focus.id],
+            focusLocalizationTextById[focus.id],
         ).replace(/\s\s+/g, ' ');
     }
     const focusTemplateRenderDurationMs = Date.now() - focusTemplateRenderStart;

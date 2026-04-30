@@ -21,9 +21,9 @@ export function isSharedFocusIndexEnabled(): boolean {
 }
 
 export function isGfxIndexEnabled(): boolean {
-    return hasFeatureFlag('gfxIndex');
+    return !hasFeatureFlag('!gfxIndex');
 }
 
 export function isLocalisationIndexEnabled(): boolean {
-    return hasFeatureFlag('localisationIndex');
+    return !hasFeatureFlag('!localisationIndex');
 }

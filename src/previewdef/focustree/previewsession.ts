@@ -24,6 +24,8 @@ import { FocusTreeSnapshotBuilder } from './snapshotbuilder';
 import { debug } from '../../util/debug';
 import { measureAsync, recordPerf } from '../../util/perf';
 import { UserError } from '../../util/common';
+import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
+import { isLocalisationIndexEnabled } from '../../util/featureflags';
 
 export interface FocusTreeRefreshOptions {
     ignorePendingLocalEditDocumentVersion?: boolean;
@@ -53,7 +55,7 @@ export interface FocusTreeSnapshotBuilderLike {
 }
 
 export class FocusTreePreviewSession {
-    private static readonly defaultDeferredHydrationDelayMs = 1200;
+    private static readonly defaultDeferredHydrationDelayMs = 250;
     private readonly uri: vscode.Uri;
     private readonly webview: vscode.Webview;
     private readonly getConditionPresetsByTree: () => FocusConditionPresetsByTree;
@@ -65,6 +67,7 @@ export class FocusTreePreviewSession {
     private latestDocument: vscode.TextDocument | undefined;
     private readonly traceEvents: Array<Record<string, unknown>> = [];
     private deferredHydrationTimer: ReturnType<typeof setTimeout> | undefined;
+    private pendingLocalisationRefreshDocumentVersion: number | undefined;
 
     constructor(options: FocusTreePreviewSessionOptions) {
         this.uri = options.uri;
@@ -108,14 +111,18 @@ export class FocusTreePreviewSession {
         this.resetSessionState();
         this.webview.html = this.renderShell(document.version);
         const requestId = beginFocusTreeRefresh(this.runtimeState);
+        const initialAssetLoadMode: FocusTreeAssetLoadMode = isLocalisationIndexEnabled() && isLocalisationIndexReady()
+            ? 'full'
+            : 'deferred';
         this.trace('initializePanel', {
             requestId,
             documentVersion: document.version,
             htmlRefresh: 'shell-only',
+            assetLoadMode: initialAssetLoadMode,
         });
-        void this.safeRefreshWithSnapshot(document, requestId, document.version, 'deferred', {
+        void this.safeRefreshWithSnapshot(document, requestId, document.version, initialAssetLoadMode, {
             source: 'initialize',
-            allowDeferredHydration: true,
+            allowDeferredHydration: initialAssetLoadMode === 'deferred',
         });
     }
 
@@ -392,9 +399,55 @@ export class FocusTreePreviewSession {
             && this.latestDocument?.version === requestDocumentVersion
             && this.runtimeState.deferredHydrationDocumentVersion !== requestDocumentVersion) {
             this.scheduleDeferredHydration(document, requestDocumentVersion);
+            this.scheduleLocalisationReadyRefresh(document, requestDocumentVersion);
         } else if (!baseState.deferredAssetLoad) {
             this.runtimeState.deferredHydrationDocumentVersion = undefined;
         }
+    }
+
+    private scheduleLocalisationReadyRefresh(
+        document: vscode.TextDocument,
+        requestDocumentVersion: number,
+    ): void {
+        if (isLocalisationIndexReady() || this.pendingLocalisationRefreshDocumentVersion === requestDocumentVersion) {
+            return;
+        }
+
+        this.pendingLocalisationRefreshDocumentVersion = requestDocumentVersion;
+        this.trace('deferLocalisationReadyRefresh', {
+            documentVersion: requestDocumentVersion,
+        });
+
+        void whenLocalisationIndexReady({ showStatusBar: false }).then(() => {
+            if (this.pendingLocalisationRefreshDocumentVersion !== requestDocumentVersion) {
+                return;
+            }
+
+            this.pendingLocalisationRefreshDocumentVersion = undefined;
+            const latestDocument = this.getLatestDocument(this.uri) ?? this.latestDocument;
+            const latestDocumentVersion = latestDocument?.version;
+            if (!latestDocument || latestDocumentVersion !== requestDocumentVersion) {
+                this.trace('localisationReadyRefreshSkipped', {
+                    documentVersion: requestDocumentVersion,
+                    latestDocumentVersion,
+                });
+                return;
+            }
+
+            this.trace('localisationReadyRefresh', {
+                documentVersion: requestDocumentVersion,
+            });
+            void this.refreshDocument(latestDocument, {
+                assetLoadMode: 'full',
+                source: 'dependency',
+            });
+        }, error => {
+            this.pendingLocalisationRefreshDocumentVersion = undefined;
+            this.trace('localisationReadyRefreshFailed', {
+                documentVersion: requestDocumentVersion,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        });
     }
 
     private scheduleDeferredHydration(
@@ -475,6 +528,7 @@ export class FocusTreePreviewSession {
 
     private resetSessionState(): void {
         this.cancelDeferredHydrationTimer();
+        this.pendingLocalisationRefreshDocumentVersion = undefined;
         resetFocusTreeRuntimeState(this.runtimeState);
     }
 

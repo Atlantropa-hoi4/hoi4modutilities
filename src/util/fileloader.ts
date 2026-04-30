@@ -360,10 +360,7 @@ async function runFileReadWithConcurrency<T>(
     const waitStart = Date.now();
     if (activeFileReadCount >= fileReadConcurrencyLimit) {
         incrementPerfCounter('fileloader.read.queued', tags);
-        await new Promise<void>(resolve => queuedFileReads.push(() => {
-            activeFileReadCount += 1;
-            resolve();
-        }));
+        await new Promise<void>(resolve => queuedFileReads.push(resolve));
     } else {
         activeFileReadCount += 1;
     }

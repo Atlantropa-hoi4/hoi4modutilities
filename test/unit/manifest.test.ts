@@ -83,4 +83,10 @@ describe('extension manifest', () => {
         assert.ok(shineEntry.when);
         assert.ok(shineEntry.when.includes('server.shouldShowFocusGfxShine'));
     });
+
+    it('keeps feature flags empty because preview indexes are default-on in code', () => {
+        const featureFlags = manifest.contributes.configuration[0].properties['hoi4ModUtilities.featureFlags'];
+
+        assert.deepStrictEqual(featureFlags.default, []);
+    });
 });

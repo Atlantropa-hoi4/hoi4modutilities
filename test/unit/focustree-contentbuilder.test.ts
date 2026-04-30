@@ -95,7 +95,7 @@ describe('focustree contentbuilder', () => {
         nodeModule._load = originalLoad;
     });
 
-    it('keeps deferred focus icon styles lightweight during deferred asset loads', async () => {
+    it('keeps deferred focus icon styles lightweight while using ready localisation', async () => {
         localisationIndexEnabled = true;
         const focus = {
             id: 'FOCUS_A',
@@ -158,7 +158,6 @@ describe('focustree contentbuilder', () => {
         assert.doesNotMatch(result.payload.dynamicStyleCss, /test-icon\.png/);
         assert.match(result.payload.dynamicStyleCss, /background:\s*grey/);
         assert.deepStrictEqual(resolvedFileCalls, []);
-        assert.deepStrictEqual(localisationCalls, []);
         assert.strictEqual(result.metrics.deferredAssetLoad, true);
         assert.ok(result.metrics.localisationResolveDurationMs >= 0);
     });

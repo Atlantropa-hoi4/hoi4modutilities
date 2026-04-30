@@ -46,7 +46,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 | `hoi4ModUtilities.modFile` | `string` | Working `.mod` file used for `replace_path` resolution. |
 | `hoi4ModUtilities.enableSupplyArea` | `boolean` | Enables supply-area checks for older HOI4 versions. |
 | `hoi4ModUtilities.previewLocalisation` | `string enum` | Preview language used by localisation-aware previews. |
-| `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced or experimental flows. |
+| `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced flows. GFX/localisation indexes are enabled without flags; use `!gfxIndex` or `!localisationIndex` to disable them. |
 
 ## Development
 

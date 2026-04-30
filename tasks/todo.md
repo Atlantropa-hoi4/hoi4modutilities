@@ -322,3 +322,28 @@ Focus Tree explicit icon GFX fallback 2026-04-30:
 - [x] Cover priority fallback behavior with focused resolver unit coverage.
 
 Review note: full asset loading now consults the GFX index, checks explicit `.gfx` dependencies first, and no longer bounds the fallback scan for non-indexed custom focus icons. This restores discovery for `#!gfx`-less files such as `interface/Meowl/MEO_goals.gfx`, while deferred first render still avoids asset work. Reverified with focused icon resolver/loader tests, `npm run compile-ts`, `npm run lint`, and `git diff --check`.
+
+Focus Tree late icon/localisation display 2026-04-30:
+- [x] Let deferred first render use already-ready localisation data without blocking on index builds.
+- [x] Queue a full Focus Tree refresh when localisation indexes finish after the deferred render.
+- [x] Shorten delayed full hydration so Focus icons leave placeholders sooner after first paint.
+- [x] Reverify with focused Focus Tree/localisation tests plus standard compile/lint checks.
+
+Review note: deferred Focus Tree snapshots now use ready-only localisation lookups instead of always suppressing text, and open previews queue a full refresh once localisation indexes finish if they were not ready during first paint. Full hydration starts after 250ms instead of 1200ms so Focus icon placeholders are replaced sooner while preserving the lightweight first snapshot. Reverified with targeted Focus Tree/localisation mocha tests, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+TFR-Korea real-mod Focus Tree smoke 2026-04-30:
+- [x] Run Focus Tree loader/render smoke against `TFR-Korea/common/national_focus/TFR_national_focus_KOR.txt`.
+- [x] Identify and fix fileloader read-slot leakage after queued large-mod index reads.
+- [x] Add regression coverage for queued file reads releasing slots.
+- [x] Reverify with targeted fileloader/Focus Tree tests plus standard compile/lint/unit/build checks.
+
+Review note: TFR-Korea cold deferred render handled 635 focuses in roughly 67ms base + 10ms payload, but index prewarm exposed a queued `readFileFromModOrHOI4` slot leak that could stall subsequent preview reads indefinitely. The fileloader now transfers an existing active slot to the next queued read instead of incrementing the active count again. After the fix, TFR-Korea warm deferred render completed in roughly 36ms base + 8ms payload with 317 localized focus labels, and full hydration completed in roughly 197ms base + 742ms payload with 514 resolved icon names and 524 icon background images.
+
+Focus Tree default index prewarm 2026-04-30:
+- [x] Confirm TFR-Korea workspace does not set `hoi4ModUtilities.featureFlags`.
+- [x] Enable `gfxIndex` and `localisationIndex` without requiring feature flags.
+- [x] Register preview index prewarm during extension index service activation.
+- [x] Use full initial Focus Tree snapshots when localisation indexes are already prewarmed.
+- [x] Reverify manifest/default settings plus standard compile/lint/unit/build checks.
+
+Review note: real TFR-Korea testing differed from the smoke setup because the workspace had no feature flags, while the smoke explicitly enabled `gfxIndex` and `localisationIndex`. The extension now enables those indexes without requiring opt-in flags and actually registers the existing prewarm timer, so large-mod previews can have GFX/localisation data ready before the Focus Tree panel requests its first content. If localisation indexes are already ready at panel initialization, Focus Tree now sends a full initial snapshot instead of a deferred placeholder snapshot. In the default-setting TFR smoke, `featureFlags` stayed `[]` while `gfxIndex` and `localisationIndex` were enabled, and the first full content snapshot produced 317 localized labels plus 524 icon background images.
