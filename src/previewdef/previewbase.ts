@@ -45,6 +45,14 @@ function resolveFocusIdSelection(
     return new vscode.Range(document.positionAt(start), document.positionAt(end));
 }
 
+function collapseSelectionWhenRequested(range: vscode.Range | undefined, select: boolean | undefined): vscode.Range | undefined {
+    if (select !== false || range === undefined) {
+        return range;
+    }
+
+    return new vscode.Range(range.start, range.start);
+}
+
 export abstract class PreviewBase {
     private cachedDependencies: string[] | undefined = undefined;
 
@@ -118,12 +126,12 @@ export abstract class PreviewBase {
         this.cachedDependencies = dependencies;
     }
 
-    protected async openOrCopyFile(file: string, start: number | undefined, end: number | undefined, focusId?: string): Promise<void> {
+    protected async openOrCopyFile(file: string, start: number | undefined, end: number | undefined, focusId?: string, select?: boolean): Promise<void> {
         const filePathInMod = await getFilePathFromMod(file);
         if (filePathInMod !== undefined) {
             const filePathInModWithoutOpened = getHoiOpenedFileOriginalUri(filePathInMod);
             const document = getDocumentByUri(filePathInModWithoutOpened) ?? await vscode.workspace.openTextDocument(filePathInModWithoutOpened);
-            const resolvedRange = resolveFocusIdSelection(document, start, end, focusId);
+            const resolvedRange = collapseSelectionWhenRequested(resolveFocusIdSelection(document, start, end, focusId), select);
             await vscode.window.showTextDocument(document, {
                 selection: resolvedRange,
                 viewColumn: vscode.ViewColumn.One,
@@ -154,7 +162,7 @@ export abstract class PreviewBase {
             await writeFile(targetPath, buffer);
 
             const document = await vscode.workspace.openTextDocument(targetPath);
-            const resolvedRange = resolveFocusIdSelection(document, start, end, focusId);
+            const resolvedRange = collapseSelectionWhenRequested(resolveFocusIdSelection(document, start, end, focusId), select);
             await vscode.window.showTextDocument(document, {
                 selection: resolvedRange,
                 viewColumn: vscode.ViewColumn.One,
@@ -191,13 +199,13 @@ export abstract class PreviewBase {
                                 return;
                             }
 
-                            const resolvedRange = resolveFocusIdSelection(document, msg.start, msg.end, msg.focusId);
+                            const resolvedRange = collapseSelectionWhenRequested(resolveFocusIdSelection(document, msg.start, msg.end, msg.focusId), msg.select);
                             await vscode.window.showTextDocument(this.uri, {
                                 selection: resolvedRange,
                                 viewColumn: vscode.ViewColumn.One
                             });
                         } else {
-                            await this.openOrCopyFile(msg.file, msg.start, msg.end, msg.focusId);
+                            await this.openOrCopyFile(msg.file, msg.start, msg.end, msg.focusId, msg.select);
                         }
                     }
                     break;

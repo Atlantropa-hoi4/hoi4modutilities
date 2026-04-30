@@ -142,6 +142,7 @@ let focusNavigateTimer: number | undefined = undefined;
 let focusContextMenuTargetId: string | undefined = undefined;
 let suppressConditionSelectionChange = false;
 let suppressConditionPresetSelectionChange = false;
+let suppressInlayWindowSelectionChange = false;
 let pendingConditionPresetTargetTreeId: string | undefined = undefined;
 let pendingConditionPresetExprKeys: string[] = [];
 let xGridSize: number = window.xGridSize;
@@ -728,15 +729,15 @@ function isFocusSelected(focusId: string | undefined): boolean {
 
 function getContinuousFocusDisplayPositionFromStored(x: number, y: number): NumberPosition {
     return {
-        x: x - continuousFocusLeftAnchorOffset,
-        y: y + continuousFocusTopAnchorOffset,
+        x: currentGridLeftPadding + x - continuousFocusLeftAnchorOffset,
+        y: currentGridTopPadding + y + continuousFocusTopAnchorOffset,
     };
 }
 
 function getContinuousFocusStoredPositionFromDisplay(left: number, top: number): NumberPosition {
     return {
-        x: left + continuousFocusLeftAnchorOffset,
-        y: top - continuousFocusTopAnchorOffset,
+        x: left - currentGridLeftPadding + continuousFocusLeftAnchorOffset,
+        y: top - currentGridTopPadding - continuousFocusTopAnchorOffset,
     };
 }
 
@@ -2193,9 +2194,9 @@ async function buildContent(): Promise<boolean> {
     syncCurrentSelectedFocusIds();
     setCurrentFocusPositions({ ...focusPosition });
     currentRenderedExprs = renderExprs;
-    applyContinuousFocusElementPosition(focusTree);
     currentGridLeftPadding = leftPadding;
     currentGridTopPadding = topPadding;
+    applyContinuousFocusElementPosition(focusTree);
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement(window.styleNonce);
     const minimumCanvasWidth = currentGridLeftPadding + Math.max(stableLayout.maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(stableLayout.maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
@@ -2208,6 +2209,7 @@ async function buildContent(): Promise<boolean> {
     rebuildRenderedFocusElementCache();
     clearCheckedFocuses();
     setupCheckedFocuses(Object.values(focusTree.focuses), currentCompletableFocusIds);
+    refreshInlayWindowSelector(focusTree, renderExprs);
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
     inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, renderExprs);
 
@@ -2269,21 +2271,7 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         }
     }
 
-    const visibleInlayWindows = getVisibleInlayWindows(focusTree);
-    const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
-    const inlayWindowsContainerElement = document.getElementById('inlay-window-container') as HTMLDivElement | null;
-    if (inlayWindowsContainerElement) {
-        inlayWindowsContainerElement.style.display = visibleInlayWindows.length > 0 ? 'flex' : 'none';
-    }
-    if (inlayWindowsElement) {
-        replaceDivDropdownOptions(inlayWindowsElement, visibleInlayWindows.map(inlay => ({
-            value: inlay.id,
-            text: inlay.id,
-        })));
-        const selectedInlayWindowId = getSelectedInlayWindowId(focusTree, visibleInlayWindows.map(inlay => inlay.id));
-        setSelectedInlayWindowId(focusTree, selectedInlayWindowId);
-        inlayWindows?.selectedValues$.next(selectedInlayWindowId ? [selectedInlayWindowId] : []);
-    }
+    refreshInlayWindowSelector(focusTree);
 
     renderWarningsPanel(focusTree);
 }
@@ -2360,6 +2348,7 @@ function renderWarningsPanel(focusTree: FocusTree) {
                 start: navigation.start,
                 end: navigation.end,
                 file: navigation.file,
+                select: false,
             });
         });
         warningsElement.appendChild(button);
@@ -2499,17 +2488,40 @@ function getToolbarConditionExprs(focusTree: FocusTree): ConditionItem[] {
     return [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...getCheckedFocusConditionExprs(), ...selectedExprs];
 }
 
-function getVisibleInlayWindows(focusTree: FocusTree): typeof focusTree.inlayWindows {
+function getVisibleInlayWindows(focusTree: FocusTree, exprs?: ConditionItem[]): typeof focusTree.inlayWindows {
     if (!useConditionInFocus) {
         return focusTree.inlayWindows;
     }
 
-    const exprs = getToolbarConditionExprs(focusTree);
-    return focusTree.inlayWindows.filter(inlay => applyCondition(inlay.visible, exprs));
+    const conditionExprs = exprs ?? getToolbarConditionExprs(focusTree);
+    return focusTree.inlayWindows.filter(inlay => applyCondition(inlay.visible, conditionExprs));
+}
+
+function refreshInlayWindowSelector(focusTree: FocusTree, exprs?: ConditionItem[]) {
+    const visibleInlayWindows = getVisibleInlayWindows(focusTree, exprs);
+    const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
+    const inlayWindowsContainerElement = document.getElementById('inlay-window-container') as HTMLDivElement | null;
+    if (inlayWindowsContainerElement) {
+        inlayWindowsContainerElement.style.display = visibleInlayWindows.length > 0 ? 'flex' : 'none';
+    }
+    if (inlayWindowsElement) {
+        replaceDivDropdownOptions(inlayWindowsElement, visibleInlayWindows.map(inlay => ({
+            value: inlay.id,
+            text: inlay.id,
+        })));
+        const selectedInlayWindowId = getSelectedInlayWindowId(focusTree, visibleInlayWindows.map(inlay => inlay.id));
+        setSelectedInlayWindowId(focusTree, selectedInlayWindowId);
+        suppressInlayWindowSelectionChange = true;
+        try {
+            inlayWindows?.selectedValues$.next(selectedInlayWindowId ? [selectedInlayWindowId] : []);
+        } finally {
+            suppressInlayWindowSelectionChange = false;
+        }
+    }
 }
 
 function renderInlayWindows(focusTree: FocusTree, exprs: ConditionItem[]): string {
-    const visibleInlayWindows = getVisibleInlayWindows(focusTree);
+    const visibleInlayWindows = getVisibleInlayWindows(focusTree, exprs);
     const selectedInlayWindowId = getSelectedInlayWindowId(focusTree, visibleInlayWindows.map(inlay => inlay.id));
     if (!selectedInlayWindowId) {
         return '';
@@ -2699,6 +2711,7 @@ function applyIncrementalCurrentTreeUpdate(
             return false;
         }
 
+        refreshInlayWindowSelector(focusTree, currentRenderedExprs);
         inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, currentRenderedExprs);
         subscribeNavigators(inlayWindowPlaceholder);
     }
@@ -2944,6 +2957,10 @@ window.addEventListener('load', tryRun(async function() {
             inlayWindows.selectedValues$.subscribe(async selection => {
                 const focusTree = getCurrentFocusTree();
                 const nextSelection = selection[0];
+                if (suppressInlayWindowSelectionChange) {
+                    previousSelection = nextSelection;
+                    return;
+                }
                 if (!focusTree || previousSelection === nextSelection) {
                     return;
                 }
