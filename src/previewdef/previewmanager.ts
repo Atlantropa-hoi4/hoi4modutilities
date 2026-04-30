@@ -234,21 +234,24 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private updatePreviewItemsInSubscription(uri: vscode.Uri, changeKind: PreviewExternalFileChangeKind = 'change'): void {
-        this.dependencyUpdateScheduler.schedule(uri.toString(), 1000, async () => {
-            const affectedPreviews = new Set([
-                ...this.dependencyTracker.getAffected(uri.toString()),
-                ...Object.values(this.previews).filter(preview => preview.shouldRefreshOnExternalFileChange(uri, changeKind)),
-            ]);
-            for (const otherPreview of affectedPreviews) {
-                if (uri.toString() === otherPreview.uri.toString()) {
-                    continue;
-                }
+        const changedUri = uri.toString();
+        const affectedPreviews = new Set([
+            ...this.dependencyTracker.getAffected(changedUri),
+            ...Object.values(this.previews).filter(preview => preview.shouldRefreshOnExternalFileChange(uri, changeKind)),
+        ]);
+        for (const otherPreview of affectedPreviews) {
+            const previewUri = otherPreview.uri.toString();
+            if (changedUri === previewUri) {
+                continue;
+            }
+
+            this.dependencyUpdateScheduler.schedule(previewUri, 1000, async () => {
                 const otherDocument = getDocumentByUri(otherPreview.uri);
                 if (otherDocument && !otherPreview.isDisposed) {
-                    await otherPreview.onDocumentChange(otherDocument);
+                    await otherPreview.onDocumentChange(otherDocument, { source: 'dependency' });
                 }
-            }
-        });
+            });
+        }
     }
 
     private updatePreviewItem(previewItem: PreviewBase, document: vscode.TextDocument): void {

@@ -119,8 +119,16 @@ function createSession(overrides?: {
                     styleDependencySignature: '',
                 },
                 metrics: {
+                    loadDurationMs: 1,
+                    focusIconStyleDurationMs: 1,
+                    localisationResolveDurationMs: 1,
+                    focusTemplateRenderDurationMs: 1,
                     focusRenderDurationMs: 1,
+                    inlayStyleDurationMs: 1,
                     inlayRenderDurationMs: 1,
+                    focusCount: 0,
+                    inlayCount: 0,
+                    deferredAssetLoad: baseState.deferredAssetLoad,
                 },
             }) as any),
         },
@@ -270,7 +278,7 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
     });
 
-    it('starts full hydration base-state work in parallel with the deferred first snapshot', async () => {
+    it('schedules full hydration only after the deferred first snapshot is posted', async () => {
         const document = createDocument(16);
         let resolveDeferred: ((value: any) => void) | undefined;
         let resolveFull: ((value: any) => void) | undefined;
@@ -290,21 +298,23 @@ describe('focustree preview session', () => {
 
         await session.initializePanel(document);
 
-        assert.deepStrictEqual(requestedModes, ['full', 'deferred']);
+        assert.deepStrictEqual(requestedModes, ['deferred']);
 
         session.handleWebviewReady();
         resolveDeferred?.(createBaseState(document.version, true));
         await new Promise(resolve => setTimeout(resolve, 0));
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
-        assert.deepStrictEqual(requestedModes, ['full', 'deferred']);
+        assert.deepStrictEqual(requestedModes, ['deferred']);
 
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
         resolveFull?.(createBaseState(document.version, false));
         await new Promise(resolve => setTimeout(resolve, 0));
         await new Promise(resolve => setTimeout(resolve, 0));
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 2);
-        assert.deepStrictEqual(requestedModes, ['full', 'deferred']);
+        assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
     });
 
     it('still applies later IDE document refreshes while the initial hydration promise is pending', async () => {

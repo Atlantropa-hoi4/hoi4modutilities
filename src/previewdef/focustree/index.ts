@@ -75,11 +75,16 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     public override getDocumentChangeDebounceMs(): number {
-        return 0;
+        return 75;
     }
 
-    public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
-        await this.session.refreshDocument(document);
+    public override async onDocumentChange(
+        document: vscode.TextDocument,
+        options?: { source?: 'document' | 'dependency' },
+    ): Promise<void> {
+        await this.session.refreshDocument(document, {
+            source: options?.source ?? 'document',
+        });
     }
 
     public override shouldRefreshOnExternalFileChange(uri: vscode.Uri, changeKind: 'change' | 'create' | 'delete'): boolean {

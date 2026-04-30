@@ -77,7 +77,10 @@ export abstract class PreviewBase {
         this.registerEvents(panel);
     }
 
-    public async onDocumentChange(document: vscode.TextDocument): Promise<void> {
+    public async onDocumentChange(
+        document: vscode.TextDocument,
+        _options?: { source?: 'document' | 'dependency' },
+    ): Promise<void> {
         try {
             this.panel.webview.html = await this.getContent(document);
         } catch(e) {

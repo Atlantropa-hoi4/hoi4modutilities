@@ -201,3 +201,12 @@ Formatter event call inline collapse 2026-04-29:
 Formatter total review 2026-04-29:
 - [x] Re-check formatter provider registration, path classifier, activation events, and Kaiserreich read-only sweep.
 - [x] Align contextual activation globs with formatter-supported `common`, `events`, `history`, `country_metadata`, and nested GUI/GFX paths.
+
+Focus Tree Preview responsiveness refactor 2026-04-30:
+- [x] Add stage-level render metrics for loader, localisation, icon style, focus template, inlay style, and inlay rendering.
+- [x] Keep deferred first render lightweight by skipping full localisation and asset-heavy icon/inlay work until hydration.
+- [x] Schedule full hydration only after the deferred snapshot is posted to avoid first-paint CPU contention.
+- [x] Coalesce external dependency refresh bursts by preview document URI and use a short document-edit debounce for Focus Tree Preview.
+- [x] Reverify deferred localisation/icon behavior, deferred hydration ordering, and dependency coalescing with focused tests.
+
+Review note: deferred Focus Tree first paint now renders the focus structure with placeholder icon styles and no full localisation lookup, then schedules full hydration after the first snapshot reaches the webview. External dependency changes are coalesced per preview instead of per changed file, and trace state now includes stage-level render and patch metrics for before/after performance inspection. Reverified with focused Focus Tree/PreviewManager mocha coverage, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run test-ui`, and `git diff --check`.

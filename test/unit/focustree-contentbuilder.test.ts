@@ -5,6 +5,8 @@ const nodeModule = Module as typeof Module & { _load: (request: string, parent: 
 const originalLoad = nodeModule._load;
 const resolvedFileCalls: Array<{ name: string; gfxFiles: string[] }> = [];
 const broadScanCalls: string[] = [];
+const localisationCalls: string[] = [];
+let localisationIndexEnabled = false;
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -26,7 +28,21 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         && parent?.filename?.includes('focustree')) {
         return {
             isUseConditionInFocusEnabled: () => false,
-            isLocalisationIndexEnabled: () => false,
+            isLocalisationIndexEnabled: () => localisationIndexEnabled,
+        };
+    }
+
+    if ((request.endsWith('/util/localisationIndex') || request === '../../util/localisationIndex')
+        && parent?.filename?.includes('focusrender')) {
+        return {
+            getLocalisedTextQuick: async (key: string) => {
+                localisationCalls.push(key);
+                return key === 'FOCUS_A' ? 'Localized focus A' : undefined;
+            },
+            getLocalisedTextQuickIfReady: (key: string) => {
+                localisationCalls.push(key);
+                return key === 'FOCUS_A' ? 'Localized focus A' : undefined;
+            },
         };
     }
 
@@ -66,6 +82,8 @@ describe('focustree contentbuilder', () => {
     beforeEach(() => {
         resolvedFileCalls.length = 0;
         broadScanCalls.length = 0;
+        localisationCalls.length = 0;
+        localisationIndexEnabled = false;
     });
 
     after(() => {
@@ -73,6 +91,7 @@ describe('focustree contentbuilder', () => {
     });
 
     it('keeps deferred focus icon styles lightweight during deferred asset loads', async () => {
+        localisationIndexEnabled = true;
         const focus = {
             id: 'FOCUS_A',
             layoutEditKey: 'focus_a',
@@ -134,6 +153,9 @@ describe('focustree contentbuilder', () => {
         assert.doesNotMatch(result.payload.dynamicStyleCss, /test-icon\.png/);
         assert.match(result.payload.dynamicStyleCss, /background:\s*grey/);
         assert.deepStrictEqual(resolvedFileCalls, []);
+        assert.deepStrictEqual(localisationCalls, []);
+        assert.strictEqual(result.metrics.deferredAssetLoad, true);
+        assert.ok(result.metrics.localisationResolveDurationMs >= 0);
     });
 
     it('hides the inlay selector by default in the shell markup', async () => {

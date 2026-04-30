@@ -77,8 +77,16 @@ export interface FocusTreeRenderBaseState {
 }
 
 export interface FocusTreeRenderPayloadBuildMetrics {
+    loadDurationMs: number;
+    focusIconStyleDurationMs: number;
+    localisationResolveDurationMs: number;
+    focusTemplateRenderDurationMs: number;
     focusRenderDurationMs: number;
+    inlayStyleDurationMs: number;
     inlayRenderDurationMs: number;
+    focusCount: number;
+    inlayCount: number;
+    deferredAssetLoad: boolean;
 }
 
 export async function renderFocusTreeFile(
@@ -219,6 +227,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
     const focusRenderStart = Date.now();
+    const focusIconStyleStart = Date.now();
     if (baseState.deferredAssetLoad) {
         prepareDeferredFocusIconStyles(baseState.allFocuses, styleTable, baseState.xGridSize, baseState.yGridSize);
     } else {
@@ -230,7 +239,13 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.yGridSize,
         );
     }
-    const focusLocalizationTextById = await resolveFocusLocalizationTextById(baseState.allFocuses);
+    const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
+    const localisationResolveStart = Date.now();
+    const focusLocalizationTextById = baseState.deferredAssetLoad
+        ? {}
+        : await resolveFocusLocalizationTextById(baseState.allFocuses);
+    const localisationResolveDurationMs = Date.now() - localisationResolveStart;
+    const focusTemplateRenderStart = Date.now();
     const renderedFocus: Record<string, string> = {};
     for (const focus of baseState.allFocuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
@@ -239,15 +254,19 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.focusPositionActiveFile,
             baseState.xGridSize,
             baseState.yGridSize,
-            focusLocalizationTextById[focus.id],
+            baseState.deferredAssetLoad ? '' : focusLocalizationTextById[focus.id],
         ).replace(/\s\s+/g, ' ');
     }
+    const focusTemplateRenderDurationMs = Date.now() - focusTemplateRenderStart;
     const focusRenderDurationMs = Date.now() - focusRenderStart;
 
     const inlayRenderStart = Date.now();
+    let inlayStyleDurationMs = 0;
     const renderedInlayWindows: Record<string, string> = {};
     if (!baseState.deferredAssetLoad) {
+        const inlayStyleStart = Date.now();
         await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+        inlayStyleDurationMs = Date.now() - inlayStyleStart;
         await Promise.all(baseState.allInlays.map(async (inlay) => {
             renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
         }));
@@ -278,8 +297,16 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
         metrics: {
+            loadDurationMs: baseState.loadDurationMs,
+            focusIconStyleDurationMs,
+            localisationResolveDurationMs,
+            focusTemplateRenderDurationMs,
             focusRenderDurationMs,
+            inlayStyleDurationMs,
             inlayRenderDurationMs,
+            focusCount: baseState.allFocuses.length,
+            inlayCount: baseState.allInlays.length,
+            deferredAssetLoad: baseState.deferredAssetLoad,
         },
     };
 }

@@ -313,6 +313,45 @@ describe('preview manager', () => {
         }
     });
 
+    it('coalesces external dependency refreshes by preview document uri', async () => {
+        const dependentDocument = createDocument('file:///workspace/common/national_focus/preview.txt');
+        const previews: FakePreview[] = [];
+        const scheduled = new Map<string, () => void | Promise<void>>();
+        const manager = new PreviewManager({
+            previewProviders: [
+                createPanelProvider('focus', () => 0, (uri, panel) => {
+                    const preview = new FakePreview(uri, panel, 0, changedUri => !!changedUri.path?.includes('/interface/'));
+                    previews.push(preview);
+                    return preview as any;
+                }),
+            ] as any,
+            documentUpdateScheduler: immediateScheduler(),
+            dependencyUpdateScheduler: {
+                schedule: (key: string, _delayMs: number, action: () => void | Promise<void>) => {
+                    scheduled.set(key, action);
+                },
+                dispose: () => undefined,
+            },
+        });
+        const disposable = manager.register();
+
+        try {
+            await manager['showPreviewImpl'](dependentDocument.uri as any);
+
+            watchedAssetChanges.forEach(listener => listener(createUri('file:///workspace/interface/a.gfx')));
+            watchedAssetChanges.forEach(listener => listener(createUri('file:///workspace/interface/b.gfx')));
+            await Promise.resolve();
+
+            assert.deepStrictEqual([...scheduled.keys()], [dependentDocument.uri.toString()]);
+            await scheduled.get(dependentDocument.uri.toString())?.();
+
+            assert.strictEqual(previews[0].changeCount, 1);
+            assert.strictEqual(previews[0].lastChangeSource, 'dependency');
+        } finally {
+            disposable.dispose();
+        }
+    });
+
     it('registers dependency watchers for selected mod content roots', async () => {
         selectedModRoots = [createUri('file:///external/mod-root')];
         const manager = createManager([createPanelProvider('focus', () => 0)]);
@@ -599,6 +638,7 @@ class FakePreview {
     public readonly disposeListeners: Array<() => void> = [];
     public changeCount = 0;
     public lastChangedDocument: FakeDocument | undefined;
+    public lastChangeSource: string | undefined;
     public isDisposed = false;
 
     constructor(
@@ -626,9 +666,10 @@ class FakePreview {
         return this.documentChangeDebounceMs;
     }
 
-    public async onDocumentChange(document: FakeDocument): Promise<void> {
+    public async onDocumentChange(document: FakeDocument, options?: { source?: string }): Promise<void> {
         this.changeCount += 1;
         this.lastChangedDocument = document;
+        this.lastChangeSource = options?.source;
     }
 
     public getDebugState(): unknown {
