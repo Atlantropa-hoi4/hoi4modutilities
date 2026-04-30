@@ -92,6 +92,10 @@ export abstract class PreviewBase {
     public getDebugState(): unknown {
         return undefined;
     }
+
+    public shouldRefreshOnExternalFileChange(_uri: vscode.Uri, _changeKind: 'change' | 'create' | 'delete'): boolean {
+        return false;
+    }
     
     public dispose(): void {
         this.dependencyChangedEmitter.dispose();

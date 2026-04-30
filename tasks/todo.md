@@ -120,6 +120,14 @@ Focus tree icon loading refactor 2026-04-30:
 
 Review note: Focus Tree icon loading now carries one asset-resolution object from load through render, including texture expiry tokens in the style signature so asset-only changes force a full icon CSS refresh. Full icon CSS generation now uses the resolved `.gfx` mapping and unresolved-name list instead of broad rescans, while deferred first render still emits grey placeholders without image lookup. Reverified with focused icon/session/preview-manager mocha coverage, `npm run compile-ts`, `npm run lint`, and full `npm run test:unit`.
 
+Focus tree live refresh 2026-04-30:
+- [x] Watch preview dependency file types beyond images, including focus, GFX, GUI, localisation, and mod descriptor files.
+- [x] Add selected mod content-root watchers and refresh them when workspace folders or `hoi4ModUtilities.modFile` changes.
+- [x] Add a Focus Tree external-file refresh hook so newly created shared focus/localisation/GFX/GUI files can invalidate open previews before they appear in exact dependencies.
+- [x] Reverify with preview-manager live refresh coverage plus standard compile/lint/unit checks.
+
+Review note: PreviewManager now routes broad dependency watcher events through exact dependency matches and a Focus Tree-specific external change hook, while also watching selected mod content roots. Focus Tree Preview opts into live refresh for relevant national focus, interface, localisation, image, and `.mod` paths without changing webview messages or user-facing commands.
+
 Focus tree localization display 2026-04-28:
 - [x] Render actual localized focus text under each focus id using the configured preview language.
 - [x] Avoid showing unresolved localization keys as if they were real localized text.

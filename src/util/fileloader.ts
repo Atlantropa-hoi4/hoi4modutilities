@@ -408,7 +408,7 @@ async function getReplacePaths(): Promise<string[] | undefined> {
     return undefined;
 }
 
-async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
+export async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
     const modFile = await getSelectedModFile();
     if (!modFile || !await isFile(modFile)) {
         return [];

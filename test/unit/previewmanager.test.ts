@@ -23,6 +23,8 @@ const infoMessages: string[] = [];
 const watchedAssetChanges: Array<(uri: FakeUri) => void> = [];
 const watchedAssetCreates: Array<(uri: FakeUri) => void> = [];
 const watchedAssetDeletes: Array<(uri: FakeUri) => void> = [];
+const watchedPatterns: unknown[] = [];
+let selectedModRoots: FakeUri[] = [];
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
     activeTab: undefined,
 };
@@ -58,6 +60,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 }),
                 joinPath: () => undefined,
             },
+            RelativePattern: class RelativePattern {
+                constructor(public readonly base: FakeUri, public readonly pattern: string) {}
+            },
             ViewColumn: {
                 Beside: 2,
             },
@@ -68,7 +73,11 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidCloseTextDocument: () => new Disposable(),
                 onDidChangeTextDocument: () => new Disposable(),
                 onDidOpenTextDocument: () => new Disposable(),
-                createFileSystemWatcher: () => ({
+                onDidChangeWorkspaceFolders: () => new Disposable(),
+                onDidChangeConfiguration: () => new Disposable(),
+                createFileSystemWatcher: (pattern: unknown) => {
+                    watchedPatterns.push(pattern);
+                    return {
                     onDidChange: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
                         watchedAssetChanges.push(thisArg ? listener.bind(thisArg) : listener);
                         return new Disposable();
@@ -82,7 +91,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                         return new Disposable();
                     },
                     dispose: () => undefined,
-                }),
+                    };
+                },
                 openTextDocument: async (uri: FakeUri) => documents.get(uri.toString()),
                 getWorkspaceFolder: (uri: FakeUri) => uri.toString().startsWith('file:///workspace/')
                     ? { uri: { toString: () => 'file:///workspace' } }
@@ -162,6 +172,13 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
+    if ((request.endsWith('/util/fileloader') || request === '../util/fileloader')
+        && parent?.filename?.includes('previewmanager')) {
+        return {
+            getSelectedModRootFolders: async () => selectedModRoots,
+        };
+    }
+
     if ((request.endsWith('/util/i18n') || request === '../util/i18n')
         && parent?.filename?.includes('previewmanager')) {
         return {
@@ -186,6 +203,8 @@ describe('preview manager', () => {
         watchedAssetChanges.length = 0;
         watchedAssetCreates.length = 0;
         watchedAssetDeletes.length = 0;
+        watchedPatterns.length = 0;
+        selectedModRoots = [];
         activeTabState.activeTab = undefined;
     });
 
@@ -251,6 +270,62 @@ describe('preview manager', () => {
 
             assert.strictEqual(previews[0].changeCount, 1);
             assert.strictEqual(previews[0].lastChangedDocument, dependentDocument);
+        } finally {
+            disposable.dispose();
+        }
+    });
+
+    it('refreshes focus tree previews for broad live dependency file changes', async () => {
+        const dependentDocument = createDocument('file:///workspace/common/national_focus/preview.txt');
+        const previews: FakePreview[] = [];
+        const manager = createManager([
+            createPanelProvider('focus', () => 0, (uri, panel) => {
+                const preview = new FakePreview(uri, panel, 0, changedUri => !!(
+                    changedUri.path?.includes('/common/national_focus/')
+                    || changedUri.path?.includes('/interface/')
+                    || changedUri.path?.includes('/localisation/')
+                    || changedUri.path?.endsWith('.mod')
+                ));
+                previews.push(preview);
+                return preview as any;
+            }),
+        ]);
+        const disposable = manager.register();
+
+        try {
+            await manager['showPreviewImpl'](dependentDocument.uri as any);
+            const liveUris = [
+                'file:///workspace/common/national_focus/shared.txt',
+                'file:///workspace/interface/custom_icons.gfx',
+                'file:///workspace/interface/nationalfocusview.gui',
+                'file:///workspace/localisation/example_l_english.yml',
+                'file:///workspace/gfx/interface/goals/icon.png',
+                'file:///workspace/descriptor.mod',
+            ];
+
+            for (const [index, uri] of liveUris.entries()) {
+                watchedAssetChanges.forEach(listener => listener(createUri(uri)));
+                await Promise.resolve();
+                assert.strictEqual(previews[0].changeCount, index + 1);
+            }
+        } finally {
+            disposable.dispose();
+        }
+    });
+
+    it('registers dependency watchers for selected mod content roots', async () => {
+        selectedModRoots = [createUri('file:///external/mod-root')];
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const disposable = manager.register();
+
+        try {
+            await Promise.resolve();
+            assert.ok(watchedPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///external/mod-root'
+            ));
         } finally {
             disposable.dispose();
         }
@@ -530,6 +605,7 @@ class FakePreview {
         public readonly uri: FakeUri,
         public readonly panel: FakePanel,
         private readonly documentChangeDebounceMs = 0,
+        private readonly externalFileRefreshPredicate: (uri: FakeUri) => boolean = () => false,
     ) {}
 
     public onDispose(listener: () => void) {
@@ -557,6 +633,10 @@ class FakePreview {
 
     public getDebugState(): unknown {
         return undefined;
+    }
+
+    public shouldRefreshOnExternalFileChange(uri: FakeUri): boolean {
+        return this.externalFileRefreshPredicate(uri);
     }
 
     public emitDependencies(dependencies: string[]): void {

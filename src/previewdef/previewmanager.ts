@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { localize } from '../util/i18n';
-import { Commands, WebviewType, ContextName } from '../constants';
+import { Commands, WebviewType, ConfigurationKey } from '../constants';
 import { arrayToMap } from '../util/common';
 import { debug } from '../util/debug';
 import { contextContainer } from '../context';
@@ -8,6 +8,7 @@ import { basename, getDocumentByUri } from '../util/vsccommon';
 import { sendEvent } from '../util/telemetry';
 import { getWebviewPanelOptions } from '../util/webview';
 import { UpdateScheduler } from '../services/updateScheduler';
+import { getSelectedModRootFolders } from '../util/fileloader';
 import { PreviewProviderResolver } from './previewproviderresolver';
 import { PreviewDependencyTracker } from './previewdependencytracker';
 import { PreviewContextService } from './previewcontextservice';
@@ -16,7 +17,8 @@ import type { PreviewBase } from './previewbase';
 import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor';
 
 type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
-const previewAssetWatcherGlob = '**/*.{dds,tga,png}';
+type PreviewExternalFileChangeKind = 'change' | 'create' | 'delete';
+const previewDependencyWatcherGlob = '**/*.{txt,gfx,gui,yml,dds,tga,png,mod}';
 
 interface PreviewManagerOptions {
     previewProviders: PreviewDescriptor[];
@@ -33,6 +35,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private readonly previews: Record<string, PreviewBase>;
     private readonly documentUpdateScheduler: PreviewUpdateScheduler;
     private readonly dependencyUpdateScheduler: PreviewUpdateScheduler;
+    private modRootWatchers: vscode.Disposable[] = [];
 
     constructor(
         private readonly options: PreviewManagerOptions,
@@ -52,15 +55,19 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
-        const assetWatcher = vscode.workspace.createFileSystemWatcher(previewAssetWatcherGlob);
-        disposables.push(assetWatcher);
-        disposables.push(assetWatcher.onDidChange(this.onDidChangeWatchedAsset, this));
-        disposables.push(assetWatcher.onDidCreate(this.onDidChangeWatchedAsset, this));
-        disposables.push(assetWatcher.onDidDelete(this.onDidChangeWatchedAsset, this));
+        disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildModRootWatchers(); }));
+        disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
+                void this.rebuildModRootWatchers();
+            }
+        }));
+        disposables.push(this.createPreviewDependencyWatcher(previewDependencyWatcherGlob));
+        void this.rebuildModRootWatchers();
         disposables.push(this.previewContextService.register());
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
         disposables.push(new vscode.Disposable(() => this.documentUpdateScheduler.dispose()));
         disposables.push(new vscode.Disposable(() => this.dependencyUpdateScheduler.dispose()));
+        disposables.push(new vscode.Disposable(() => this.disposeModRootWatchers()));
 
         return vscode.Disposable.from(...disposables);
     }
@@ -110,8 +117,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         this.updatePreviewItemsInSubscription(document.uri);
     }
 
-    private onDidChangeWatchedAsset(uri: vscode.Uri): void {
-        this.updatePreviewItemsInSubscription(uri);
+    private onDidChangeWatchedDependency(uri: vscode.Uri, changeKind: PreviewExternalFileChangeKind): void {
+        this.updatePreviewItemsInSubscription(uri, changeKind);
     }
 
     private safeUpdateHoi4PreviewContextValue(textEditor: vscode.TextEditor | undefined): void {
@@ -226,14 +233,18 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         return this.previews[resolvedUri.toString()]?.getDebugState();
     }
 
-    private updatePreviewItemsInSubscription(uri: vscode.Uri): void {
+    private updatePreviewItemsInSubscription(uri: vscode.Uri, changeKind: PreviewExternalFileChangeKind = 'change'): void {
         this.dependencyUpdateScheduler.schedule(uri.toString(), 1000, async () => {
-            for (const otherPreview of this.dependencyTracker.getAffected(uri.toString())) {
+            const affectedPreviews = new Set([
+                ...this.dependencyTracker.getAffected(uri.toString()),
+                ...Object.values(this.previews).filter(preview => preview.shouldRefreshOnExternalFileChange(uri, changeKind)),
+            ]);
+            for (const otherPreview of affectedPreviews) {
                 if (uri.toString() === otherPreview.uri.toString()) {
                     continue;
                 }
                 const otherDocument = getDocumentByUri(otherPreview.uri);
-                if (otherDocument) {
+                if (otherDocument && !otherPreview.isDisposed) {
                     await otherPreview.onDocumentChange(otherDocument);
                 }
             }
@@ -247,5 +258,28 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
                 await previewItem.onDocumentChange(document);
             }
         });
+    }
+
+    private createPreviewDependencyWatcher(pattern: vscode.GlobPattern): vscode.Disposable {
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        return vscode.Disposable.from(
+            watcher,
+            watcher.onDidChange(uri => this.onDidChangeWatchedDependency(uri, 'change')),
+            watcher.onDidCreate(uri => this.onDidChangeWatchedDependency(uri, 'create')),
+            watcher.onDidDelete(uri => this.onDidChangeWatchedDependency(uri, 'delete')),
+        );
+    }
+
+    private async rebuildModRootWatchers(): Promise<void> {
+        this.disposeModRootWatchers();
+        const roots = await getSelectedModRootFolders();
+        this.modRootWatchers = roots.map(root => this.createPreviewDependencyWatcher(
+            new vscode.RelativePattern(root, previewDependencyWatcherGlob),
+        ));
+    }
+
+    private disposeModRootWatchers(): void {
+        this.modRootWatchers.forEach(watcher => watcher.dispose());
+        this.modRootWatchers = [];
     }
 }
