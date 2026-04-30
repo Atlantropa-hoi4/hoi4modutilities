@@ -278,7 +278,7 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
     });
 
-    it('schedules full hydration only after the deferred first snapshot is posted', async () => {
+    it('preloads full hydration while the deferred first snapshot is being applied', async () => {
         const document = createDocument(16);
         let resolveDeferred: ((value: any) => void) | undefined;
         let resolveFull: ((value: any) => void) | undefined;
@@ -305,7 +305,7 @@ describe('focustree preview session', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
-        assert.deepStrictEqual(requestedModes, ['deferred']);
+        assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
 
         await new Promise(resolve => setTimeout(resolve, 0));
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);

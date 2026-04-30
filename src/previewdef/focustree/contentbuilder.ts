@@ -677,7 +677,7 @@ async function prepareInlayGfxStyles(focusTrees: FocusTree[], styleTable: StyleT
                         continue;
                     }
 
-                    const sprite = await getSpriteByGfxName(option.gfxName, option.gfxFile);
+                    const sprite = await getSpriteByGfxNameFromResolvedFiles(option.gfxName, [option.gfxFile]);
                     const frame = sprite?.frames[0];
                     if (!frame) {
                         styleTable.style(key, () => `
@@ -726,7 +726,7 @@ async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], style
             styleTable,
             enableNavigator: true,
             classNames: 'focus-inlay-window navigator',
-            getSprite: (sprite) => getSpriteByGfxName(sprite, gfxFiles),
+            getSprite: (sprite) => getSpriteByGfxNameFromResolvedFiles(sprite, gfxFiles),
             onRenderChild: async (type, child, parent) => renderInlayOverrideChild(type, child, parent, inlay, styleTable),
         }
     );

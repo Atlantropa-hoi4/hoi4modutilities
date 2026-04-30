@@ -8,6 +8,7 @@ import { FocusTreePatchPlanner } from './patchplanner';
 import {
     beginFocusTreeRefresh,
     consumePendingReadyBaseState,
+    consumePendingReadyBaseStatePromise,
     consumePendingLocalEditVersion,
     createFocusTreeRuntimeState,
     isCurrentFocusTreeRefresh,
@@ -221,6 +222,10 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        if (options.allowDeferredHydration && baseState.deferredAssetLoad) {
+            this.preloadDeferredHydration(document, requestDocumentVersion);
+        }
+
         if (!this.runtimeState.webviewReady) {
             storePendingReadyBaseState(this.runtimeState, baseState);
             this.trace('refreshWithSnapshotPendingReady', {
@@ -344,20 +349,73 @@ export class FocusTreePreviewSession {
             && this.latestDocument?.version === requestDocumentVersion
             && this.runtimeState.deferredHydrationDocumentVersion !== requestDocumentVersion) {
             this.runtimeState.deferredHydrationDocumentVersion = requestDocumentVersion;
-            const hydrationRequestId = beginFocusTreeRefresh(this.runtimeState);
-            this.trace('scheduleDeferredHydration', {
-                requestId: hydrationRequestId,
-                documentVersion: requestDocumentVersion,
-                strategy: 'scheduled-refresh',
-            });
-            setTimeout(() => {
-                void this.refreshWithSnapshot(document, hydrationRequestId, requestDocumentVersion, 'full', {
-                    source: 'hydration',
-                    allowDeferredHydration: false,
-                });
-            }, 0);
+            void this.runDeferredHydration(document, requestDocumentVersion);
         } else if (!baseState.deferredAssetLoad) {
             this.runtimeState.deferredHydrationDocumentVersion = undefined;
+        }
+    }
+
+    private preloadDeferredHydration(
+        document: vscode.TextDocument,
+        requestDocumentVersion: number,
+    ): void {
+        if (this.runtimeState.pendingReadyBaseStatePromise?.documentVersion === requestDocumentVersion) {
+            return;
+        }
+
+        const promise = this.snapshotBuilder.buildBaseState(document, 'full');
+        storePendingReadyBaseStatePromise(this.runtimeState, {
+            documentVersion: requestDocumentVersion,
+            promise,
+        });
+        this.trace('preloadDeferredHydration', {
+            documentVersion: requestDocumentVersion,
+            strategy: 'background-full-base-state',
+        });
+        promise.catch(error => {
+            if (this.runtimeState.pendingReadyBaseStatePromise?.promise === promise) {
+                storePendingReadyBaseStatePromise(this.runtimeState, undefined);
+            }
+            this.trace('preloadDeferredHydrationFailed', {
+                documentVersion: requestDocumentVersion,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        });
+    }
+
+    private async runDeferredHydration(
+        document: vscode.TextDocument,
+        requestDocumentVersion: number,
+    ): Promise<void> {
+        const hydrationRequestId = beginFocusTreeRefresh(this.runtimeState);
+        const pendingBaseStatePromise = consumePendingReadyBaseStatePromise(this.runtimeState, requestDocumentVersion);
+        this.trace('scheduleDeferredHydration', {
+            requestId: hydrationRequestId,
+            documentVersion: requestDocumentVersion,
+            strategy: pendingBaseStatePromise ? 'preloaded-refresh' : 'scheduled-refresh',
+        });
+
+        try {
+            const baseState = pendingBaseStatePromise
+                ? await pendingBaseStatePromise
+                : await this.snapshotBuilder.buildBaseState(document, 'full');
+            await this.applySnapshotUpdate(
+                document,
+                baseState,
+                hydrationRequestId,
+                requestDocumentVersion,
+                'full',
+                {
+                    source: 'hydration',
+                    allowDeferredHydration: false,
+                },
+            );
+        } catch (error) {
+            this.trace('deferredHydrationFailed', {
+                requestId: hydrationRequestId,
+                documentVersion: requestDocumentVersion,
+                message: error instanceof Error ? error.message : String(error),
+            });
         }
     }
 

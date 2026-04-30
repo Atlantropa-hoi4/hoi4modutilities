@@ -61,6 +61,11 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 resolvedFileCalls.push({ name, gfxFiles });
                 return name === 'GFX_FOCUS_A'
                     ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
+                    : name === 'GFX_INLAY'
+                        ? {
+                            image: { width: 48, height: 48, uri: 'inlay-icon.png' },
+                            frames: [{ width: 48, height: 48, uri: 'inlay-icon.png' }],
+                        }
                     : undefined;
             },
             getSpriteByGfxName: async (name: string) => {
@@ -352,6 +357,73 @@ describe('focustree contentbuilder', () => {
 
         assert.match(result.payload.dynamicStyleCss, /default-icon\.png/);
         assert.deepStrictEqual(resolvedFileCalls, []);
+        assert.deepStrictEqual(broadScanCalls, []);
+    });
+
+    it('renders resolved inlay gfx without broad gfx index scans', async () => {
+        const focusTree = {
+            id: 'tree_a',
+            kind: 'focus',
+            focuses: {},
+            inlayWindowRefs: [],
+            inlayWindows: [{
+                id: 'inlay_a',
+                file: 'common/focus_inlay_windows/test.txt',
+                position: { x: 0, y: 0 },
+                visible: true,
+                internal: false,
+                conditionExprs: [],
+                scriptedImages: [{
+                    id: 'slot_a',
+                    gfxOptions: [{
+                        gfxName: 'GFX_INLAY',
+                        gfxFile: 'interface/inlay_icons.gfx',
+                        condition: { _type: 'and', items: [] },
+                    }],
+                }],
+                scriptedButtons: [],
+                guiWindow: undefined,
+            }],
+            inlayConditionExprs: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState({
+            focusTrees: [focusTree],
+            allFocuses: [],
+            allInlays: focusTree.inlayWindows,
+            focusById: {},
+            gfxFiles: ['interface/inlay_icons.gfx'],
+            focusIconGfxFileByName: {},
+            focusIconAssetResolution: {
+                gfxFiles: [],
+                gfxFileByIconName: {},
+                textureFiles: [],
+                textureFileByIconName: {},
+                textureExpiryTokenByIconName: {},
+                unresolvedIconNames: [],
+                styleSignature: 'inlay',
+            },
+            focusIconStyleSignature: 'inlay',
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: false,
+        } as any);
+
+        assert.match(result.payload.dynamicStyleCss, /inlay-icon\.png/);
+        assert.deepStrictEqual(resolvedFileCalls, [
+            { name: 'GFX_INLAY', gfxFiles: ['interface/inlay_icons.gfx'] },
+        ]);
         assert.deepStrictEqual(broadScanCalls, []);
     });
 });
