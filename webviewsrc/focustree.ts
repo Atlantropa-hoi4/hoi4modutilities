@@ -1080,13 +1080,13 @@ function ensureFocusContextMenu(): HTMLDivElement {
         return button;
     };
 
-    const linkItem = createMenuButton('Link focus', focusId => {
+    const linkItem = createMenuButton('Link', focusId => {
         startPendingFocusLink(focusId, undefined, undefined, 'prerequisite');
     });
-    const exclusiveItem = createMenuButton('Link mutually exclusive', focusId => {
+    const exclusiveItem = createMenuButton('Link Mutually Exclusive', focusId => {
         startPendingFocusLink(focusId, undefined, undefined, 'exclusive');
     });
-    const deleteItem = createMenuButton('Delete focus', focusId => {
+    const deleteItem = createMenuButton('Delete', focusId => {
         const focusIds = resolveFocusDeleteTargetIds(focusId);
         vscode.postMessage({
             command: 'deleteFocus',

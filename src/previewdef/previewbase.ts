@@ -218,7 +218,7 @@ export abstract class PreviewBase {
 
             switch (msg.command) {
                 case 'navigate':
-                    if (msg.start !== undefined) {
+                    if (msg.start !== undefined || msg.focusId !== undefined) {
                         if (msg.file === undefined) {
                             const document = getDocumentByUri(this.uri);
                             if (document === undefined) {

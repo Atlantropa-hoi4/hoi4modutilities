@@ -487,6 +487,10 @@ function renderWarningContainer(styleTable: StyleTable) {
         font: inherit;
         cursor: pointer;
     `);
+    styleTable.style('warnings-entry', () => `
+        transform: none;
+        transition: none;
+    `, ':active');
     const warningEntryMutedClass = styleTable.style('warnings-entry-muted', () => `
         cursor: default;
         opacity: 0.92;
