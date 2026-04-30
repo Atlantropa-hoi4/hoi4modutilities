@@ -42,7 +42,7 @@ export async function resolveFocusIconGfxAssets(
     iconNames: (string | undefined)[],
     resolver: FocusIconGfxResolver,
 ): Promise<FocusIconAssetResolution> {
-    const uniqueIconNames = uniq(iconNames.filter((iconName): iconName is string => !!iconName));
+    const uniqueIconNames = uniq(iconNames.filter(isResolvableFocusIconName));
     const resolvedFiles = new Set<string>();
     const unresolvedNames = new Set<string>();
     const resolvedIconNamesByFile = new Map<string, Set<string>>();
@@ -112,6 +112,10 @@ export async function resolveFocusIconGfxAssets(
         textureExpiryTokenByIconName: textureResolution.textureExpiryTokenByIconName,
         unresolvedIconNames: Array.from(unresolvedNames),
     });
+}
+
+function isResolvableFocusIconName(iconName: string | undefined): iconName is string {
+    return !!iconName && iconName.trim().toUpperCase() !== 'GFX';
 }
 
 async function resolveTextureFiles(

@@ -50,6 +50,35 @@ describe('focus icon gfx resolver', () => {
         assert.deepStrictEqual(result, ['interface/shared.gfx']);
     });
 
+    it('does not scan interface gfx files for the edit-template placeholder icon name', async () => {
+        const indexedLookups: string[] = [];
+        let listedInterfaceFiles = false;
+        const result = await resolveFocusIconGfxAssets(
+            ['GFX', 'GFX_indexed'],
+            {
+                resolveIndexedFile: async (gfxName) => {
+                    indexedLookups.push(gfxName);
+                    return gfxName === 'GFX_indexed' ? 'interface/indexed.gfx' : undefined;
+                },
+                listInterfaceGfxFiles: async () => {
+                    listedInterfaceFiles = true;
+                    return ['interface/slow-scan.gfx'];
+                },
+                readSpriteNames: async () => ['GFX'],
+                readSpriteTextureFiles: async () => ({
+                    GFX_indexed: 'gfx/interface/goals/indexed.dds',
+                }),
+            },
+        );
+
+        assert.deepStrictEqual(indexedLookups, ['GFX_indexed']);
+        assert.strictEqual(listedInterfaceFiles, false);
+        assert.deepStrictEqual(result.gfxFileByIconName, {
+            GFX_indexed: 'interface/indexed.gfx',
+        });
+        assert.deepStrictEqual(result.unresolvedIconNames, []);
+    });
+
     it('skips unreadable or unparsable gfx files during fallback scanning', async () => {
         const scannedFiles: string[] = [];
         const result = await resolveFocusIconGfxFiles(
