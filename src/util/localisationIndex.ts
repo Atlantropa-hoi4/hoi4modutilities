@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { debounceByInput } from './common';
+import { debounceByInput, mapWithConcurrency } from './common';
 import { isLocalisationIndexEnabled } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
@@ -14,6 +14,7 @@ type LocalisationData = Record<string, Record<string, string>>;
 
 const supportedLocalisationLangPattern = 'l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese';
 const localisationIndexFilePattern = new RegExp(`(?:^|[ _-])(${supportedLocalisationLangPattern})\\.yml$`, 'i');
+const localisationIndexBuildConcurrency = 8;
 
 const globalLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationIndex: LocalisationData = {};
@@ -146,14 +147,16 @@ async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<vo
     const options = { mod: false, hoi4: true, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
-    await Promise.all(localisationFiles.map(f => fillLocalisationItems('localisation/' + f, globalLocalisationIndex, options, estimatedSize)));
+    await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, f =>
+        fillLocalisationItems('localisation/' + f, globalLocalisationIndex, options, estimatedSize));
 }
 
 async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: true, hoi4: false, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
-    await Promise.all(localisationFiles.map(f => fillLocalisationItems('localisation/' + f, workspaceLocalisationIndex, options, estimatedSize)));
+    await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, f =>
+        fillLocalisationItems('localisation/' + f, workspaceLocalisationIndex, options, estimatedSize));
 }
 
 function ensureGlobalLocalisationIndex(): Promise<void> {

@@ -100,6 +100,32 @@ export function debounceByInput<TI extends unknown[]>(func: (...input: TI) => un
     return result;
 }
 
+export async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    if (concurrency <= 0) {
+        throw new Error('concurrency must be greater than 0');
+    }
+
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= items.length) {
+                return;
+            }
+
+            results[index] = await mapper(items[index], index);
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
+}
+
 export function toArrayBuffer(buffer: Uint8Array): ArrayBuffer {
     return Uint8Array.from(buffer).buffer;
 }

@@ -6,6 +6,8 @@ export interface FocusIconGfxResolver {
     readSpriteNames(gfxFile: string): Promise<string[]>;
     readSpriteTextureFiles?(gfxFile: string): Promise<Record<string, string | undefined>>;
     readTextureExpiryToken?(textureFile: string): Promise<string>;
+    fallbackScanLimit?: number;
+    throwIfCancelled?(): void;
 }
 
 export interface FocusIconAssetResolution {
@@ -57,7 +59,9 @@ export async function resolveFocusIconGfxAssets(
     };
 
     for (const iconName of uniqueIconNames) {
+        resolver.throwIfCancelled?.();
         const indexedFile = await resolver.resolveIndexedFile(iconName);
+        resolver.throwIfCancelled?.();
         if (indexedFile) {
             addResolvedIcon(indexedFile, iconName);
         } else {
@@ -77,8 +81,11 @@ export async function resolveFocusIconGfxAssets(
         });
     }
 
-    const interfaceGfxFiles = await resolver.listInterfaceGfxFiles();
+    const interfaceGfxFiles = resolver.fallbackScanLimit === undefined
+        ? await resolver.listInterfaceGfxFiles()
+        : (await resolver.listInterfaceGfxFiles()).slice(0, resolver.fallbackScanLimit);
     for (const gfxFile of interfaceGfxFiles) {
+        resolver.throwIfCancelled?.();
         if (unresolvedNames.size === 0) {
             break;
         }
@@ -86,6 +93,7 @@ export async function resolveFocusIconGfxAssets(
         let spriteNames: Set<string>;
         try {
             spriteNames = new Set(await resolver.readSpriteNames(gfxFile));
+            resolver.throwIfCancelled?.();
         } catch {
             continue;
         }
@@ -138,14 +146,17 @@ async function resolveTextureFiles(
     const textureFileByIconName: Record<string, string> = {};
     const textureExpiryTokenByIconName: Record<string, string> = {};
     await Promise.all(Array.from(resolvedIconNamesByFile.entries()).map(async ([gfxFile, iconNames]) => {
+        resolver.throwIfCancelled?.();
         let textureFilesByName: Record<string, string | undefined>;
         try {
             textureFilesByName = await resolver.readSpriteTextureFiles!(gfxFile);
+            resolver.throwIfCancelled?.();
         } catch {
             return;
         }
 
         for (const iconName of iconNames) {
+            resolver.throwIfCancelled?.();
             const textureFile = textureFilesByName[iconName];
             if (textureFile) {
                 const normalizedTextureFile = textureFile.replace(/\\+/g, '/');
@@ -154,6 +165,7 @@ async function resolveTextureFiles(
                 if (resolver.readTextureExpiryToken) {
                     try {
                         textureExpiryTokenByIconName[iconName] = await resolver.readTextureExpiryToken(normalizedTextureFile);
+                        resolver.throwIfCancelled?.();
                     } catch {
                         textureExpiryTokenByIconName[iconName] = '';
                     }

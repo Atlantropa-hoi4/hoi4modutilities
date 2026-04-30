@@ -83,6 +83,7 @@ export abstract class Loader<T, E = {}> {
 
     async load(session: LoaderSession): Promise<LoadResult<T, E>> {
         session = session.forChild();
+        session.throwIfCancelled();
 
         // Load each loader at most one time in one session
         if (this.cachedValue === undefined || (!session.isLoaded(this) && (session.force || await this.shouldReload(session)))) {
@@ -90,12 +91,14 @@ export abstract class Loader<T, E = {}> {
 
             session.loadingLoader.push(this);
             try {
+                session.throwIfCancelled();
                 this.beforeLoadImpl(session);
                 if (this.loadingPromise === undefined) {
                     this.cachedValue = await (this.loadingPromise = this.loadImpl(session));
                 } else {
                     this.cachedValue = await this.loadingPromise;
                 }
+                session.throwIfCancelled();
                 session.setLoaded(this);
             } finally {
                 this.loadingPromise = undefined;
@@ -113,6 +116,7 @@ export abstract class Loader<T, E = {}> {
             }
         }
 
+        session.throwIfCancelled();
         this.onLoadDoneEmitter.fire(this.cachedValue);
         return this.cachedValue;
     };
@@ -173,9 +177,12 @@ export abstract class FileLoader<T, E={}> extends Loader<T, E> {
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
+        session.throwIfCancelled();
         this.expiryToken = await hoiFileExpiryToken(this.file);
+        session.throwIfCancelled();
 
         const result = await this.loadFromFile(session);
+        session.throwIfCancelled();
 
         return {
             ...result,
@@ -207,7 +214,9 @@ export abstract class FolderLoader<T, TFile, E={}, EFile={}> extends Loader<T, E
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
+        session.throwIfCancelled();
         const files = await listFilesFromModOrHOI4(this.folder);
+        session.throwIfCancelled();
         this.fileCount = files.length;
 
         const subLoaders = this.subLoaders;
@@ -215,6 +224,7 @@ export abstract class FolderLoader<T, TFile, E={}, EFile={}> extends Loader<T, E
         const fileResultPromises: Promise<LoadResult<TFile, EFile>>[] = [];
 
         for (const file of files) {
+            session.throwIfCancelled();
             let subLoader = subLoaders[file];
             if (!subLoader) {
                 subLoader = new this.subLoaderConstructor(path.join(this.folder, file));
@@ -228,7 +238,9 @@ export abstract class FolderLoader<T, TFile, E={}, EFile={}> extends Loader<T, E
 
         this.subLoaders = newSubLoaders;
 
-        return this.mergeFiles(await Promise.all(fileResultPromises), session);
+        const fileResults = await Promise.all(fileResultPromises);
+        session.throwIfCancelled();
+        return this.mergeFiles(fileResults, session);
     }
 
     protected extraMesurements(result: LoadResult<T, E>) {
@@ -263,7 +275,9 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
         const dependencies: string[] = [this.file];
 
         if (this.contentProvider === undefined) {
+            session.throwIfCancelled();
             this.expiryToken = await hoiFileExpiryToken(this.file);
+            session.throwIfCancelled();
         }
 
         let content: string | undefined = undefined;
@@ -272,13 +286,16 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
             content = this.contentProvider === undefined ?
                 (await readFileFromModOrHOI4(this.file))[0].toString('utf-8').replace(/^\uFEFF/, '') :
                 await this.contentProvider();
+            session.throwIfCancelled();
         } catch(e) {
             error(e);
             errorValue = e;
         }
 
         const dependenciesFromText = this.readDependency && content ? getDependenciesFromText(content) : [];
+        session.throwIfCancelled();
         const result = await this.postLoad(content, dependenciesFromText, errorValue, session);
+        session.throwIfCancelled();
         this.loaderDependencies.flip();
 
         return {
@@ -342,7 +359,9 @@ class LoaderDependencies {
         // return (await Promise.all(dependencies.map(loadDep))).filter((v): v is Result => !!v);
         const result: Result[] = [];
         for (const dependency of dependencies) {
+            session.throwIfCancelled();
             const value = await loadDep(dependency);
+            session.throwIfCancelled();
             if (value !== undefined) {
                 result.push(value);
             }

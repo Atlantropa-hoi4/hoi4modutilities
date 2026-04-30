@@ -14,6 +14,7 @@ import { LoaderSession } from '../../util/loader/loader';
 import { TelemetryMessage, sendByMessage } from '../../util/telemetry';
 import { getConfiguration } from '../../util/vsccommon';
 import { areEqualWithinBudget, createWorldMapComparisonBudget, WorldMapComparisonBudget } from './worldmapdiff';
+import { measureAsync, recordPerf } from '../../util/perf';
 
 export class WorldMap {
     public panel: vscode.WebviewPanel | undefined;
@@ -139,11 +140,12 @@ export class WorldMap {
             this.worldMapLoader.shallowForceReload();
             const oldCachedWorldMap = this.cachedWorldMap;
             const loaderSession = new LoaderSession(force, () => this.panel === undefined);
-            const { result: worldMap, dependencies } = await this.worldMapLoader.load(loaderSession);
+            const { result: worldMap, dependencies } = await measureAsync('worldmap.load', { force }, () =>
+                this.worldMapLoader.load(loaderSession));
             this.worldMapDependencies = dependencies;
             this.cachedWorldMap = worldMap;
 
-            if (!force && oldCachedWorldMap && await this.sendDifferences(oldCachedWorldMap, worldMap)) {
+            if (!force && oldCachedWorldMap && await measureAsync('worldmap.diff', {}, () => this.sendDifferences(oldCachedWorldMap, worldMap))) {
                 return;
             }
 
@@ -373,7 +375,18 @@ export class WorldMap {
             return false;
         }
 
-        return await this.panel.webview.postMessage(message);
+        const startedAt = Date.now();
+        try {
+            const result = await this.panel.webview.postMessage(message);
+            recordPerf('worldmap.postMessage', Date.now() - startedAt, {
+                command: message.command,
+                size: getMessageSize(message),
+            });
+            return result;
+        } catch (error) {
+            recordPerf('worldmap.postMessage', Date.now() - startedAt, { command: message.command }, false, error);
+            throw error;
+        }
     }
 
     private async requestExportMap() {
@@ -410,5 +423,13 @@ export class WorldMap {
             error(e);
             vscode.window.showErrorMessage(localize('worldmap.export.error', 'Can\'t export world map: {0}.', e));
         }
+    }
+}
+
+function getMessageSize(message: WorldMapMessage): number {
+    try {
+        return JSON.stringify(message).length;
+    } catch {
+        return 0;
     }
 }

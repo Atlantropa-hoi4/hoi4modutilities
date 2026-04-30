@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { localizer } from './localizer';
 import { sendEvent } from '../util/telemetry';
+import { incrementPerfCounter, measureAsync } from '../util/perf';
 
 export interface IndexTarget<TSnapshot> {
     build(estimatedSize: [number]): Promise<void>;
@@ -25,18 +26,20 @@ export class IndexService<TSnapshot> {
 
     public ensure(targetId: string, options?: { showStatusBar?: boolean }): Promise<void> {
         if (this.readyTargets.has(targetId)) {
+            incrementPerfCounter('index.ensure.ready', { target: targetId });
             return Promise.resolve();
         }
 
         const generation = this.getGeneration(targetId);
         const existingTask = this.tasks.get(targetId);
         if (existingTask?.generation === generation) {
+            incrementPerfCounter('index.ensure.inflight', { target: targetId });
             return existingTask.promise;
         }
 
         const target = this.targets[targetId];
         const estimatedSize: [number] = [0];
-        const buildTask = target.build(estimatedSize);
+        const buildTask = measureAsync('index.build', { target: targetId }, () => target.build(estimatedSize));
         const showStatusBar = options?.showStatusBar ?? true;
         if (showStatusBar) {
             vscode.window.setStatusBarMessage('$(loading~spin) ' + localizer.t(target.statusMessage), buildTask);
@@ -65,6 +68,7 @@ export class IndexService<TSnapshot> {
     }
 
     public invalidate(targetId: string): void {
+        incrementPerfCounter('index.invalidate', { target: targetId });
         const target = this.targets[targetId];
         target.reset();
         this.readyTargets.delete(targetId);

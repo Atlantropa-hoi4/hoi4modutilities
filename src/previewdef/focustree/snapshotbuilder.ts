@@ -46,12 +46,14 @@ export class FocusTreeSnapshotBuilder {
     public async buildBaseState(
         document: vscode.TextDocument,
         assetLoadMode: FocusTreeAssetLoadMode,
+        isCancelled?: () => boolean,
     ): Promise<FocusTreeRenderBaseState> {
         return this.loaderAdapter.buildBaseState(
             document.getText(),
             document.version,
             this.getConditionPresetsByTree(),
             assetLoadMode,
+            isCancelled,
         );
     }
 

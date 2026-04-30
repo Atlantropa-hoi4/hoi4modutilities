@@ -26,7 +26,7 @@ import {
     focusIconTopOffset,
     focusTextMarginTop,
     renderFocusHtmlTemplate,
-    resolveFocusLocalizationTextById,
+    resolveFocusLocalizationTextByIdIfReady,
 } from './focusrender';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
@@ -165,10 +165,12 @@ export async function buildFocusTreeRenderBaseState(
     loader: FocusTreeLoader,
     documentVersion: number,
     conditionPresetsByTree: FocusConditionPresetsByTree = {},
+    isCancelled?: () => boolean,
 ): Promise<FocusTreeRenderBaseState> {
-    const session = new LoaderSession(false);
+    const session = new LoaderSession(false, isCancelled);
     const loadStart = Date.now();
     const loadResult = await loader.load(session);
+    session.throwIfCancelled();
     const loadDurationMs = Date.now() - loadStart;
     const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
     debug('Loader session focus tree', loadedLoaders);
@@ -243,7 +245,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const localisationResolveStart = Date.now();
     const focusLocalizationTextById = baseState.deferredAssetLoad
         ? {}
-        : await resolveFocusLocalizationTextById(baseState.allFocuses);
+        : await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
     const focusTemplateRenderStart = Date.now();
     const renderedFocus: Record<string, string> = {};
@@ -336,7 +338,7 @@ export async function renderFocusTreeFocusHtmlMap(
     const focuses = focusIds
         .map(focusId => baseState.focusById[focusId])
         .filter((focus): focus is Focus => !!focus);
-    const focusLocalizationTextById = await resolveFocusLocalizationTextById(focuses);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(focuses);
     for (const focus of focuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,

@@ -53,12 +53,14 @@ export class FocusTreeLoaderAdapter {
         documentVersion: number,
         conditionPresetsByTree: FocusConditionPresetsByTree,
         assetLoadMode: FocusTreeAssetLoadMode,
+        isCancelled?: () => boolean,
     ): Promise<FocusTreeRenderBaseState> {
         const loader = this.createSnapshotLoader(content, assetLoadMode);
         const baseState = await buildFocusTreeRenderBaseState(
             loader,
             documentVersion,
             conditionPresetsByTree,
+            isCancelled,
         );
         this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
         return baseState;

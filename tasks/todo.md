@@ -210,3 +210,97 @@ Focus Tree Preview responsiveness refactor 2026-04-30:
 - [x] Reverify deferred localisation/icon behavior, deferred hydration ordering, and dependency coalescing with focused tests.
 
 Review note: deferred Focus Tree first paint now renders the focus structure with placeholder icon styles and no full localisation lookup, then schedules full hydration after the first snapshot reaches the webview. External dependency changes are coalesced per preview instead of per changed file, and trace state now includes stage-level render and patch metrics for before/after performance inspection. Reverified with focused Focus Tree/PreviewManager mocha coverage, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run test-ui`, and `git diff --check`.
+
+Codebase performance instrumentation 2026-04-30:
+- [x] Add a shared local perf collector for async/sync durations and hit/miss counters.
+- [x] Instrument preview orchestration, Focus Tree snapshot/patch posting, file loading, index builds, image/GFX caches, and worldmap load/diff/message paths.
+- [x] Surface recent perf entries and counters from the Focus Tree debug state without adding production telemetry.
+- [ ] Capture real cold open, warm reopen, document edit refresh, and dependency refresh before/after numbers from a representative workspace.
+- [ ] Extend optimization fixes beyond Focus Tree once the new metrics rank the next bottlenecks.
+
+Review note: this pass keeps previous Focus Tree fast-path changes intact and adds local-only measurement hooks across the wider extension. Set `HOI4MU_PERF_TRACE=1` to mirror metric entries to debug logs, or use the Focus Tree debug command to inspect the latest `performance` snapshot. Reverified with `npm run compile-ts`, targeted perf/preview/index/worldmap mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+Fileloader refresh coalescing 2026-04-30:
+- [x] Use the collected perf trace to identify `fileloader.list` and concurrent `fileloader.read` as the dominant refresh bottleneck.
+- [x] Coalesce identical in-flight `readFileFromModOrHOI4` and `listFilesFromModOrHOI4` calls without persisting stale file-list results after completion.
+- [x] Add `fileloader.read.inflightHit` and `fileloader.list.inflightHit` counters so the next trace can confirm duplicate work is being absorbed.
+
+Review note: the user trace showed Focus Tree render/update stages in single-digit milliseconds after the initial base state, while file loading/listing repeatedly reached multi-second durations during hydration and edit refresh bursts. The first optimization keeps cache lifetime limited to the active Promise only, preserving file-change correctness better than a broad TTL cache. Reverified with `npm run compile-ts`, targeted fileloader/perf/preview mocha coverage, `npm run lint`, and full `npm run test:unit`.
+
+Index build read throttling 2026-04-30:
+- [x] Re-check the follow-up trace after in-flight coalescing.
+- [x] Identify remaining bottleneck as high-cardinality `fileloader.read` bursts during localisation/GFX/shared-focus index builds.
+- [x] Add a small shared concurrency helper and limit index build file reads to 8 concurrent files per index target.
+- [x] Cover the concurrency helper with unit tests.
+
+Review note: `fileloader.list` improved after coalescing, but the next trace still showed hundreds of different `fileloader.read` calls completing in large multi-second waves. Localisation, GFX, and shared-focus index builders now avoid unbounded `Promise.all` fan-out, which should reduce extension-host and disk I/O saturation during Focus Tree hydration without changing index contents or invalidation semantics. Reverified with `npm run compile-ts`, targeted index/preview/perf mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+Global file read pressure limit 2026-04-30:
+- [x] Re-check the trace after per-index read throttling.
+- [x] Identify remaining read waves as multiple index builders still running concurrently.
+- [x] Add a fileloader-level 12-read global concurrency cap with `fileloader.read.queued` counters and `fileloader.read.wait` timings.
+
+Review note: index-level throttling reduced the first wave, but several indexes can still overlap during Focus Tree hydration. The fileloader now caps aggregate `readFileFromModOrHOI4` pressure, so preview responsiveness should degrade more gracefully under localisation/GFX/shared-focus background work. Reverified with `npm run compile-ts`, targeted fileloader/preview/perf mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+Focus Tree ready-only localisation 2026-04-30:
+- [x] Re-check trace after the global file read pressure limit.
+- [x] Identify localisation text resolution as a remaining path that can force full localisation index build during Focus Tree hydration.
+- [x] Make Focus Tree full and partial render use only ready localisation data, avoiding a blocking `getLocalisedTextQuick` index ensure on the preview render path.
+- [x] Cover the ready-only resolver with focused unit coverage.
+
+Review note: Focus Tree preview now keeps using already-built localisation when available, but no longer waits for localisation indexes to finish before posting full hydration or partial focus HTML patches. Missing localisation can still appear on later refreshes after the background index is ready. Reverified with `npm run compile-ts`, targeted Focus Tree/localisation/perf mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+Focus Tree delayed hydration 2026-04-30:
+- [x] Re-check trace after ready-only localisation.
+- [x] Identify immediate full deferred hydration as the remaining source of post-first-paint file read/list pressure.
+- [x] Delay full hydration until after the deferred snapshot has been posted, and cancel stale scheduled hydration when newer document refreshes arrive.
+- [x] Make ordinary document/dependency refreshes use the deferred path first, while structural/local edit commands can still request full refresh explicitly.
+
+Review note: the latest trace showed `preview.show`, deferred base state, patch planning, snapshot build, and postMessage in the low millisecond range, followed by a large `fileloader.read.wait` wave from immediate full hydration. Full hydration now starts after a short delay instead of during first paint, so the initial UI should stay responsive and repeated edits should replace stale hydration work. Reverified with `npm run compile-ts`, `npm run compile-tests`, and targeted Focus Tree preview session mocha coverage.
+
+Focus Tree interface GFX lazy scan 2026-04-30:
+- [x] Re-check trace after delayed hydration.
+- [x] Identify the remaining hydration read wave as likely `interface` GFX fallback cache construction.
+- [x] Split the Focus Tree interface GFX cache into a cheap file-list cache and per-file lazy sprite-name parsing.
+
+Review note: `getCachedInterfaceGfxFiles()` no longer parses every `.gfx` file when fallback icon/inlay resolution starts. Sprite names are now loaded per candidate file through `getCachedInterfaceGfxSpriteNames(file)`, allowing existing fallback loops to stop as soon as unresolved names are found instead of paying the full interface GFX parse cost up front.
+
+Focus Tree icon fallback scan bound 2026-04-30:
+- [x] Re-check trace after lazy interface GFX parsing.
+- [x] Identify remaining multi-second full hydration as Focus icon fallback scanning with many unresolved names.
+- [x] Prioritize `interface/goals.gfx` and goals/focus-like GFX files before other interface files.
+- [x] Bound Focus icon fallback scanning so unresolved custom icons fall back to the default icon instead of forcing a broad interface scan.
+
+Review note: full hydration still resolves indexed/known Focus icon GFX files, but fallback scanning is now capped after the most likely Focus icon GFX files. This trades exhaustive custom-icon discovery for predictable preview responsiveness; unresolved icons already use the existing default icon path.
+
+Focus Tree local edit deferred refresh 2026-04-30:
+- [x] Re-check trace after fallback scan bounding.
+- [x] Identify stale multi-second builds as local edit reconciliation still requesting full asset loading.
+- [x] Make optimistic local edit reconciliation use the deferred snapshot path while keeping structural edit reloads on full refresh.
+
+Review note: repeated position edits can now update the preview through the same fast deferred snapshot path as ordinary document refreshes, avoiding a full Focus Tree loader for every optimistic local edit. Structural edits still force full refresh because they can change tree topology and dependency state.
+
+Focus Tree deferred dependency propagation 2026-04-30:
+- [x] Re-check trace after local edit deferred refresh.
+- [x] Identify shared focus dependency loaders as still defaulting to full asset loading inside deferred refreshes.
+- [x] Add a deferred Focus Tree dependency loader so shared/joint focus dependency loads inherit the parent deferred asset mode.
+- [x] Cover deferred vs full shared-focus dependency behavior with focused loader tests.
+
+Review note: deferred Focus Tree loads now keep shared focus dependency parsing structural-only instead of resolving icons/inlays for every optimistic edit. Full hydration still uses the regular Focus Tree loader for dependencies, preserving complete asset discovery after the delayed hydration pass.
+
+Focus Tree temporary parse-error handling 2026-04-30:
+- [x] Re-check trace after deferred dependency propagation.
+- [x] Identify temporary invalid edit states as `UserError` parse failures escaping the document refresh promise.
+- [x] Keep `UserError` refresh failures inside the Focus Tree session trace instead of surfacing unhandled rejected promises.
+- [x] Cover document refresh parser errors with Focus Tree preview session unit coverage.
+
+Review note: incomplete text while typing, such as a half-written assignment, now records a `refreshWithSnapshotFailed` trace and leaves the current preview intact. Non-user/programmer errors still rethrow so real defects are not hidden.
+
+Focus Tree stale refresh cancellation 2026-04-30:
+- [x] Re-check trace after temporary parse-error handling.
+- [x] Identify discarded multi-second refreshes as stale base-state builds that kept loading until completion.
+- [x] Propagate refresh cancellation from the preview session into the Focus Tree loader session.
+- [x] Add cancellation checks around dependency loads, full asset resolution, icon fallback scanning, and texture expiry reads.
+- [x] Cover stale refresh cancellation with Focus Tree preview session unit coverage.
+
+Review note: older refreshes now observe newer request ids or document versions while they are still building, then stop through the existing `UserError` refresh-failure path instead of continuing to expensive full hydration only to be skipped afterward.

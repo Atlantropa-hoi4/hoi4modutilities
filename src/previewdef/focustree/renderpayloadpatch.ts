@@ -3,7 +3,7 @@ import { GridBoxType } from "../../hoiformat/gui";
 import { StyleTable } from "../../util/styletable";
 import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
-import { renderFocusHtmlTemplate, resolveFocusLocalizationTextById } from "./focusrender";
+import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
 import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
 
 export interface FocusTreeRenderCache {
@@ -479,7 +479,7 @@ async function renderChangedFocusHtmlMap(
     const focuses = focusIds
         .map(focusId => baseState.focusById[focusId])
         .filter((focus): focus is Focus => !!focus);
-    const focusLocalizationTextById = await resolveFocusLocalizationTextById(focuses);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(focuses);
     for (const focus of focuses) {
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,

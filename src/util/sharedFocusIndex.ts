@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { debounceByInput } from './common';
+import { debounceByInput, mapWithConcurrency } from './common';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
 import { Logger } from "./logger";
@@ -26,6 +26,7 @@ export {
 
 const globalFocusIndex: FocusIndexState = createEmptyFocusIndexState();
 let workspaceFocusIndex: FocusIndexState = createEmptyFocusIndexState();
+const sharedFocusIndexBuildConcurrency = 8;
 const sharedFocusIndexService = new IndexService<FocusIndexState>({
     global: {
         build: estimatedSize => buildGlobalFocusIndex(estimatedSize),
@@ -68,13 +69,15 @@ export function registerSharedFocusIndex(): vscode.Disposable {
 async function buildGlobalFocusIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: false, hoi4: true, recursively: true };
     const focusFiles = await listFilesFromModOrHOI4('common/national_focus', options);
-    await Promise.all(focusFiles.map(f => fillFocusItems('common/national_focus/' + f, globalFocusIndex, options, estimatedSize)));
+    await mapWithConcurrency(focusFiles, sharedFocusIndexBuildConcurrency, f =>
+        fillFocusItems('common/national_focus/' + f, globalFocusIndex, options, estimatedSize));
 }
 
 async function buildWorkspaceFocusIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: true, hoi4: false, recursively: true };
     const focusFiles = await listFilesFromModOrHOI4('common/national_focus', options);
-    await Promise.all(focusFiles.map(f => fillFocusItems('common/national_focus/' + f, workspaceFocusIndex, options, estimatedSize)));
+    await mapWithConcurrency(focusFiles, sharedFocusIndexBuildConcurrency, f =>
+        fillFocusItems('common/national_focus/' + f, workspaceFocusIndex, options, estimatedSize));
 }
 
 function ensureGlobalFocusIndex(): Promise<void> {

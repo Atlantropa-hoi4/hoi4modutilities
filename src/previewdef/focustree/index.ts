@@ -4,6 +4,7 @@ import { ConfigurationKey } from '../../constants';
 import { localize } from '../../util/i18n';
 import { matchPathEnd } from '../../util/nodecommon';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
+import { getPerfSnapshot } from '../../util/perf';
 import { PreviewDescriptor } from '../descriptor';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { PreviewBase } from '../previewbase';
@@ -118,6 +119,7 @@ export class FocusTreePreview extends PreviewBase {
             uri: this.uri.toString(),
             session: this.session.getDebugState(),
             diagnostics: this.latestDiagnostics,
+            performance: getPerfSnapshot({ limit: 25 }),
         };
     }
 

@@ -4,6 +4,7 @@ import {
     renderFocusHtmlTemplate,
     resolveFocusLocalizationText,
     resolveFocusLocalizationTextById,
+    resolveFocusLocalizationTextByIdIfReady,
 } from '../../src/previewdef/focustree/focusrender';
 
 describe('focustree focus render', () => {
@@ -77,5 +78,11 @@ describe('focustree focus render', () => {
             FOCUS_A: 'Focus A localized',
             FOCUS_B: 'Focus B localized',
         });
+    });
+
+    it('exposes a ready-only localization resolver for preview rendering', async () => {
+        const result = await resolveFocusLocalizationTextByIdIfReady([{ id: 'FOCUS_A', text: undefined }] as any);
+
+        assert.deepStrictEqual(result, {});
     });
 });

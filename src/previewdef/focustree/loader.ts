@@ -36,6 +36,7 @@ export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
+const focusIconFallbackScanLimit = 48;
 
 export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     constructor(
@@ -68,13 +69,16 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
         const constants = {};
 
+        session.throwIfCancelled();
         const parsedNode = parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file));
+        session.throwIfCancelled();
         const file = convertFocusFileNodeToJson(parsedNode, constants);
 
         if (isSharedFocusIndexEnabled()) {
             const dependencyPaths = new Set(dependencies.map(d => d.path));
             for (const focusTree of file.focus_tree) {
                 for (const sharedFocus of focusTree.shared_focus) {
+                    session.throwIfCancelled();
                     if (!sharedFocus) {
                         continue;
                     }
@@ -88,8 +92,11 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         }
 
         const focusTreeDependencies = dependencies.filter(d => d.type === 'focus').map(d => d.path);
-        const focusTreeDepFiles = await this.loaderDependencies.loadMultiple(focusTreeDependencies, session, FocusTreeLoader);
+        const focusTreeDependencyLoaderType = deferAssetLoad ? DeferredFocusTreeLoader : FocusTreeLoader;
+        const focusTreeDepFiles = await this.loaderDependencies.loadMultiple(focusTreeDependencies, session, focusTreeDependencyLoaderType);
+        session.throwIfCancelled();
         const focusSpacingDepFiles = await this.loaderDependencies.loadMultiple([focusTreeGuiFile], session, FocusSpacingLoader);
+        session.throwIfCancelled();
         const focusSpacing = focusSpacingDepFiles[0]?.result.focusSpacing;
 
         const importedFocusTrees = focusTreeDepFiles.flatMap(f => f.result.focusTrees);
@@ -101,14 +108,17 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         let loadedInlayFiles: string[] = [];
         if (!hasInlayRefs) {
             for (const focusTree of focusTrees) {
+                session.throwIfCancelled();
                 focusTree.inlayWindows = [];
                 focusTree.inlayConditionExprs = [];
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
             }
         } else {
             const loadedInlays = await loadFocusInlayWindows();
+            session.throwIfCancelled();
             loadedInlayFiles = loadedInlays.inlays.map(inlay => inlay.file);
             for (const focusTree of focusTrees) {
+                session.throwIfCancelled();
                 const resolved = resolveInlaysForTree(focusTree.inlayWindowRefs, loadedInlays.inlays);
                 focusTree.inlayWindows = resolved.inlayWindows;
                 focusTree.inlayConditionExprs = resolved.inlayConditionExprs;
@@ -124,8 +134,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const guiResolution = deferAssetLoad
             ? { guiFiles: [], warnings: [] as ReturnType<typeof sortFocusWarnings> }
             : await resolveInlayGuiWindows(allInlays);
+        session.throwIfCancelled();
         if (!deferAssetLoad) {
             for (const focusTree of focusTrees) {
+                session.throwIfCancelled();
                 focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
             }
@@ -134,8 +146,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const inlayGfxResolution = deferAssetLoad
             ? { resolvedFiles: [] }
             : await resolveInlayGfxFiles(allInlays);
+        session.throwIfCancelled();
         if (!deferAssetLoad) {
             for (const focusTree of focusTrees) {
+                session.throwIfCancelled();
                 addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
             }
@@ -156,11 +170,14 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ? createEmptyFocusIconAssetResolution()
             : await resolveFocusIconGfxAssets(focusIconNames, {
                 resolveIndexedFile: async gfxName => tryGetGfxContainerFile(gfxName),
-                listInterfaceGfxFiles: getCachedInterfaceGfxFiles,
+                listInterfaceGfxFiles: async () => orderFocusIconFallbackGfxFiles(await getCachedInterfaceGfxFiles()),
                 readSpriteNames: getCachedInterfaceGfxSpriteNames,
                 readSpriteTextureFiles: getSpriteTextureFilesByGfxFile,
                 readTextureExpiryToken: hoiFileExpiryToken,
+                fallbackScanLimit: focusIconFallbackScanLimit,
+                throwIfCancelled: () => session.throwIfCancelled(),
             });
+        session.throwIfCancelled();
 
         const gfxDependencies = [
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
@@ -200,4 +217,31 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     public toString() {
         return `[FocusTreeLoader ${this.file}]`;
     }
+}
+
+class DeferredFocusTreeLoader extends FocusTreeLoader {
+    constructor(file: string) {
+        super(file, undefined, 'deferred');
+    }
+}
+
+function orderFocusIconFallbackGfxFiles(gfxFiles: string[]): string[] {
+    const score = (file: string): number => {
+        const lower = file.toLowerCase();
+        if (lower === focusesGFX) {
+            return 0;
+        }
+        if (lower.includes('/goals') || lower.includes('\\goals')) {
+            return 1;
+        }
+        if (lower.includes('focus') || lower.includes('nationalfocus')) {
+            return 2;
+        }
+        return 3;
+    };
+
+    return [...gfxFiles].sort((left, right) => {
+        const scoreDelta = score(left) - score(right);
+        return scoreDelta || left.localeCompare(right);
+    });
 }

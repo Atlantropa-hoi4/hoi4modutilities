@@ -9,6 +9,7 @@ import { sendEvent } from '../util/telemetry';
 import { getWebviewPanelOptions } from '../util/webview';
 import { UpdateScheduler } from '../services/updateScheduler';
 import { getSelectedModRootFolders } from '../util/fileloader';
+import { incrementPerfCounter, measureAsync } from '../util/perf';
 import { PreviewProviderResolver } from './previewproviderresolver';
 import { PreviewDependencyTracker } from './previewdependencytracker';
 import { PreviewContextService } from './previewcontextservice';
@@ -83,7 +84,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         try {
             const uri = vscode.Uri.parse(uriStr, true);
             debug('preview.deserialize', { uri: uriStr, viewType: panel.viewType });
-            await this.showPreviewImpl(uri, panel);
+            await measureAsync('preview.deserialize', { viewType: panel.viewType }, () => this.showPreviewImpl(uri, panel));
         } catch (e) {
             panel.dispose();
             debug(`dispose panel ${uriStr} because reopen error`);
@@ -92,7 +93,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
     private showPreview(uri?: vscode.Uri): Promise<void> {
         this.previewContextService.safeUpdateHoi4PreviewContextValue(vscode.window.activeTextEditor);
-        return this.showPreviewImpl(uri);
+        return measureAsync('preview.show', { requested: uri ? 'explicit' : 'active' }, () => this.showPreviewImpl(uri));
     }
 
     private onCloseTextDocument(document: vscode.TextDocument): void {
@@ -148,6 +149,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         const uri = document.uri;
         const key = uri.toString();
         if (key in this.previews) {
+            incrementPerfCounter('preview.revealExisting');
             debug('preview.reveal-existing', { uri: key, panelProvided: !!panel });
             this.previews[key].panel.reveal();
             panel?.dispose();
@@ -157,6 +159,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
         const previewProvider = this.previewProviderResolver.find(document);
         if (!previewProvider) {
+            incrementPerfCounter('preview.noProvider');
             panel?.dispose();
             debug(`dispose panel ${uri} because no preview provider`);
             this.previewContextService.clearPreviewContext();
@@ -248,7 +251,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             this.dependencyUpdateScheduler.schedule(previewUri, 1000, async () => {
                 const otherDocument = getDocumentByUri(otherPreview.uri);
                 if (otherDocument && !otherPreview.isDisposed) {
-                    await otherPreview.onDocumentChange(otherDocument, { source: 'dependency' });
+                    await measureAsync('preview.refresh', { source: 'dependency', preview: otherPreview.constructor.name }, () =>
+                        otherPreview.onDocumentChange(otherDocument, { source: 'dependency' }));
                 }
             });
         }
@@ -258,7 +262,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         const key = previewItem.uri.toString();
         this.documentUpdateScheduler.schedule(key, previewItem.getDocumentChangeDebounceMs(), async () => {
             if (!previewItem.isDisposed) {
-                await previewItem.onDocumentChange(document);
+                await measureAsync('preview.refresh', { source: 'document', preview: previewItem.constructor.name }, () =>
+                    previewItem.onDocumentChange(document));
             }
         });
     }

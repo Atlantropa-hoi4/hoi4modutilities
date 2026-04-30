@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseHoi4File } from '../hoiformat/hoiparser';
 import { getSpriteTypes } from '../hoiformat/spritetype';
-import { debounceByInput, forceError, UserError } from './common';
+import { debounceByInput, forceError, mapWithConcurrency, UserError } from './common';
 import { error } from './debug';
 import { isGfxIndexEnabled } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
@@ -16,6 +16,7 @@ interface GfxIndexItem {
 
 const globalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
 let workspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+const gfxIndexBuildConcurrency = 8;
 
 const gfxIndexService = new IndexService<GfxIndexItem>({
     global: {
@@ -76,13 +77,15 @@ export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Pr
 async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<void> {
     const options = { mod: false, recursively: true };
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
-    await Promise.all(gfxFiles.map(f => fillGfxItems('interface/' + f, globalGfxIndex, options, estimatedSize)));
+    await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
+        fillGfxItems('interface/' + f, globalGfxIndex, options, estimatedSize));
 }
 
 async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<void> {
     const options = { hoi4: false, recursively: true };
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
-    await Promise.all(gfxFiles.map(f => fillGfxItems('interface/' + f, workspaceGfxIndex, options, estimatedSize)));
+    await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
+        fillGfxItems('interface/' + f, workspaceGfxIndex, options, estimatedSize));
 }
 
 function ensureGlobalGfxIndex(): Promise<void> {

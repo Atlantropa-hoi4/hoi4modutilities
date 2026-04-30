@@ -106,6 +106,41 @@ describe('focus icon gfx resolver', () => {
         ]);
     });
 
+    it('respects the fallback scan limit and leaves later matches unresolved', async () => {
+        const scannedFiles: string[] = [];
+        const result = await resolveFocusIconGfxAssets(
+            ['GFX_first', 'GFX_late'],
+            {
+                resolveIndexedFile: async () => undefined,
+                listInterfaceGfxFiles: async () => [
+                    'interface/first.gfx',
+                    'interface/second.gfx',
+                    'interface/third.gfx',
+                ],
+                readSpriteNames: async (gfxFile) => {
+                    scannedFiles.push(gfxFile);
+                    if (gfxFile === 'interface/first.gfx') {
+                        return ['GFX_first'];
+                    }
+                    if (gfxFile === 'interface/third.gfx') {
+                        return ['GFX_late'];
+                    }
+                    return [];
+                },
+                fallbackScanLimit: 2,
+            },
+        );
+
+        assert.deepStrictEqual(scannedFiles, [
+            'interface/first.gfx',
+            'interface/second.gfx',
+        ]);
+        assert.deepStrictEqual(result.gfxFileByIconName, {
+            GFX_first: 'interface/first.gfx',
+        });
+        assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_late']);
+    });
+
     it('returns texture files for matched indexed and fallback sprites', async () => {
         const result = await resolveFocusIconGfxAssets(
             ['GFX_indexed', 'GFX_fallback', 'GFX_unresolved'],

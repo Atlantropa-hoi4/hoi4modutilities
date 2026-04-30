@@ -27,6 +27,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const { FocusTreePreviewSession } = require('../../src/previewdef/focustree/previewsession') as typeof import('../../src/previewdef/focustree/previewsession');
 const { createFocusTreeRuntimeState } = require('../../src/previewdef/focustree/runtime') as typeof import('../../src/previewdef/focustree/runtime');
+const { UserError } = require('../../src/util/common') as typeof import('../../src/util/common');
 
 function createDocument(version: number): vscode.TextDocument {
     return {
@@ -59,10 +60,11 @@ function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
 
 function createSession(overrides?: {
     runtimeState?: ReturnType<typeof createFocusTreeRuntimeState>;
-    buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred') => Promise<any>;
+    buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean) => Promise<any>;
     createFullSnapshot?: (baseState: any, previousCache: any) => Promise<any>;
     renderShell?: (documentVersion: number) => string;
     latestDocument?: vscode.TextDocument | undefined;
+    deferredHydrationDelayMs?: number;
 }) {
     const postMessages: any[] = [];
     const webview = {
@@ -82,6 +84,7 @@ function createSession(overrides?: {
         updateDependencies: () => undefined,
         getLatestDocument: () => latestDocument.current,
         runtimeState,
+        deferredHydrationDelayMs: overrides?.deferredHydrationDelayMs ?? 0,
         snapshotBuilder: {
             renderShell: overrides?.renderShell ?? (documentVersion => `shell:${documentVersion}`),
             renderDocument: async document => `full:${document.version}`,
@@ -235,10 +238,58 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
     });
 
+    it('signals cancellation to stale refresh base-state builds', async () => {
+        const firstDocument = createDocument(20);
+        const secondDocument = createDocument(21);
+        const runtimeState = createFocusTreeRuntimeState();
+        runtimeState.webviewReady = true;
+        let firstBuildIsCancelled: (() => boolean) | undefined;
+        let resolveFirstBuild: (() => void) | undefined;
+        const firstBuildStarted = new Promise<void>(resolve => {
+            resolveFirstBuild = resolve;
+        });
+        let observedCancellation = false;
+        const { session, latestDocument, postMessages } = createSession({
+            runtimeState,
+            latestDocument: firstDocument,
+            buildBaseState: async (document, assetLoadMode, isCancelled) => {
+                if (document.version === firstDocument.version) {
+                    firstBuildIsCancelled = isCancelled;
+                    resolveFirstBuild?.();
+                    while (!isCancelled?.()) {
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+
+                    observedCancellation = true;
+                    throw new UserError('cancelled stale build');
+                }
+
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
+        });
+
+        const firstRefresh = session.refreshDocument(firstDocument);
+        await firstBuildStarted;
+        latestDocument.current = secondDocument;
+        const secondRefresh = session.refreshDocument(secondDocument);
+
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.strictEqual(firstBuildIsCancelled?.(), true);
+        assert.strictEqual(observedCancellation, true);
+        assert.ok(postMessages.some(message => (message as any).documentVersion === secondDocument.version));
+        assert.ok(!postMessages.some(message => (message as any).documentVersion === firstDocument.version));
+    });
+
     it('reconciles local edits through snapshot updates', async () => {
         const document = createDocument(12);
+        const requestedModes: Array<'full' | 'deferred'> = [];
         const { session, webview, postMessages, latestDocument } = createSession({
             latestDocument: document,
+            buildBaseState: async (_document, assetLoadMode) => {
+                requestedModes.push(assetLoadMode);
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
         });
         session.handleWebviewReady();
 
@@ -249,6 +300,7 @@ describe('focustree preview session', () => {
         assert.strictEqual(updatedVersion, 12);
         assert.strictEqual(webview.html, '');
         assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
+        assert.deepStrictEqual(requestedModes.slice(0, 1), ['deferred']);
     });
 
     it('uses snapshot updates after structural edits', async () => {
@@ -278,7 +330,22 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
     });
 
-    it('preloads full hydration while the deferred first snapshot is being applied', async () => {
+    it('keeps temporary parser errors inside document refreshes', async () => {
+        const document = createDocument(19);
+        const { session, webview, postMessages } = createSession({
+            buildBaseState: async () => {
+                throw new UserError('temporary parse error');
+            },
+        });
+
+        session.handleWebviewReady();
+        await assert.doesNotReject(() => session.refreshDocument(document));
+
+        assert.strictEqual(webview.html, '');
+        assert.deepStrictEqual(postMessages, []);
+    });
+
+    it('schedules full hydration after the deferred first snapshot is applied', async () => {
         const document = createDocument(16);
         let resolveDeferred: ((value: any) => void) | undefined;
         let resolveFull: ((value: any) => void) | undefined;
@@ -305,6 +372,7 @@ describe('focustree preview session', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+        await new Promise(resolve => setTimeout(resolve, 0));
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
 
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -322,15 +390,15 @@ describe('focustree preview session', () => {
         const updatedDocument = createDocument(18);
         let resolveDeferredInitial: ((value: any) => void) | undefined;
         let resolveFullInitial: ((value: any) => void) | undefined;
-        let resolveUpdatedFull: ((value: any) => void) | undefined;
+        let resolveUpdatedDeferred: ((value: any) => void) | undefined;
         const deferredInitialPromise = new Promise<any>(resolve => {
             resolveDeferredInitial = resolve;
         });
         const fullInitialPromise = new Promise<any>(resolve => {
             resolveFullInitial = resolve;
         });
-        const updatedFullPromise = new Promise<any>(resolve => {
-            resolveUpdatedFull = resolve;
+        const updatedDeferredPromise = new Promise<any>(resolve => {
+            resolveUpdatedDeferred = resolve;
         });
         const { session, postMessages, latestDocument } = createSession({
             latestDocument: initialDocument,
@@ -341,8 +409,11 @@ describe('focustree preview session', () => {
                 if (document.version === 17 && assetLoadMode === 'full') {
                     return fullInitialPromise;
                 }
+                if (document.version === 18 && assetLoadMode === 'deferred') {
+                    return updatedDeferredPromise;
+                }
                 if (document.version === 18 && assetLoadMode === 'full') {
-                    return updatedFullPromise;
+                    return Promise.resolve(createBaseState(updatedDocument.version, false));
                 }
 
                 throw new Error(`Unexpected buildBaseState request ${document.version}:${assetLoadMode}`);
@@ -358,7 +429,7 @@ describe('focustree preview session', () => {
         latestDocument.current = updatedDocument;
         const refreshPromise = session.refreshDocument(updatedDocument);
         resolveFullInitial?.(createBaseState(initialDocument.version, false));
-        resolveUpdatedFull?.(createBaseState(updatedDocument.version, false));
+        resolveUpdatedDeferred?.(createBaseState(updatedDocument.version, true));
         await refreshPromise;
         await new Promise(resolve => setTimeout(resolve, 0));
         await new Promise(resolve => setTimeout(resolve, 0));

@@ -32,11 +32,6 @@ interface ScriptedGuiWindowsCache {
     windowsByName: Record<string, { file: string; window: HOIPartial<ContainerWindowType> }>;
 }
 
-interface InterfaceGfxCache {
-    gfxFiles: string[];
-    spriteNamesByFile: Record<string, string[]>;
-}
-
 const focusInlayWindowsFolder = "common/focus_inlay_windows";
 const interfaceGuiFolder = "interface";
 const interfaceFolder = "interface";
@@ -53,10 +48,18 @@ const scriptedGuiWindowsCache = new PromiseCache<ScriptedGuiWindowsCache>({
     life: 10 * 60 * 1000,
 });
 
-const interfaceGfxCache = new PromiseCache<InterfaceGfxCache>({
-    factory: buildInterfaceGfxCache,
+const interfaceGfxFilesCache = new PromiseCache<string[]>({
+    factory: () => listFolderFiles(interfaceFolder, ".gfx"),
     expireWhenChange: () => getFolderFilesExpiryToken(interfaceFolder, ".gfx"),
     life: 10 * 60 * 1000,
+    name: 'focusTree.interfaceGfxFiles',
+});
+
+const interfaceGfxSpriteNamesCache = new PromiseCache<string[]>({
+    factory: buildInterfaceGfxSpriteNamesCache,
+    expireWhenChange: key => hoiFileExpiryToken(key),
+    life: 10 * 60 * 1000,
+    name: 'focusTree.interfaceGfxSpriteNames',
 });
 
 function createParseWarning(params: {
@@ -418,37 +421,25 @@ export async function resolveInlayGfxFiles(inlays: FocusTreeInlay[]): Promise<{ 
 
     return { resolvedFiles: Array.from(resolvedFiles) };
 }
-async function buildInterfaceGfxCache(): Promise<InterfaceGfxCache> {
-    const gfxFiles = await listFolderFiles(interfaceFolder, ".gfx");
-    const parsedFiles = await Promise.all(gfxFiles.map(async candidateFile => {
-        try {
-            const [buffer, uri] = await readFileFromModOrHOI4(candidateFile);
-            const spriteTypes = getSpriteTypes(parseHoi4File(
-                buffer.toString().replace(/^\uFEFF/, ""),
-                localize("infile", "In file {0}:\n", uri.toString()),
-            ));
-            return [candidateFile, spriteTypes.map(spriteType => spriteType.name)] as const;
-        } catch {
-            return undefined;
-        }
-    }));
-
-    const spriteNamesByFile: Record<string, string[]> = {};
-    for (const entry of parsedFiles) {
-        if (entry) {
-            spriteNamesByFile[entry[0]] = entry[1];
-        }
+async function buildInterfaceGfxSpriteNamesCache(gfxFile: string): Promise<string[]> {
+    try {
+        const [buffer, uri] = await readFileFromModOrHOI4(gfxFile);
+        const spriteTypes = getSpriteTypes(parseHoi4File(
+            buffer.toString().replace(/^\uFEFF/, ""),
+            localize("infile", "In file {0}:\n", uri.toString()),
+        ));
+        return spriteTypes.map(spriteType => spriteType.name);
+    } catch {
+        return [];
     }
-
-    return { gfxFiles, spriteNamesByFile };
 }
 
 export async function getCachedInterfaceGfxFiles(): Promise<string[]> {
-    return (await interfaceGfxCache.get()).gfxFiles;
+    return await interfaceGfxFilesCache.get();
 }
 
 export async function getCachedInterfaceGfxSpriteNames(gfxFile: string): Promise<string[]> {
-    return (await interfaceGfxCache.get()).spriteNamesByFile[gfxFile] ?? [];
+    return await interfaceGfxSpriteNamesCache.get(gfxFile);
 }
 
 export function addInlayGfxWarnings(inlays: FocusTreeInlay[], warnings: FocusWarning[]) {

@@ -94,6 +94,15 @@ export async function resolveFocusLocalizationTextById(
     return textById;
 }
 
+export async function resolveFocusLocalizationTextByIdIfReady(
+    focuses: readonly Pick<Focus, 'id' | 'text'>[],
+): Promise<Record<string, string>> {
+    return resolveFocusLocalizationTextById(
+        focuses,
+        key => Promise.resolve(tryGetLocalizedText(key)),
+    );
+}
+
 export function renderFocusHtmlTemplate(
     focus: Focus,
     styleTable: StyleTable,

@@ -1,8 +1,11 @@
+import { incrementPerfCounter } from './perf';
+
 export interface CacheOptions<V> {
     factory(key: string): V;
     expireWhenChange?(key: string, cachedValue: V): any;
     life: number;
     nonExpireLife?: number;
+    name?: string;
 }
 
 export interface PromiseCacheOptions<V> extends CacheOptions<Promise<V>> {
@@ -33,6 +36,7 @@ export class Cache<V> {
     }
 
     public get(key: string = ''): V {
+        const cacheName = this.options.name ?? this.constructor.name;
         const cacheEntry = this._cache[key];
         const now = Date.now();
         let expireToken: any = undefined;
@@ -41,9 +45,11 @@ export class Cache<V> {
                 (expireToken = this.options.expireWhenChange!(key, cacheEntry.value)) === cacheEntry.expiryToken
             )) {
             cacheEntry.lastAccess = now;
+            incrementPerfCounter('cache.hit', { cache: cacheName });
             return cacheEntry.value;
         }
 
+        incrementPerfCounter(cacheEntry ? 'cache.expired' : 'cache.miss', { cache: cacheName });
         const value = this.options.factory(key);
         const newEntry = {
             lastAccess: now,
@@ -56,10 +62,12 @@ export class Cache<V> {
     }
 
     public remove(key: string = ''): void {
+        incrementPerfCounter('cache.remove', { cache: this.options.name ?? this.constructor.name });
         delete this._cache[key];
     }
 
     public clear(): void {
+        incrementPerfCounter('cache.clear', { cache: this.options.name ?? this.constructor.name });
         this._cache = {};
     }
 
@@ -101,6 +109,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
     }
 
     public async get(key: string = ''): Promise<V> {
+        const cacheName = this.options.name ?? this.constructor.name;
         const cacheEntry = this._cache[key];
         const now = Date.now();
         let expireToken: any = undefined;
@@ -109,9 +118,11 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
                 await (expireToken = Promise.resolve(this.options.expireWhenChange!(key, cacheEntry.value))) === await cacheEntry.expiryToken)
             ) {
             cacheEntry.lastAccess = now;
+            incrementPerfCounter('cache.hit', { cache: cacheName });
             return await cacheEntry.value;
         }
 
+        incrementPerfCounter(cacheEntry ? 'cache.expired' : 'cache.miss', { cache: cacheName });
         const value = this.options.factory(key);
         const newEntry = {
             lastAccess: now,
