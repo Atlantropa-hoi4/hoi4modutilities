@@ -2499,8 +2499,14 @@ function getVisibleInlayWindows(focusTree: FocusTree, exprs?: ConditionItem[]): 
     return focusTree.inlayWindows.filter(inlay => applyCondition(inlay.visible, conditionExprs));
 }
 
+function getRenderableInlayWindows(focusTree: FocusTree, exprs?: ConditionItem[]): typeof focusTree.inlayWindows {
+    const renderedInlayWindows: Record<string, string> = window.renderedInlayWindows ?? {};
+    return getVisibleInlayWindows(focusTree, exprs)
+        .filter(inlay => !!renderedInlayWindows[inlay.id]);
+}
+
 function refreshInlayWindowSelector(focusTree: FocusTree, exprs?: ConditionItem[]) {
-    const visibleInlayWindows = getVisibleInlayWindows(focusTree, exprs);
+    const visibleInlayWindows = getRenderableInlayWindows(focusTree, exprs);
     const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
     const inlayWindowsContainerElement = document.getElementById('inlay-window-container') as HTMLDivElement | null;
     if (inlayWindowsContainerElement) {
@@ -2523,7 +2529,7 @@ function refreshInlayWindowSelector(focusTree: FocusTree, exprs?: ConditionItem[
 }
 
 function renderInlayWindows(focusTree: FocusTree, exprs: ConditionItem[]): string {
-    const visibleInlayWindows = getVisibleInlayWindows(focusTree, exprs);
+    const visibleInlayWindows = getRenderableInlayWindows(focusTree, exprs);
     const selectedInlayWindowId = getSelectedInlayWindowId(focusTree, visibleInlayWindows.map(inlay => inlay.id));
     if (!selectedInlayWindowId) {
         return '';
