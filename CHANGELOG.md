@@ -4,10 +4,27 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.7] - 2026/04/27 - Latest
+## [0.13.7] - 2026/04/30 - Latest
+
+### Added
+* Add a native HOI4 document formatter for supported script, GUI, and GFX files, including full-document, range, and on-type indentation support.
+* Add local performance tracing for preview orchestration, file loading, index builds, image/GFX caches, and Focus Tree debug state.
+* Add live Focus Tree refresh coverage for dependency files from the workspace and selected mod root, including focus, localisation, GFX, GUI, image, and `.mod` changes.
+
+### Changed
+* Make Focus Tree first paint more responsive by posting a deferred structural snapshot first, delaying full hydration, coalescing dependency refresh bursts, and cancelling stale refresh work earlier.
+* Reduce Focus Tree hydration pressure by coalescing in-flight file loads, throttling index reads, capping global file-read concurrency, lazily scanning interface GFX fallback files, and bounding focus-icon fallback scans.
+* Improve HOI4 parser compatibility for signed and trailing-dot numbers, dotted date-like symbols, longest-match comparison operators, permissive bare symbols, and anonymous block lists.
+* Resolve Focus Tree localisation from ready index data without blocking preview rendering on a full localisation index build.
 
 ### Fixed
-* Fix Focus Tree `shared_focus` import resolution so only actual shared or joint focuses are imported, local focuses are not overwritten by imported ID conflicts, and mod-derived dropdown values are not interpolated into `innerHTML`.
+* Fix Focus Tree `shared_focus` import resolution so only actual shared or joint focuses are imported, and local focuses are not overwritten by imported ID conflicts.
+* Load localisation files from the selected `.mod` or `descriptor.mod` content root, and accept filenames such as `MEO - New Soul l_korean.yml`.
+* Reuse resolved focus icon GFX mappings, ignore placeholder icon names, include resolved texture dependencies, and refresh previews when dependent asset files change.
+* Fix stale Focus Tree navigation and warning zoom behavior after document edits.
+* Keep temporary Focus Tree parse errors while typing inside the preview trace instead of surfacing unhandled refresh failures.
+* Restrict `Preview HOI4 File` visibility and command execution to resolved previewable file resources.
+* Replace mod-derived webview option and warning HTML injection paths with DOM/text-based rendering.
 
 ## [0.13.6] - 2026/04/13
 

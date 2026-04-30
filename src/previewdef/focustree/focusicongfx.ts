@@ -6,6 +6,7 @@ export interface FocusIconGfxResolver {
     readSpriteNames(gfxFile: string): Promise<string[]>;
     readSpriteTextureFiles?(gfxFile: string): Promise<Record<string, string | undefined>>;
     readTextureExpiryToken?(textureFile: string): Promise<string>;
+    priorityGfxFiles?: readonly string[];
     fallbackScanLimit?: number;
     throwIfCancelled?(): void;
 }
@@ -81,10 +82,12 @@ export async function resolveFocusIconGfxAssets(
         });
     }
 
-    const interfaceGfxFiles = resolver.fallbackScanLimit === undefined
-        ? await resolver.listInterfaceGfxFiles()
-        : (await resolver.listInterfaceGfxFiles()).slice(0, resolver.fallbackScanLimit);
-    for (const gfxFile of interfaceGfxFiles) {
+    const fallbackGfxFiles = prioritizeFallbackGfxFiles(
+        await resolver.listInterfaceGfxFiles(),
+        resolver.priorityGfxFiles ?? [],
+        resolver.fallbackScanLimit,
+    );
+    for (const gfxFile of fallbackGfxFiles) {
         resolver.throwIfCancelled?.();
         if (unresolvedNames.size === 0) {
             break;
@@ -124,6 +127,44 @@ export async function resolveFocusIconGfxAssets(
 
 function isResolvableFocusIconName(iconName: string | undefined): iconName is string {
     return !!iconName && iconName.trim().toUpperCase() !== 'GFX';
+}
+
+function prioritizeFallbackGfxFiles(
+    gfxFiles: readonly string[],
+    priorityGfxFiles: readonly string[],
+    fallbackScanLimit: number | undefined,
+): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    const add = (gfxFile: string) => {
+        const key = normalizeGfxFileKey(gfxFile);
+        if (seen.has(key)) {
+            return;
+        }
+
+        seen.add(key);
+        result.push(gfxFile);
+    };
+
+    priorityGfxFiles.forEach(add);
+    let fallbackScanCount = 0;
+    for (const gfxFile of gfxFiles) {
+        if (fallbackScanLimit !== undefined && fallbackScanCount >= fallbackScanLimit) {
+            break;
+        }
+
+        const before = result.length;
+        add(gfxFile);
+        if (result.length > before) {
+            fallbackScanCount += 1;
+        }
+    }
+
+    return result;
+}
+
+function normalizeGfxFileKey(gfxFile: string): string {
+    return gfxFile.replace(/\\+/g, '/').toLowerCase();
 }
 
 async function resolveTextureFiles(

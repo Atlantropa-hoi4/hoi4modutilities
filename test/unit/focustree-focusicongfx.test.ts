@@ -141,6 +141,44 @@ describe('focus icon gfx resolver', () => {
         assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_late']);
     });
 
+    it('scans explicit priority gfx files before applying the fallback scan limit', async () => {
+        const scannedFiles: string[] = [];
+        const result = await resolveFocusIconGfxAssets(
+            ['GFX_priority_a', 'GFX_priority_b'],
+            {
+                resolveIndexedFile: async () => undefined,
+                listInterfaceGfxFiles: async () => [
+                    'interface/first.gfx',
+                    'interface/second.gfx',
+                    'interface/priority_a.gfx',
+                    'interface/priority_b.gfx',
+                ],
+                readSpriteNames: async (gfxFile) => {
+                    scannedFiles.push(gfxFile);
+                    if (gfxFile === 'interface/priority_a.gfx') {
+                        return ['GFX_priority_a'];
+                    }
+                    if (gfxFile === 'interface/priority_b.gfx') {
+                        return ['GFX_priority_b'];
+                    }
+                    return [];
+                },
+                priorityGfxFiles: ['interface/priority_a.gfx', 'interface/priority_b.gfx'],
+                fallbackScanLimit: 1,
+            },
+        );
+
+        assert.deepStrictEqual(scannedFiles, [
+            'interface/priority_a.gfx',
+            'interface/priority_b.gfx',
+        ]);
+        assert.deepStrictEqual(result.gfxFileByIconName, {
+            GFX_priority_a: 'interface/priority_a.gfx',
+            GFX_priority_b: 'interface/priority_b.gfx',
+        });
+        assert.deepStrictEqual(result.unresolvedIconNames, []);
+    });
+
     it('returns texture files for matched indexed and fallback sprites', async () => {
         const result = await resolveFocusIconGfxAssets(
             ['GFX_indexed', 'GFX_fallback', 'GFX_unresolved'],

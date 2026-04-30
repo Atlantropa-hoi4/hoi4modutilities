@@ -3,7 +3,7 @@ import { convertFocusFileNodeToJson, FocusTree, getFocusTree } from "./schema";
 import { parseHoi4File } from "../../hoiformat/hoiparser";
 import { localize } from "../../util/i18n";
 import { uniq, flatten } from "lodash";
-import { tryGetGfxContainerFile } from "../../util/gfxindex";
+import { getGfxContainerFile } from "../../util/gfxindex";
 import { isSharedFocusIndexEnabled } from "../../util/featureflags";
 import { findFileByFocusKey } from "../../util/sharedFocusIndex";
 import {
@@ -36,7 +36,6 @@ export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
-const focusIconFallbackScanLimit = 48;
 
 export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     constructor(
@@ -166,22 +165,25 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ...loadedInlayFiles,
             ...allInlays.map(inlay => inlay.file),
         ]));
+        const explicitGfxDependencies = uniq([
+            ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
+            ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
+        ]);
         const iconGfxAssets = deferAssetLoad
             ? createEmptyFocusIconAssetResolution()
             : await resolveFocusIconGfxAssets(focusIconNames, {
-                resolveIndexedFile: async gfxName => tryGetGfxContainerFile(gfxName),
+                resolveIndexedFile: async gfxName => getGfxContainerFile(gfxName),
                 listInterfaceGfxFiles: async () => orderFocusIconFallbackGfxFiles(await getCachedInterfaceGfxFiles()),
                 readSpriteNames: getCachedInterfaceGfxSpriteNames,
                 readSpriteTextureFiles: getSpriteTextureFilesByGfxFile,
                 readTextureExpiryToken: hoiFileExpiryToken,
-                fallbackScanLimit: focusIconFallbackScanLimit,
+                priorityGfxFiles: explicitGfxDependencies,
                 throwIfCancelled: () => session.throwIfCancelled(),
             });
         session.throwIfCancelled();
 
         const gfxDependencies = [
-            ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
-            ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
+            ...explicitGfxDependencies,
             ...iconGfxAssets.gfxFiles,
             ...guiResolution.guiFiles,
             ...inlayGfxResolution.resolvedFiles,
@@ -231,7 +233,7 @@ function orderFocusIconFallbackGfxFiles(gfxFiles: string[]): string[] {
         if (lower === focusesGFX) {
             return 0;
         }
-        if (lower.includes('/goals') || lower.includes('\\goals')) {
+        if (lower.includes('/goals') || lower.includes('\\goals') || lower.includes('goals')) {
             return 1;
         }
         if (lower.includes('focus') || lower.includes('nationalfocus')) {

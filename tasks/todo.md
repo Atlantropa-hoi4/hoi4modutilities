@@ -304,3 +304,21 @@ Focus Tree stale refresh cancellation 2026-04-30:
 - [x] Cover stale refresh cancellation with Focus Tree preview session unit coverage.
 
 Review note: older refreshes now observe newer request ids or document versions while they are still building, then stop through the existing `UserError` refresh-failure path instead of continuing to expensive full hydration only to be skipped afterward.
+
+0.13.7 release prep 2026-04-30:
+- [x] Check package and lockfile version metadata for `0.13.7`.
+- [x] Compare the current changelog against commits after the first 0.13.7 versioning commit.
+- [x] Refresh README feature and performance notes for formatter and Focus Tree responsiveness work.
+- [x] Group the release commit story into user-visible changelog sections.
+- [x] Run release verification after documentation review.
+
+Release note: `0.13.7` now groups the post-versioning commit range into formatter, Focus Tree responsiveness/live refresh, parser/localisation compatibility, preview visibility, icon dependency, and webview hardening notes. README now advertises the formatter and the current Focus Tree first-paint/perf-trace behavior.
+
+Focus Tree explicit icon GFX fallback 2026-04-30:
+- [x] Re-check recent icon resolution refactor against previously working custom `.gfx` dependencies.
+- [x] Prioritize explicitly declared focus/shared-focus `.gfx` dependencies before the bounded fallback scan.
+- [x] Use the full GFX index during full asset loading so icons can resolve without `#!gfx` headers.
+- [x] Restore unbounded full fallback scanning for non-indexed custom icons such as `interface/Meowl/MEO_goals.gfx`.
+- [x] Cover priority fallback behavior with focused resolver unit coverage.
+
+Review note: full asset loading now consults the GFX index, checks explicit `.gfx` dependencies first, and no longer bounds the fallback scan for non-indexed custom focus icons. This restores discovery for `#!gfx`-less files such as `interface/Meowl/MEO_goals.gfx`, while deferred first render still avoids asset work. Reverified with focused icon resolver/loader tests, `npm run compile-ts`, `npm run lint`, and `git diff --check`.

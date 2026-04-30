@@ -7,6 +7,7 @@ const originalLoad = nodeModule._load;
 const mainFocusFile = 'common/national_focus/main.txt';
 const sharedFocusFile = 'common/national_focus/shared.txt';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
+const indexedGfxFile = 'interface/indexed_icons.gfx';
 const fileContents: Record<string, string> = {
     [mainFocusFile]: `
         focus_tree = {
@@ -33,6 +34,8 @@ const fileContents: Record<string, string> = {
     [focusTreeGuiFile]: 'guiTypes = {}',
 };
 const focusIconResolutionCalls: string[][] = [];
+const gfxIndexLookups: string[] = [];
+const focusIconFallbackLimits: Array<number | undefined> = [];
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -82,6 +85,17 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
+    if (request.endsWith('/util/gfxindex')
+        || request.endsWith('/gfxindex')
+        || request === '../../util/gfxindex') {
+        return {
+            getGfxContainerFile: async (gfxName: string) => {
+                gfxIndexLookups.push(gfxName);
+                return gfxName === 'GFX_LOCAL' ? indexedGfxFile : undefined;
+            },
+        };
+    }
+
     if ((request.endsWith('/focusicongfx') || request === './focusicongfx')
         && parent?.filename?.includes('focustree')) {
         return {
@@ -92,12 +106,21 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 unresolvedIconNames: [],
                 textureExpiryByIconName: {},
             }),
-            resolveFocusIconGfxAssets: async (iconNames: string[]) => {
+            resolveFocusIconGfxAssets: async (iconNames: string[], resolver: { resolveIndexedFile: (gfxName: string) => Promise<string | undefined> }) => {
                 focusIconResolutionCalls.push([...iconNames]);
+                focusIconFallbackLimits.push((resolver as { fallbackScanLimit?: number }).fallbackScanLimit);
+                const gfxFileByIconName: Record<string, string> = {};
+                for (const iconName of iconNames) {
+                    const gfxFile = await resolver.resolveIndexedFile(iconName);
+                    if (gfxFile) {
+                        gfxFileByIconName[iconName] = gfxFile;
+                    }
+                }
+
                 return {
-                    gfxFiles: [],
+                    gfxFiles: Object.values(gfxFileByIconName),
                     textureFiles: [],
-                    gfxFileByIconName: {},
+                    gfxFileByIconName,
                     unresolvedIconNames: [],
                     textureExpiryByIconName: {},
                 };
@@ -124,6 +147,8 @@ nodeModule._load = originalLoad;
 describe('focustree loader', () => {
     beforeEach(() => {
         focusIconResolutionCalls.length = 0;
+        gfxIndexLookups.length = 0;
+        focusIconFallbackLimits.length = 0;
     });
 
     it('propagates deferred asset loading to shared focus dependencies', async () => {
@@ -141,5 +166,22 @@ describe('focustree loader', () => {
 
         assert.ok(focusIconResolutionCalls.length >= 1);
         assert.ok(focusIconResolutionCalls.flat().includes('GFX_SHARED'));
+    });
+
+    it('uses the GFX index during full asset loading so icons do not require explicit dependency headers', async () => {
+        const loader = new FocusTreeLoader(mainFocusFile, undefined, 'full');
+        const result = await loader.load(new LoaderSession(true));
+
+        assert.ok(gfxIndexLookups.includes('GFX_LOCAL'));
+        assert.strictEqual(result.result.focusIconGfxFileByName.GFX_LOCAL, indexedGfxFile);
+        assert.ok(result.result.gfxFiles.includes(indexedGfxFile));
+    });
+
+    it('does not bound full focus icon fallback scans when icons are not indexed or explicitly declared', async () => {
+        const loader = new FocusTreeLoader(mainFocusFile, undefined, 'full');
+        await loader.load(new LoaderSession(true));
+
+        assert.ok(focusIconFallbackLimits.length >= 1);
+        assert.ok(focusIconFallbackLimits.every(limit => limit === undefined));
     });
 });

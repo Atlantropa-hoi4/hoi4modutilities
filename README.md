@@ -13,6 +13,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - `.gfx` sprite preview
 - `.dds` and `.tga` custom editors
 - Localisation highlighting and preview text lookup
+- HOI4 script, GUI, and GFX formatter support
 
 ## Getting Started
 
@@ -30,9 +31,11 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 
 - Activation is contextual now: the extension waits for HOI4-relevant files, custom editors, or preview panels instead of activating broadly at startup.
 - Focus tree previews keep their webview context while hidden, so re-opening the same preview should avoid a full bootstrap.
-- The focus tree preview no longer performs a redundant pre-ready full load before the webview handshake, which shortens the first-open path on large trees.
-- Focus inlay windows, scripted GUI windows, and interface GFX caches are built in parallel on first use, so cold-start icon loading on large mods completes faster.
-- Shared indexes for GFX, localisation, and shared focuses are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
+- Focus Tree preview posts a lightweight structural snapshot first, then hydrates localisation, icons, and inlay data after first paint.
+- Focus Tree refreshes coalesce dependency bursts and cancel stale work early, so rapid document edits and asset updates should stay more responsive.
+- Focus inlay windows, scripted GUI windows, and interface GFX fallback data are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
+- Shared indexes for GFX, localisation, and shared focuses limit file-read pressure while they build in the background.
+- Set `HOI4MU_PERF_TRACE=1` when launching the extension host to mirror local performance trace entries to debug logs.
 
 ## Settings
 
