@@ -215,8 +215,12 @@ Codebase performance instrumentation 2026-04-30:
 - [x] Add a shared local perf collector for async/sync durations and hit/miss counters.
 - [x] Instrument preview orchestration, Focus Tree snapshot/patch posting, file loading, index builds, image/GFX caches, and worldmap load/diff/message paths.
 - [x] Surface recent perf entries and counters from the Focus Tree debug state without adding production telemetry.
+- [x] Add Focus Tree webview timing summaries for first content apply, rebuild, and hydration milestones.
+- [x] Record approximate Focus Tree update payload sizes for full/partial snapshots and postMessage calls.
 - [ ] Capture real cold open, warm reopen, document edit refresh, and dependency refresh before/after numbers from a representative workspace.
 - [ ] Extend optimization fixes beyond Focus Tree once the new metrics rank the next bottlenecks.
+
+Focus Tree loading measurement note 2026-05-01: debug state now exposes host perf entries plus `webviewTimings`, including `load`, `contentUpdateReceived`, `firstContentApplied`, `hydrationApplied`, and `webviewReady` stages. Representative fixtures remain `common/national_focus/preset-smoke.txt` and `GXC focus (Liangguang).txt`; real workspace before/after capture is still pending because it needs a manual cold/warm run against a representative mod workspace.
 
 Review note: this pass keeps previous Focus Tree fast-path changes intact and adds local-only measurement hooks across the wider extension. Set `HOI4MU_PERF_TRACE=1` to mirror metric entries to debug logs, or use the Focus Tree debug command to inspect the latest `performance` snapshot. Reverified with `npm run compile-ts`, targeted perf/preview/index/worldmap mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
 

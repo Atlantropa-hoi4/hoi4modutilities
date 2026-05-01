@@ -40,12 +40,22 @@ type FocusPreviewDiagnostics = {
     currentCanvasHeight?: number;
 };
 
+type FocusPreviewWebviewTiming = {
+    stage?: string;
+    payloadBytes?: number;
+    applyMs?: number;
+    rebuildMs?: number;
+    sinceLoadMs?: number;
+};
+
 async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string): Promise<void> {
     await waitFor(async () => {
         const debugState = await vscode.commands.executeCommand(Commands.DebugFocusTreePreviewState, uri) as {
             diagnostics?: FocusPreviewDiagnostics;
+            webviewTimings?: FocusPreviewWebviewTiming[];
         } | undefined;
         const diagnostics = debugState?.diagnostics;
+        const timings = debugState?.webviewTimings ?? [];
 
         return diagnostics?.currentFocusTreeId === expectedTreeId
             && diagnostics?.selectedFocusTreeId === expectedTreeId
@@ -55,7 +65,10 @@ async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string)
             && (diagnostics?.focusGridBoxItemCount ?? 0) > 0
             && (diagnostics?.renderedFocusHitCount ?? 0) > 0
             && (diagnostics?.currentCanvasWidth ?? 0) > 0
-            && (diagnostics?.currentCanvasHeight ?? 0) > 0;
+            && (diagnostics?.currentCanvasHeight ?? 0) > 0
+            && timings.some(timing => timing.stage === 'firstContentApplied'
+                && (timing.payloadBytes ?? 0) > 0
+                && (timing.sinceLoadMs ?? -1) >= 0);
     }, 30000);
 }
 

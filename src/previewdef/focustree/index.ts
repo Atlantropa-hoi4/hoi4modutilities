@@ -18,6 +18,23 @@ import { FocusTreePreviewSession } from './previewsession';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 const focusTreeLiveRefreshExtensions = new Set(['.txt', '.gfx', '.gui', '.yml', '.dds', '.tga', '.png', '.mod']);
+const maxFocusTreeWebviewTimingEvents = 30;
+
+interface FocusTreeWebviewTimingEvent {
+    stage: string;
+    snapshotVersion?: number;
+    documentVersion?: number;
+    changedSlots?: string[];
+    source?: string;
+    assetLoadMode?: string;
+    updateKind?: string;
+    payloadBytes?: number;
+    applyMs?: number;
+    rebuildMs?: number;
+    rebindMs?: number;
+    sinceLoadMs?: number;
+    timestamp: number;
+}
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -41,6 +58,7 @@ export class FocusTreePreview extends PreviewBase {
     private readonly configurationHandler: vscode.Disposable;
     private persistedConditionPresetsByTree: FocusConditionPresetsByTree;
     private latestDiagnostics: unknown;
+    private readonly latestWebviewTimings: FocusTreeWebviewTimingEvent[] = [];
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -119,6 +137,7 @@ export class FocusTreePreview extends PreviewBase {
             uri: this.uri.toString(),
             session: this.session.getDebugState(),
             diagnostics: this.latestDiagnostics,
+            webviewTimings: [...this.latestWebviewTimings],
             performance: getPerfSnapshot({ limit: 25 }),
         };
     }
@@ -132,6 +151,11 @@ export class FocusTreePreview extends PreviewBase {
 
         if (command === 'focusTreeDiagnostics') {
             this.latestDiagnostics = (msg as { snapshot?: unknown }).snapshot;
+            return true;
+        }
+
+        if (command === 'focusTreeWebviewTiming') {
+            this.recordWebviewTiming((msg as { timing?: FocusTreeWebviewTimingEvent }).timing);
             return true;
         }
 
@@ -194,6 +218,20 @@ export class FocusTreePreview extends PreviewBase {
 
         const hasEntries = Object.keys(conditionPresetsByTree).length > 0;
         await workspaceState.update(this.getConditionPresetsStateKey(), hasEntries ? conditionPresetsByTree : undefined);
+    }
+
+    private recordWebviewTiming(timing: FocusTreeWebviewTimingEvent | undefined): void {
+        if (!timing || typeof timing.stage !== 'string') {
+            return;
+        }
+
+        this.latestWebviewTimings.push({
+            ...timing,
+            timestamp: typeof timing.timestamp === 'number' ? timing.timestamp : Date.now(),
+        });
+        if (this.latestWebviewTimings.length > maxFocusTreeWebviewTimingEvents) {
+            this.latestWebviewTimings.splice(0, this.latestWebviewTimings.length - maxFocusTreeWebviewTimingEvents);
+        }
     }
 }
 

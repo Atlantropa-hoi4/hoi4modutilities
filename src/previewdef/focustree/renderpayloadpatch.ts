@@ -1,6 +1,7 @@
 import { HOIPartial } from "../../hoiformat/schema";
 import { GridBoxType } from "../../hoiformat/gui";
 import { StyleTable } from "../../util/styletable";
+import { recordPerf } from "../../util/perf";
 import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
 import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
@@ -89,6 +90,14 @@ export function createFullFocusTreeRenderUpdate(
     previousCache?: FocusTreeRenderCache,
 ): { update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache } {
     const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion);
+    recordFocusTreePayloadSize('full', payload.deferredAssetLoad, {
+        focusTrees: payload.focusTrees,
+        renderedFocus: payload.renderedFocus,
+        renderedInlayWindows: payload.renderedInlayWindows,
+        dynamicStyleCss: payload.dynamicStyleCss,
+        focusCount: Object.keys(payload.renderedFocus).length,
+        inlayCount: Object.keys(payload.renderedInlayWindows).length,
+    });
     return {
         cache,
         update: {
@@ -172,6 +181,14 @@ export async function createFocusTreeRenderUpdate(
         deferredAssetLoad: nextBaseState.deferredAssetLoad,
         ...nextMetadata,
     };
+    recordFocusTreePayloadSize('partial', nextBaseState.deferredAssetLoad, {
+        focusTrees: focusTreePatches.map(patch => patch.tree),
+        renderedFocus: renderedFocusPatch,
+        renderedInlayWindows: {},
+        dynamicStyleCss: '',
+        focusCount: focusSignatureDiff.changedKeys.length,
+        inlayCount: 0,
+    });
 
     return {
         kind: 'partial',
@@ -193,6 +210,38 @@ export async function createFocusTreeRenderUpdate(
         changedFocusCount: focusSignatureDiff.changedKeys.length + focusSignatureDiff.removedKeys.length,
         changedInlayCount: 0,
     };
+}
+
+function recordFocusTreePayloadSize(
+    kind: 'full' | 'partial',
+    deferredAssetLoad: boolean,
+    payload: {
+        focusTrees: unknown;
+        renderedFocus: unknown;
+        renderedInlayWindows: unknown;
+        dynamicStyleCss: string;
+        focusCount: number;
+        inlayCount: number;
+    },
+): void {
+    recordPerf('focustree.payloadSize', 0, {
+        kind,
+        deferredAssetLoad,
+        focusTreeBytes: approximateJsonByteLength(payload.focusTrees),
+        renderedFocusBytes: approximateJsonByteLength(payload.renderedFocus),
+        renderedInlayBytes: approximateJsonByteLength(payload.renderedInlayWindows),
+        dynamicStyleBytes: Buffer.byteLength(payload.dynamicStyleCss, 'utf8'),
+        focusCount: payload.focusCount,
+        inlayCount: payload.inlayCount,
+    });
+}
+
+function approximateJsonByteLength(value: unknown): number {
+    try {
+        return Buffer.byteLength(JSON.stringify(value), 'utf8');
+    } catch {
+        return 0;
+    }
 }
 
 function shouldUseFullRender(

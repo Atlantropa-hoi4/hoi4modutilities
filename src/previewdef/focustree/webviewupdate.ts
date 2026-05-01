@@ -31,6 +31,20 @@ export interface FocusTreeContentUpdateMessage {
     dynamicStyleCss?: string;
     xGridSize?: number;
     yGridSize?: number;
+    perf?: FocusTreeContentUpdatePerf;
+}
+
+export interface FocusTreeContentUpdatePerf {
+    source: string;
+    assetLoadMode: 'full' | 'deferred';
+    updateKind: 'full' | 'partial';
+    changedSlotCount: number;
+    payloadBytes: number;
+    patchPlanDurationMs: number;
+    snapshotBuildDurationMs: number;
+    focusCount?: number;
+    inlayCount?: number;
+    deferredAssetLoad?: boolean;
 }
 
 export interface FocusTreeContentUpdateDecision {

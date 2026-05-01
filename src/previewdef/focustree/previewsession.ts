@@ -138,7 +138,7 @@ export class FocusTreePreviewSession {
 
         const requestId = beginFocusTreeRefresh(this.runtimeState);
         const requestDocumentVersion = document.version;
-        const assetLoadMode = options?.assetLoadMode ?? 'deferred';
+        const assetLoadMode = options?.assetLoadMode ?? this.resolveDefaultRefreshAssetLoadMode();
         this.trace('refreshDocument', {
             requestId,
             documentVersion: requestDocumentVersion,
@@ -190,7 +190,6 @@ export class FocusTreePreviewSession {
         recordPendingLocalEditVersion(this.runtimeState, updatedDocument.version);
         void this.refreshDocument(updatedDocument, {
             ignorePendingLocalEditDocumentVersion: true,
-            assetLoadMode: 'deferred',
             source: 'localEdit',
         });
         return updatedDocument.version;
@@ -296,7 +295,13 @@ export class FocusTreePreviewSession {
         const patchPlanStart = Date.now();
         const patchPlan = await this.patchPlanner.plan(this.runtimeState.lastRenderCache, baseState);
         const patchPlanDurationMs = Date.now() - patchPlanStart;
-        recordPerf('focustree.patchPlan', patchPlanDurationMs, { source: options.source, mode: assetLoadMode, kind: patchPlan.kind });
+        recordPerf('focustree.patchPlan', patchPlanDurationMs, {
+            source: options.source,
+            mode: assetLoadMode,
+            kind: patchPlan.kind,
+            focusCount: baseState.allFocuses.length,
+            inlayCount: baseState.allInlays.length,
+        });
         const latestDocumentVersion = this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
         if (!isCurrentFocusTreeRefresh(this.runtimeState, requestId)
             || (latestDocumentVersion !== undefined && latestDocumentVersion !== requestDocumentVersion)) {
@@ -348,15 +353,31 @@ export class FocusTreePreviewSession {
         }
 
         try {
-            const postMessageStart = Date.now();
-            await this.webview.postMessage({
+            const updateMessage: FocusTreeSnapshot['update'] & { command: 'focusTreeContentUpdated' } = {
                 command: 'focusTreeContentUpdated',
                 ...update,
-            });
+            };
+            const payloadBytes = getApproximateJsonByteLength(updateMessage);
+            updateMessage.perf = {
+                source: options.source,
+                assetLoadMode,
+                updateKind: patchPlan.kind,
+                changedSlotCount: update.changedSlots.length,
+                payloadBytes,
+                patchPlanDurationMs,
+                snapshotBuildDurationMs,
+                focusCount: snapshotMetrics?.focusCount ?? baseState.allFocuses.length,
+                inlayCount: snapshotMetrics?.inlayCount ?? baseState.allInlays.length,
+                deferredAssetLoad: baseState.deferredAssetLoad,
+            };
+            const postMessageStart = Date.now();
+            await this.webview.postMessage(updateMessage);
             recordPerf('focustree.postMessage', Date.now() - postMessageStart, {
                 source: options.source,
                 kind: patchPlan.kind,
                 changedSlotCount: update.changedSlots.length,
+                mode: assetLoadMode,
+                payloadBytes,
             });
         } catch (error) {
             recordPerf('focustree.postMessage', 0, { source: options.source, kind: patchPlan.kind }, false, error);
@@ -387,6 +408,7 @@ export class FocusTreePreviewSession {
             changedSlots: update.changedSlots,
             patchPlanDurationMs,
             snapshotBuildDurationMs,
+            payloadBytes: getApproximateJsonByteLength(update),
             renderMetrics: snapshotMetrics,
             changedTreeCount: patchPlan.kind === 'partial' ? patchPlan.changedTreeCount : update.changedTreeIds?.length,
             changedFocusCount: patchPlan.kind === 'partial' ? patchPlan.changedFocusCount : update.changedFocusIds?.length,
@@ -541,6 +563,12 @@ export class FocusTreePreviewSession {
         this.deferredHydrationTimer = undefined;
     }
 
+    private resolveDefaultRefreshAssetLoadMode(): FocusTreeAssetLoadMode {
+        return this.runtimeState.lastRenderCache && !this.runtimeState.lastRenderCache.deferredAssetLoad
+            ? 'full'
+            : 'deferred';
+    }
+
     private trace(event: string, data: Record<string, unknown>): void {
         const entry = {
             event,
@@ -555,5 +583,13 @@ export class FocusTreePreviewSession {
         if (process.env.HOI4MU_FOCUSTREE_TRACE === '1') {
             debug('focustree.session', entry);
         }
+    }
+}
+
+function getApproximateJsonByteLength(value: unknown): number {
+    try {
+        return Buffer.byteLength(JSON.stringify(value), 'utf8');
+    } catch {
+        return 0;
     }
 }

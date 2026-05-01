@@ -194,6 +194,24 @@ describe('focustree preview session', () => {
         assert.strictEqual(sessionState.webviewReady, true);
     });
 
+    it('adds timing metadata to content update messages', async () => {
+        const document = createDocument(22);
+        const runtimeState = createFocusTreeRuntimeState();
+        const { session, postMessages } = createSession({ runtimeState });
+
+        await session.initializePanel(document);
+        session.handleWebviewReady();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const contentUpdate = postMessages.find(message => (message as any).command === 'focusTreeContentUpdated') as any;
+        assert.ok(contentUpdate);
+        assert.strictEqual(contentUpdate.perf.source, 'initialize');
+        assert.strictEqual(contentUpdate.perf.assetLoadMode, 'deferred');
+        assert.strictEqual(contentUpdate.perf.updateKind, 'full');
+        assert.ok(contentUpdate.perf.payloadBytes > 0);
+        assert.strictEqual(contentUpdate.perf.changedSlotCount, contentUpdate.changedSlots.length);
+    });
+
     it('uses snapshot updates instead of resetting html after the webview is ready', async () => {
         const document = createDocument(7);
         const runtimeState = createFocusTreeRuntimeState();
@@ -281,7 +299,7 @@ describe('focustree preview session', () => {
         assert.ok(!postMessages.some(message => (message as any).documentVersion === firstDocument.version));
     });
 
-    it('reconciles local edits through snapshot updates', async () => {
+    it('reconciles local edits through deferred snapshot updates before hydration', async () => {
         const document = createDocument(12);
         const requestedModes: Array<'full' | 'deferred'> = [];
         const { session, webview, postMessages, latestDocument } = createSession({
@@ -301,6 +319,49 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
         assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
         assert.deepStrictEqual(requestedModes.slice(0, 1), ['deferred']);
+    });
+
+    it('keeps hydrated icon assets on later local edits instead of reverting to deferred placeholders', async () => {
+        const document = createDocument(23);
+        const requestedModes: Array<'full' | 'deferred'> = [];
+        const runtimeState = createFocusTreeRuntimeState();
+        runtimeState.webviewReady = true;
+        runtimeState.lastRenderCache = {
+            snapshotVersion: 3,
+            focusTrees: [],
+            renderedFocus: {},
+            renderedInlayWindows: {},
+            focusIconGfxFileByName: {},
+            focusIconStyleSignature: 'hydrated-icons',
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '.hydrated-icons {}',
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: document.version - 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: false,
+            treePatchSignatures: {},
+            treeStructureSignatures: {},
+            focusRenderSignatures: {},
+            inlayRenderSignatures: {},
+            styleDependencySignature: '',
+        } as any;
+        const { session, latestDocument } = createSession({
+            runtimeState,
+            latestDocument: document,
+            buildBaseState: async (_document, assetLoadMode) => {
+                requestedModes.push(assetLoadMode);
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
+        });
+
+        session.reconcileAfterLocalEdit(document);
+        latestDocument.current = document;
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        assert.deepStrictEqual(requestedModes.slice(0, 1), ['full']);
     });
 
     it('uses snapshot updates after structural edits', async () => {

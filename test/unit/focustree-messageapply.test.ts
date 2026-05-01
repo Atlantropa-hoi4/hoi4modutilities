@@ -62,6 +62,15 @@ describe('focustree message apply', () => {
             yGridSize: 144,
             dynamicStyleCss: '.focus { opacity: 1; }',
             selectedTreeId: 'tree_b',
+            perf: {
+                source: 'initialize',
+                assetLoadMode: 'deferred',
+                updateKind: 'full',
+                changedSlotCount: 6,
+                payloadBytes: 1024,
+                patchPlanDurationMs: 1,
+                snapshotBuildDurationMs: 2,
+            },
         }, {
             getSnapshotVersion: () => 4,
             setSnapshotVersion: snapshotVersion => {

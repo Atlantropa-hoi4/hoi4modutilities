@@ -174,6 +174,25 @@ type ActiveFocusSelectionMarquee = {
     captureOwner: HTMLElement;
 };
 let activeFocusSelectionMarquee: ActiveFocusSelectionMarquee | undefined = undefined;
+const focusTreeWebviewLoadStartedAt = performance.now();
+let firstFocusTreeContentApplied = false;
+let firstFocusTreeHydrationApplied = false;
+
+type FocusTreeWebviewTiming = {
+    stage: string;
+    snapshotVersion?: number;
+    documentVersion?: number;
+    changedSlots?: string[];
+    source?: string;
+    assetLoadMode?: string;
+    updateKind?: string;
+    payloadBytes?: number;
+    applyMs?: number;
+    rebuildMs?: number;
+    rebindMs?: number;
+    sinceLoadMs?: number;
+    timestamp: number;
+};
 
 type StableFocusTreeLayout = {
     focusGridBoxItems: any[];
@@ -244,6 +263,59 @@ function postFocusTreeDiagnostics(
         command: 'focusTreeDiagnostics',
         snapshot,
     });
+}
+
+function postFocusTreeWebviewTiming(timing: Omit<FocusTreeWebviewTiming, 'sinceLoadMs' | 'timestamp'>): void {
+    const event: FocusTreeWebviewTiming = {
+        ...timing,
+        sinceLoadMs: Math.round(performance.now() - focusTreeWebviewLoadStartedAt),
+        timestamp: Date.now(),
+    };
+
+    if (window.focusTreeTraceEnabled) {
+        console.debug('[focustree] webview timings', event);
+    }
+
+    vscode.postMessage({
+        command: 'focusTreeWebviewTiming',
+        timing: event,
+    });
+}
+
+function createFocusTreeContentTiming(
+    stage: string,
+    message: FocusTreeContentUpdateMessage,
+    timings: {
+        applyMs: number;
+        rebuildMs: number;
+        rebindMs: number;
+    },
+): Omit<FocusTreeWebviewTiming, 'sinceLoadMs' | 'timestamp'> {
+    return {
+        stage,
+        snapshotVersion: message.snapshotVersion,
+        documentVersion: message.documentVersion,
+        changedSlots: message.changedSlots,
+        source: message.perf?.source,
+        assetLoadMode: message.perf?.assetLoadMode,
+        updateKind: message.perf?.updateKind,
+        payloadBytes: message.perf?.payloadBytes,
+        ...timings,
+    };
+}
+
+function getContentAppliedTimingStage(message: FocusTreeContentUpdateMessage): string {
+    if (!firstFocusTreeContentApplied) {
+        firstFocusTreeContentApplied = true;
+        return 'firstContentApplied';
+    }
+
+    if (!firstFocusTreeHydrationApplied && message.perf?.assetLoadMode === 'full') {
+        firstFocusTreeHydrationApplied = true;
+        return 'hydrationApplied';
+    }
+
+    return 'contentUpdated';
 }
 
 function normalizeFocusIdForClassName(focusId: string): string {
@@ -2758,6 +2830,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
 });
 
 window.addEventListener('load', tryRun(async function() {
+    postFocusTreeWebviewTiming({ stage: 'load' });
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;
@@ -2798,6 +2871,11 @@ window.addEventListener('load', tryRun(async function() {
         };
         if (message.command === 'focusTreeContentUpdated') {
             const contentUpdateMessage = message as FocusTreeContentUpdateMessage;
+            postFocusTreeWebviewTiming(createFocusTreeContentTiming('contentUpdateReceived', contentUpdateMessage, {
+                applyMs: 0,
+                rebuildMs: 0,
+                rebindMs: 0,
+            }));
             const updateStartedAt = performance.now();
             const previousCurrentTree = getCurrentFocusTree();
             if (!applyFocusTreeContentUpdate(contentUpdateMessage)) {
@@ -2815,14 +2893,15 @@ window.addEventListener('load', tryRun(async function() {
                 const rebuildStartedAt = performance.now();
                 const rebuildPromise = rebuildContentSafely();
                 void rebuildPromise?.finally(() => {
-                    console.debug('[focustree] webview timings', {
-                        snapshotVersion: contentUpdateMessage.snapshotVersion,
-                        documentVersion: contentUpdateMessage.documentVersion,
-                        changedSlots: contentUpdateMessage.changedSlots,
-                        applyMs: applyDurationMs,
-                        rebuildMs: performance.now() - rebuildStartedAt,
-                        rebindMs: 0,
-                    });
+                    postFocusTreeWebviewTiming(createFocusTreeContentTiming(
+                        getContentAppliedTimingStage(contentUpdateMessage),
+                        contentUpdateMessage,
+                        {
+                            applyMs: applyDurationMs,
+                            rebuildMs: performance.now() - rebuildStartedAt,
+                            rebindMs: 0,
+                        },
+                    ));
                 });
                 return;
             }
@@ -2834,36 +2913,39 @@ window.addEventListener('load', tryRun(async function() {
                     const rebuildStartedAt = performance.now();
                     const rebuildPromise = rebuildContentSafely();
                     void rebuildPromise?.finally(() => {
-                        console.debug('[focustree] webview timings', {
-                            snapshotVersion: contentUpdateMessage.snapshotVersion,
-                            documentVersion: contentUpdateMessage.documentVersion,
-                            changedSlots: contentUpdateMessage.changedSlots,
-                            applyMs: applyDurationMs,
-                            rebuildMs: performance.now() - rebuildStartedAt,
-                            rebindMs: performance.now() - rebindStartedAt,
-                        });
+                        postFocusTreeWebviewTiming(createFocusTreeContentTiming(
+                            getContentAppliedTimingStage(contentUpdateMessage),
+                            contentUpdateMessage,
+                            {
+                                applyMs: applyDurationMs,
+                                rebuildMs: performance.now() - rebuildStartedAt,
+                                rebindMs: performance.now() - rebindStartedAt,
+                            },
+                        ));
                     });
                     return;
                 }
-                console.debug('[focustree] webview timings', {
-                    snapshotVersion: contentUpdateMessage.snapshotVersion,
-                    documentVersion: contentUpdateMessage.documentVersion,
-                    changedSlots: contentUpdateMessage.changedSlots,
-                    applyMs: applyDurationMs,
-                    rebuildMs: 0,
-                    rebindMs: performance.now() - rebindStartedAt,
-                });
+                postFocusTreeWebviewTiming(createFocusTreeContentTiming(
+                    getContentAppliedTimingStage(contentUpdateMessage),
+                    contentUpdateMessage,
+                    {
+                        applyMs: applyDurationMs,
+                        rebuildMs: 0,
+                        rebindMs: performance.now() - rebindStartedAt,
+                    },
+                ));
                 return;
             }
 
-            console.debug('[focustree] webview timings', {
-                snapshotVersion: contentUpdateMessage.snapshotVersion,
-                documentVersion: contentUpdateMessage.documentVersion,
-                changedSlots: contentUpdateMessage.changedSlots,
-                applyMs: applyDurationMs,
-                rebuildMs: 0,
-                rebindMs: 0,
-            });
+            postFocusTreeWebviewTiming(createFocusTreeContentTiming(
+                getContentAppliedTimingStage(contentUpdateMessage),
+                contentUpdateMessage,
+                {
+                    applyMs: applyDurationMs,
+                    rebuildMs: 0,
+                    rebindMs: 0,
+                },
+            ));
             return;
         }
 
@@ -3159,6 +3241,7 @@ window.addEventListener('load', tryRun(async function() {
         });
         await rebuildContentSafely({ restoreScroll: true });
     } finally {
+        postFocusTreeWebviewTiming({ stage: 'webviewReady' });
         vscode.postMessage({ command: 'focusTreeWebviewReady' });
     }
 }));

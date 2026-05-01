@@ -1,8 +1,10 @@
 import * as assert from 'assert';
 import {
+    createFullFocusTreeRenderUpdate,
     createFocusTreeRenderCache,
     createFocusTreeRenderUpdate,
 } from '../../src/previewdef/focustree/renderpayloadpatch';
+import { getPerfSnapshot, resetPerfMetrics } from '../../src/util/perf';
 
 describe('focus tree render payload patching', () => {
     const createTree = (treeId: string, focusId: string) => ({
@@ -266,6 +268,42 @@ describe('focus tree render payload patching', () => {
         } as any);
 
         assert.strictEqual(result.kind, 'full');
+    });
+
+    it('records approximate payload size metrics for full snapshots', () => {
+        resetPerfMetrics();
+
+        createFullFocusTreeRenderUpdate({
+            focusTrees: [createTree('tree_a', 'FOCUS_A')],
+            renderedFocus: {
+                FOCUS_A: '<div>A</div>',
+            },
+            renderedInlayWindows: {},
+            gfxFiles: [],
+            focusIconGfxFileByName: {},
+            focusIconAssetResolution: {} as any,
+            focusIconStyleSignature: '',
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '.focus { opacity: 1; }',
+            styleNonce: 'nonce',
+            xGridSize: 96,
+            yGridSize: 130,
+            focusToolbarHeight: 68,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: true,
+        } as any);
+
+        const payloadMetric = getPerfSnapshot({ limit: 5 }).entries.find(entry => entry.label === 'focustree.payloadSize');
+        assert.ok(payloadMetric);
+        assert.strictEqual(payloadMetric.tags.kind, 'full');
+        assert.strictEqual(payloadMetric.tags.deferredAssetLoad, true);
+        assert.ok((payloadMetric.tags.focusTreeBytes as number) > 0);
+        assert.ok((payloadMetric.tags.renderedFocusBytes as number) > 0);
+        assert.ok((payloadMetric.tags.dynamicStyleBytes as number) > 0);
     });
 
     it('falls back to a full snapshot when icon texture expiry changes', async () => {
