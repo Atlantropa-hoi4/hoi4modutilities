@@ -358,3 +358,11 @@ Focus Tree TFR localisation fallback 2026-04-30:
 - [x] Cover Korean-only workspace fallback with localisation index unit coverage.
 
 Review note: TFR-Korea has no `previewLocalisation` workspace override, so the extension defaulted to `English`; for Korean-only focus keys this made the localisation index return the unresolved key even though `l_korean` entries were indexed. Localisation resolution now falls back to any available workspace language after requested-language and English lookups fail, so Korean-only mod workspaces can still display text without per-workspace preview language setup. Reverified with targeted localisation/Focus Tree tests, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run build`, and `git diff --check`.
+
+Flag auto resize command 2026-05-04:
+- [x] Port `FlagAutoResizer.py` behavior into a VS Code command without adding a new production dependency.
+- [x] Generate missing `medium` 41x26 and `small` 10x7 `.tga`/`.png` flags from a selected or discovered flags folder.
+- [x] Add command contribution, package/runtime localisation, command registration, and focused unit/manifest coverage.
+- [x] Reverify with TypeScript checks, targeted tests, lint/build checks, and diff checks.
+
+Review note: The new command is exposed as `server.hoi4modutilities.resizeFlags`, infers a `gfx/flags` folder from the active resource or workspace, and preserves existing generated files instead of overwriting them. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted flag/manifest mocha tests, `npm run lint`, `npm run build`, `npm run test-ui`, and `git diff --check`.

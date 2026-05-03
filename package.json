@@ -143,6 +143,12 @@
         "category": "%hoi4modutilities.category%"
       },
       {
+        "command": "server.hoi4modutilities.resizeFlags",
+        "title": "%hoi4modutilities.resizeFlags.title%",
+        "icon": "$(symbol-color)",
+        "category": "%hoi4modutilities.category%"
+      },
+      {
         "command": "server.hoi4modutilities.selecthoifolder",
         "title": "%hoi4modutilities.selecthoifolder.title%",
         "category": "%hoi4modutilities.category%"
@@ -202,9 +208,13 @@
           "group": "2_tools@1"
         },
         {
+          "command": "server.hoi4modutilities.resizeFlags",
+          "group": "2_tools@2"
+        },
+        {
           "command": "server.hoi4modutilities.scanreferences",
           "when": "!server.hoi4MULoaded || server.hoi4PreviewType == event",
-          "group": "2_tools@2"
+          "group": "2_tools@3"
         },
         {
           "command": "server.hoi4modutilities.selectmodfile",

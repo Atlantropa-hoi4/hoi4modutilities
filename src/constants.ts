@@ -23,6 +23,7 @@ export namespace Commands {
     export const PreviewWorld = 'server.hoi4modutilities.previewworld';
     export const ScanReferences = 'server.hoi4modutilities.scanreferences';
     export const GenerateFocusGfxShine = 'server.hoi4modutilities.generateFocusGfxShine';
+    export const ResizeFlags = 'server.hoi4modutilities.resizeFlags';
     export const SelectModFile = 'server.hoi4modutilities.selectmodfile';
     export const SelectHoiFolder = 'server.hoi4modutilities.selecthoifolder';
     export const Test = 'server.hoi4modutilities.test';

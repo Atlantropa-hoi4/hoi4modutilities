@@ -45,6 +45,15 @@ describe('extension manifest', () => {
         assert.strictEqual(command.icon, '$(sparkle)');
     });
 
+    it('contributes the flag resize command', () => {
+        const command = manifest.contributes.commands
+            .find(entry => entry.command === 'server.hoi4modutilities.resizeFlags');
+
+        assert.ok(command);
+        assert.strictEqual(command.title, '%hoi4modutilities.resizeFlags.title%');
+        assert.strictEqual(command.icon, '$(symbol-color)');
+    });
+
     it('shows the shine generator in editor title for goals gfx files', () => {
         const editorTitleEntries = manifest.contributes.menus['editor/title']
             .filter(entry => entry.command === 'server.hoi4modutilities.generateFocusGfxShine');
@@ -69,7 +78,8 @@ describe('extension manifest', () => {
         assert.ok(!previewEntry.when?.includes('!server.hoi4MULoaded'));
         assert.strictEqual(entryByCommand['server.hoi4modutilities.previewworld'].group, '1_preview@2');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.generateFocusGfxShine'].group, '2_tools@1');
-        assert.strictEqual(entryByCommand['server.hoi4modutilities.scanreferences'].group, '2_tools@2');
+        assert.strictEqual(entryByCommand['server.hoi4modutilities.resizeFlags'].group, '2_tools@2');
+        assert.strictEqual(entryByCommand['server.hoi4modutilities.scanreferences'].group, '2_tools@3');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.selectmodfile'].group, '3_setup@1');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.selecthoifolder'].group, '3_setup@2');
     });

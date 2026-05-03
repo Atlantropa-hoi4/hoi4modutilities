@@ -27,7 +27,7 @@ declare const EXTENSION_ID: string;
 declare module 'tga' {
     class TGA {
         constructor(buffer: Buffer, opt?: unknown);
-        static createTgaBuffer(width: number, height: number, pixels: [], dontFlipY: boolean): Buffer;
+        static createTgaBuffer(width: number, height: number, pixels: Uint8Array, dontFlipY?: boolean): Buffer;
         static getHeader(buffer: Buffer): unknown;
         parse(): void;
         readHeader(): unknown;

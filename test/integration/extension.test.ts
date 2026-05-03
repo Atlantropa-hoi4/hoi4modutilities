@@ -103,6 +103,7 @@ suite('extension smoke', () => {
             Commands.PreviewWorld,
             Commands.ScanReferences,
             Commands.GenerateFocusGfxShine,
+            Commands.ResizeFlags,
             Commands.SelectModFile,
             Commands.SelectHoiFolder,
         ]) {
