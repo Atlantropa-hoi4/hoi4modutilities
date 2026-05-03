@@ -77,6 +77,29 @@ describe('localisation index helpers', () => {
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_KOR_ONLY', 'en', globalIndex, workspaceIndex), '한국어만 있는 중점');
     });
 
+    it('can keep preview localisation settings from falling through to unrelated workspace languages', () => {
+        const globalIndex = {
+            l_english: {
+                FOCUS_ENGLISH: 'English focus',
+            },
+        };
+        const workspaceIndex = {
+            l_korean: {
+                FOCUS_KOR_ONLY: '한국어만 있는 중점',
+                FOCUS_KOR_PRIORITY: '설정 한국어 우선',
+            },
+            l_english: {
+                FOCUS_ENGLISH: 'Workspace English focus',
+            },
+        };
+
+        const options = { allowAvailableWorkspaceLanguageFallback: false };
+
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_KOR_PRIORITY', 'ko', globalIndex, workspaceIndex, options), '설정 한국어 우선');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_ENGLISH', 'ja', globalIndex, workspaceIndex, options), 'Workspace English focus');
+        assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_KOR_ONLY', 'en', globalIndex, workspaceIndex, options), 'FOCUS_KOR_ONLY');
+    });
+
     it('accepts localisation index files with space or dash before the language suffix', () => {
         assert.strictEqual(isLocalisationIndexFilePath('english/test_l_english.yml'), true);
         assert.strictEqual(isLocalisationIndexFilePath('korean/MEO - New Soul l_korean.yml'), true);

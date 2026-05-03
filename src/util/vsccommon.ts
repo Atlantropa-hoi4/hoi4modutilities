@@ -6,23 +6,27 @@ import { isSamePath } from './nodecommon';
 import { ConfigurationKey } from '../constants';
 import { normalizeFileOrUriString } from './pathinput';
 
-export type Hoi4ModUtilitiesConfiguration = vscode.WorkspaceConfiguration & {
+export type PreviewLocalisation = 'Brazilian Portuguese' | 'English' | 'French' | 'German' | 'Japanese' | 'Korean' | 'Polish' | 'Russian' | 'Simplified Chinese' | 'Spanish';
+
+interface Hoi4ModUtilitiesConfigurationValues {
     readonly installPath: string;
     readonly loadDlcContents: boolean;
     readonly modFile: string;
     readonly featureFlags: string[];
     readonly enableSupplyArea: boolean;
-    readonly previewLocalisation: 'Brazilian Portuguese' | 'English' | 'French' | 'German' | 'Japanese' | 'Korean' | 'Polish' | 'Russian' | 'Simplified Chinese' | 'Spanish';
-};
+    readonly previewLocalisation: PreviewLocalisation;
+}
 
-const defaultConfigurationValues = {
+export type Hoi4ModUtilitiesConfiguration = vscode.WorkspaceConfiguration & Hoi4ModUtilitiesConfigurationValues;
+
+const defaultConfigurationValues: Hoi4ModUtilitiesConfigurationValues = {
     installPath: '',
     loadDlcContents: true,
     modFile: '',
     featureFlags: [],
     enableSupplyArea: false,
     previewLocalisation: 'English',
-} as const satisfies Omit<Hoi4ModUtilitiesConfiguration, keyof vscode.WorkspaceConfiguration>;
+};
 
 const fallbackWorkspaceConfiguration: vscode.WorkspaceConfiguration = {
     get: <T>(_section: string, defaultValue?: T) => defaultValue as T,
@@ -31,23 +35,48 @@ const fallbackWorkspaceConfiguration: vscode.WorkspaceConfiguration = {
     update: async () => undefined,
 };
 
-export function getConfiguration() {
+export function getConfiguration(): Hoi4ModUtilitiesConfiguration {
     const getWorkspaceConfiguration = vscode.workspace?.getConfiguration;
     if (typeof getWorkspaceConfiguration !== 'function') {
         return {
             ...fallbackWorkspaceConfiguration,
             ...defaultConfigurationValues,
             featureFlags: [...defaultConfigurationValues.featureFlags],
-        };
+        } as Hoi4ModUtilitiesConfiguration;
     }
 
     const configuration = getWorkspaceConfiguration(ConfigurationKey) as Partial<Hoi4ModUtilitiesConfiguration> | undefined;
+    const configurationValues = getConfigurationValues(configuration);
     return {
         ...fallbackWorkspaceConfiguration,
-        ...defaultConfigurationValues,
         ...configuration,
-        featureFlags: configuration?.featureFlags ?? [...defaultConfigurationValues.featureFlags],
+        ...configurationValues,
+    } as Hoi4ModUtilitiesConfiguration;
+}
+
+function getConfigurationValues(configuration: Partial<Hoi4ModUtilitiesConfiguration> | undefined): Hoi4ModUtilitiesConfigurationValues {
+    const featureFlags = getConfigurationValue(configuration, 'featureFlags');
+    return {
+        installPath: getConfigurationValue(configuration, 'installPath'),
+        loadDlcContents: getConfigurationValue(configuration, 'loadDlcContents'),
+        modFile: getConfigurationValue(configuration, 'modFile'),
+        featureFlags: Array.isArray(featureFlags) ? [...featureFlags] : [...defaultConfigurationValues.featureFlags],
+        enableSupplyArea: getConfigurationValue(configuration, 'enableSupplyArea'),
+        previewLocalisation: getConfigurationValue(configuration, 'previewLocalisation'),
     };
+}
+
+function getConfigurationValue<K extends keyof Hoi4ModUtilitiesConfigurationValues>(
+    configuration: Partial<Hoi4ModUtilitiesConfiguration> | undefined,
+    key: K,
+): Hoi4ModUtilitiesConfigurationValues[K] {
+    const defaultValue = defaultConfigurationValues[key];
+    if (configuration && typeof configuration.get === 'function') {
+        return configuration.get(key, defaultValue);
+    }
+
+    const value = configuration?.[key];
+    return value === undefined ? defaultValue : value;
 }
 
 export function getDocumentByUri(uri: vscode.Uri): vscode.TextDocument | undefined {
@@ -173,7 +202,7 @@ export function uriToFilePathWhenPossible(uri: vscode.Uri): string {
     return uri.toString();
 }
 
-const languageYmlDict = {
+const languageYmlDict: Record<PreviewLocalisation, string> = {
     ['Brazilian Portuguese']: 'l_braz_por',
     English: 'l_english',
     French: 'l_french',
