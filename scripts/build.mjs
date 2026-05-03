@@ -81,6 +81,7 @@ const webviewEntries = [
     { in: 'webviewsrc/gfx.ts', out: 'gfx' },
     { in: 'webviewsrc/guipreview.ts', out: 'guipreview' },
     { in: 'webviewsrc/miopreview.ts', out: 'miopreview' },
+    { in: 'webviewsrc/characterpreview.ts', out: 'characterpreview' },
 ].map(e => ({ in: path.join(rootDir, e.in), out: e.out }));
 
 async function ensureDir(dir) {

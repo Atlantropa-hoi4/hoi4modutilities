@@ -1,0 +1,23 @@
+characters = {
+    TAG_first_character = {
+        name = TAG_first_character_name
+        portraits = {
+            civilian = {
+                large = GFX_portrait_TAG_first_civilian
+                small = GFX_portrait_TAG_first_civilian_small
+            }
+            army = {
+                large = GFX_portrait_TAG_first_army
+            }
+        }
+    }
+
+    TAG_second_character = {
+        name = "Second Character"
+        portraits = {
+            navy = {
+                small = GFX_portrait_TAG_second_navy_small
+            }
+        }
+    }
+}

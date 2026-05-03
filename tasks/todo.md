@@ -218,6 +218,13 @@ Codebase performance instrumentation 2026-04-30:
 - [x] Add Focus Tree webview timing summaries for first content apply, rebuild, and hydration milestones.
 - [x] Record approximate Focus Tree update payload sizes for full/partial snapshots and postMessage calls.
 - [ ] Capture real cold open, warm reopen, document edit refresh, and dependency refresh before/after numbers from a representative workspace.
+
+Character preview 2026-05-04:
+- [x] Add a `common/characters/*.txt` preview provider for character portrait cards.
+- [x] Parse character ids, names, and all `large`/`small` portrait variants while preserving source order.
+- [x] Make portrait clicks navigate to the character block start.
+- [x] Add fixture and targeted unit coverage for detection, parsing, rendering, and missing portraits.
+- [x] Support direct portrait image paths such as `large = "gfx/Leaders/ZZZ/ZZZ_anarchy.png"`.
 - [ ] Extend optimization fixes beyond Focus Tree once the new metrics rank the next bottlenecks.
 
 Focus Tree loading measurement note 2026-05-01: debug state now exposes host perf entries plus `webviewTimings`, including `load`, `contentUpdateReceived`, `firstContentApplied`, `hydrationApplied`, and `webviewReady` stages. Representative fixtures remain `common/national_focus/preset-smoke.txt` and `GXC focus (Liangguang).txt`; real workspace before/after capture is still pending because it needs a manual cold/warm run against a representative mod workspace.

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { characterFeature } from './characters';
 import { countryColorFeature } from './countrycolors';
 import { eventTreeFeature } from './eventtree';
 import { focusTreeFeature } from './focustree';
@@ -19,6 +20,7 @@ export const extensionFeatures: readonly ExtensionFeature[] = [
     focusTreeFeature,
     gfxFeature,
     technologyFeature,
+    characterFeature,
     worldMapFeature,
     eventTreeFeature,
     guiFeature,
