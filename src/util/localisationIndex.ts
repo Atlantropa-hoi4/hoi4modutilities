@@ -12,6 +12,10 @@ import { getConfiguration } from './vsccommon';
 
 type LocalisationData = Record<string, Record<string, string>>;
 
+interface ResolveLocalisedTextOptions {
+    allowAvailableWorkspaceLanguageFallback?: boolean;
+}
+
 const supportedLocalisationLangPattern = 'l_english|l_braz_por|l_german|l_french|l_spanish|l_korean|l_polish|l_russian|l_japanese|l_simp_chinese';
 const localisationIndexFilePattern = new RegExp(`(?:^|[ _-])(${supportedLocalisationLangPattern})\\.yml$`, 'i');
 const localisationIndexBuildConcurrency = 8;
@@ -84,7 +88,9 @@ export function registerLocalisationIndex(): vscode.Disposable {
 export async function getLocalisedTextQuick(localisationKey: string | undefined): Promise<string | undefined> {
     const previewLocalisation = getConfiguration().previewLocalisation;
     if (previewLocalisation) {
-        return getLocalisedText(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language);
+        return getLocalisedText(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language, {
+            allowAvailableWorkspaceLanguageFallback: false,
+        });
     }
     return getLocalisedText(localisationKey, vscode.env.language);
 }
@@ -92,12 +98,18 @@ export async function getLocalisedTextQuick(localisationKey: string | undefined)
 export function getLocalisedTextQuickIfReady(localisationKey: string | undefined): string | undefined {
     const previewLocalisation = getConfiguration().previewLocalisation;
     if (previewLocalisation) {
-        return getLocalisedTextIfReady(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language);
+        return getLocalisedTextIfReady(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language, {
+            allowAvailableWorkspaceLanguageFallback: false,
+        });
     }
     return getLocalisedTextIfReady(localisationKey, vscode.env.language);
 }
 
-export async function getLocalisedText(localisationKey: string | undefined, language: string): Promise<string | undefined> {
+export async function getLocalisedText(
+    localisationKey: string | undefined,
+    language: string,
+    options?: ResolveLocalisedTextOptions,
+): Promise<string | undefined> {
     if (!localisationKey) {
         return localisationKey;
     }
@@ -108,10 +120,14 @@ export async function getLocalisedText(localisationKey: string | undefined, lang
 
     await Promise.all([ensureGlobalLocalisationIndex(), ensureWorkspaceLocalisationIndex()]);
 
-    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex);
+    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex, options);
 }
 
-export function getLocalisedTextIfReady(localisationKey: string | undefined, language: string): string | undefined {
+export function getLocalisedTextIfReady(
+    localisationKey: string | undefined,
+    language: string,
+    options?: ResolveLocalisedTextOptions,
+): string | undefined {
     if (!localisationKey) {
         return localisationKey;
     }
@@ -120,7 +136,7 @@ export function getLocalisedTextIfReady(localisationKey: string | undefined, lan
         return localisationKey ?? '';
     }
 
-    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex);
+    return resolveLocalisedTextFromIndex(localisationKey, language, globalLocalisationIndex, workspaceLocalisationIndex, options);
 }
 
 export function resolveLocalisedTextFromIndex(
@@ -128,6 +144,7 @@ export function resolveLocalisedTextFromIndex(
     language: string,
     globalIndex: LocalisationData,
     workspaceIndex: LocalisationData,
+    options: ResolveLocalisedTextOptions = {},
 ): string | undefined {
     if (!localisationKey) {
         return localisationKey;
@@ -135,12 +152,15 @@ export function resolveLocalisedTextFromIndex(
 
     const langKey = localeMapping[language.toLowerCase()] || 'l_english';
     const defaultLangKey = 'l_english';
+    const allowAvailableWorkspaceLanguageFallback = options.allowAvailableWorkspaceLanguageFallback ?? true;
 
     return workspaceIndex[langKey]?.[localisationKey]
         || globalIndex[langKey]?.[localisationKey]
         || workspaceIndex[defaultLangKey]?.[localisationKey]
         || globalIndex[defaultLangKey]?.[localisationKey]
-        || resolveLocalisedTextFromAvailableWorkspaceLanguage(localisationKey, workspaceIndex, [langKey, defaultLangKey])
+        || (allowAvailableWorkspaceLanguageFallback
+            ? resolveLocalisedTextFromAvailableWorkspaceLanguage(localisationKey, workspaceIndex, [langKey, defaultLangKey])
+            : undefined)
         || localisationKey;
 }
 

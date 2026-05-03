@@ -359,6 +359,74 @@ Focus Tree TFR localisation fallback 2026-04-30:
 
 Review note: TFR-Korea has no `previewLocalisation` workspace override, so the extension defaulted to `English`; for Korean-only focus keys this made the localisation index return the unresolved key even though `l_korean` entries were indexed. Localisation resolution now falls back to any available workspace language after requested-language and English lookups fail, so Korean-only mod workspaces can still display text without per-workspace preview language setup. Reverified with targeted localisation/Focus Tree tests, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run build`, and `git diff --check`.
 
+Event Tree preview usability 2026-05-03:
+- [x] Add direct event/option node navigation back to the source location.
+- [x] Remove the right-side inspect detail panel.
+- [x] Add event preview search with previous/next match navigation.
+- [x] Render event chains left-to-right and stack independent root chains downward.
+- [x] Hide connector lines behind event/option cards so links do not cross card text.
+- [x] Reverify with TypeScript checks and targeted build output review.
+
+Review note: Event Tree preview keeps the search toolbar and delayed-edge dashed connections, but removes the right-side inspect panel. Event and option nodes now navigate directly to their source token on click/keyboard activation, matching the requested simpler interaction. Chains now grow left-to-right while independent root chains stack downward, and opaque event/option card backgrounds keep connector lines from visually crossing text. Reverified with `npm run compile-ts`, `npm run build`, `npm run lint`, `npm run compile-tests`, targeted event mocha tests, and `git diff --check`.
+
+Event Graph mode 2026-05-03:
+- [x] Add JSON-safe EventGraphData with event, option, missing-event nodes and delayed edge metadata.
+- [x] Add Tree/Graph toolbar controls with local graph depth and center actions.
+- [x] Render an Obsidian-style SVG local graph with pan, zoom, node drag, search-centering, and source navigation.
+- [x] Add graph mode localisation strings and focused graph data unit coverage.
+- [x] Reverify with compile, lint, build, targeted event tests, UI smoke tests, and diff checks.
+
+Review note: Event preview now keeps Tree as the default mode and adds a Graph mode backed by a pure EventGraphData builder. The webview renders a capped depth-2 local SVG graph by default, with depth 1/2/3 controls, Center, wheel zoom, drag pan, node drag, delayed dashed edges, search-driven centering, and click/keyboard source navigation. Reverified with `npm run compile-ts`, `npm run lint`, `npm run build`, `npm run compile-tests`, targeted event mocha tests, `npm run test-ui`, and `git diff --check`.
+
+Event preview loading speed 2026-05-03:
+- [x] Defer EventGraphData construction until the user opens Graph mode.
+- [x] Serve Graph mode data through a cached loader-backed webview request using the current document text.
+- [x] Make graph data localisation lookup synchronous from the loader localisation dictionary.
+- [x] Cache repeated localisation index lookups during Tree HTML rendering.
+- [x] Reverify with compile, lint, build, targeted event tests, UI smoke tests, and diff checks.
+
+Review note: Event preview no longer builds or embeds the full graph payload before first Tree render. Graph mode requests EventGraphData only when opened, while Tree rendering reuses a per-render localisation cache to avoid repeated async lookups for duplicate event, option, and missing-event labels. Reverified with `npm run compile-ts`, `npm run lint`, `npm run build`, `npm run compile-tests`, targeted event mocha tests, `npm run test-ui`, and `git diff --check`.
+
+Event Graph overview 2026-05-03:
+- [x] Confirm default Graph mode was falling back to one root/local component when no search match existed.
+- [x] Render an all-root overview when Graph mode has no active search-centered node.
+- [x] Keep search results as the local graph center when a current match exists.
+- [x] Reverify with TypeScript checks, build, targeted event tests, UI smoke tests, and diff checks.
+
+Review note: The default Graph view now seeds the visible graph from all root events when there is no active search result, while search-current nodes still switch the graph back to a capped local neighborhood. Overview root nodes also use a non-overlapping initial radial layout instead of stacking every depth-0 node at the center. Reverified with `npm run compile-ts`, `npm run lint`, `npm run build`, `npm run compile-tests`, targeted event mocha tests, `npm run test-ui`, and `git diff --check`.
+
+Preview localisation setting priority 2026-05-03:
+- [x] Confirm Focus and Event preview text uses `getLocalisedTextQuick*` for visible localisation.
+- [x] Keep `hoi4ModUtilities.previewLocalisation` language ahead of fallback languages in quick preview localisation.
+- [x] Prevent configured preview localisation from falling through to unrelated workspace languages.
+- [x] Reverify with localisation and preview-focused unit checks plus standard TypeScript/static checks.
+
+Review note: Preview-facing quick localisation now resolves the configured preview language first, then English fallback, and stops before the broad "any available workspace language" fallback so visible Focus/Event preview text cannot ignore the configured preview language. Reverified with `npm run compile-ts`, `npm run lint`, `npm run compile-tests`, targeted localisation/Focus/Event mocha tests, `npm run build`, `npm run test-ui`, and `git diff --check`.
+
+Event preview hover picture bounds 2026-05-03:
+- [x] Confirm event hover pictures were positioned from the event card without viewport bounds checks.
+- [x] Clamp hover picture position inside the visible viewport.
+- [x] Scale oversized hover pictures down to fit the viewport while preserving aspect ratio.
+- [x] Reverify with TypeScript checks, lint, build, UI smoke tests, and diff checks.
+
+Review note: Event hover pictures now render as fixed overlays, measure their actual size after insertion, and clamp or scale their display box so the preview remains visible inside the webview window. Reverified with `npm run compile-ts`, `npm run lint`, `npm run build`, `npm run test-ui`, and `git diff --check`.
+
+Event Graph mode removal 2026-05-03:
+- [x] Remove the Event preview Graph toolbar controls and graph webview container.
+- [x] Remove the webview SVG graph renderer and eventGraphData message path.
+- [x] Remove EventGraphData builder code, graph-only localisation strings, and graph-specific unit tests.
+- [x] Reverify with TypeScript checks, lint, build, targeted event tests, UI smoke tests, and diff checks.
+
+Review note: Event preview is back to a Tree-only preview while keeping direct source navigation, search, left-to-right tree layout, and bounded hover pictures. Reverified with `npm run compile-ts`, `npm run lint`, `npm run build`, `npm run compile-tests`, targeted event/localisation mocha tests, `npm run test-ui`, and `git diff --check`.
+
+Preview localisation config read fix 2026-05-03:
+- [x] Confirm the visible setting can be Korean while code still reads the default English value.
+- [x] Read `hoi4ModUtilities` settings through `WorkspaceConfiguration.get(...)` before direct object properties.
+- [x] Add regression coverage that `previewLocalisation: Korean` resolves to `l_korean` even when direct properties disagree.
+- [x] Reverify with TypeScript checks, lint, targeted unit tests, build, UI smoke tests, and diff checks.
+
+Review note: The shared configuration helper now resolves extension settings through VS Code's configuration API, so Focus/Event preview localisation uses the value shown in Settings instead of falling back to the extension default. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted vsccommon/localisation/event mocha tests, `npm run lint`, `npm run build`, `npm run test-ui`, and `git diff --check`.
+
 Flag auto resize command 2026-05-04:
 - [x] Port `FlagAutoResizer.py` behavior into a VS Code command without adding a new production dependency.
 - [x] Generate missing `medium` 41x26 and `small` 10x7 `.tga`/`.png` flags from a selected or discovered flags folder.
