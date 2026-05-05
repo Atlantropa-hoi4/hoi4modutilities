@@ -441,3 +441,22 @@ Flag auto resize command 2026-05-04:
 - [x] Reverify with TypeScript checks, targeted tests, lint/build checks, and diff checks.
 
 Review note: The new command is exposed as `server.hoi4modutilities.resizeFlags`, infers a `gfx/flags` folder from the active resource or workspace, and preserves existing generated files instead of overwriting them. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted flag/manifest mocha tests, `npm run lint`, `npm run build`, `npm run test-ui`, and `git diff --check`.
+
+Feature audit 2026-05-05:
+- [x] Dispatch feature-scoped subagent audits from the current feature catalog.
+- [x] Review shared activation, contribution, preview, index, and webview contracts for cross-feature regressions.
+- [x] Run the narrowest useful baseline validation.
+- [x] Consolidate findings with changed files, verification, and remaining risk.
+
+Review note: Audited all current feature catalog modules with feature-scoped subagents plus direct shared-path review. Baseline `npm run compile-ts` and `npm run lint` passed. The highest-priority follow-ups cluster around localisation/fileloader correctness, preview HTML/attribute safety, asset/dependency refresh gaps, long-running world-map session versioning, and thin smoke-test coverage for several previews.
+
+P1 fix note 2026-05-05:
+- [x] Preserve same-language localisation entries by rebuilding the workspace index from per-file localisation indexes.
+- [x] Apply `replace_path` to descendant paths so HOI4 fallback is blocked for replaced subtrees.
+- [x] Escape Event preview visible text and preserve Focus Tree selected tree during partial patches.
+- [x] Guard Technology cross-folder XOR groups and recursive Reference scans.
+- [x] Version World Map load/chunk messages and use fresh loaders for new load generations.
+- [x] Prioritize GUI-declared GFX files for sprite lookup and sanitize sprite-derived style keys.
+- [x] Reverify with TypeScript checks, targeted mocha, lint, build, and full unit tests.
+
+Review note: Resolved the P1 audit findings without broad feature redesign. The fixes add regression coverage for localisation per-file aggregation, `replace_path` descendant matching, and Focus Tree partial selection preservation; broader webview/UI race behavior was verified with compile/build/unit coverage rather than a VS Code UI smoke run.

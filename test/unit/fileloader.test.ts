@@ -65,6 +65,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const {
     getModRootCandidatePaths,
+    isPathCoveredByReplacePath,
     readFileFromModOrHOI4,
 } = require('../../src/util/fileloader') as typeof import('../../src/util/fileloader');
 
@@ -92,6 +93,13 @@ describe('fileloader mod root helpers', () => {
         const candidates = getModRootCandidatePaths(launcherModFile, 'mod/Kaiserreich-Meowl');
 
         assert.ok(candidates.includes(path.join(hoi4UserDir, 'mod', 'Kaiserreich-Meowl')));
+    });
+
+    it('treats replace_path entries as covering their descendants', () => {
+        assert.strictEqual(isPathCoveredByReplacePath('common', 'common'), true);
+        assert.strictEqual(isPathCoveredByReplacePath('common/national_focus', 'common'), true);
+        assert.strictEqual(isPathCoveredByReplacePath('common/national_focus/file.txt', 'common/national_focus'), true);
+        assert.strictEqual(isPathCoveredByReplacePath('history/countries', 'common'), false);
     });
 
     it('releases file read slots after queued reads complete', async () => {

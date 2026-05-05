@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { EventsLoader, EventsLoaderResult } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
-import { html, htmlAttributeEscape, htmlEscape } from '../../util/html';
+import { html, htmlAttributeEscape, htmlEscape, htmlTextEscape } from '../../util/html';
 import { localize } from '../../util/i18n';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { HOIEvent, HOIEventType } from './schema';
@@ -597,19 +597,19 @@ async function makeEventNode(
                 ${styleTable.style('white-space-nowrap', () => 'white-space: nowrap;')}
             ">
                 ${makeIcon(typeToIcon[event.type], styleTable)}
-                ${eventId}
+                ${htmlTextEscape(eventId)}
                 ${flags.includes(true) ? '<br/>' + flags.map((v, i) => v ? makeIcon(flagIcons[i], styleTable) : '').join(' ') : ''}
                 ${!event.isTriggeredOnly ?
                     `<br/>${makeIcon('history', styleTable)} ${event.meanTimeToHappenBase} ${localize('days', 'day(s)')}` :
                     ''}
                 <br/>
-                ${makeIcon('symbol-namespace', styleTable)} ${scope}
+                ${makeIcon('symbol-namespace', styleTable)} ${htmlTextEscape(scope)}
                 ${delay ?
-                    `<br/>${makeIcon('watch', styleTable)} ${delay}`
+                    `<br/>${makeIcon('watch', styleTable)} ${htmlTextEscape(delay)}`
                     : ''}
             </p>
             <p class="${styleTable.style('paragraph', () => 'margin: 5px 0; text-overflow: ellipsis; overflow: hidden;')}">
-                ${displayTitle}
+                ${htmlTextEscape(displayTitle)}
             </p>`;
         
         const extraAttributes = [makeNodeInteractionAttributes({
@@ -660,12 +660,12 @@ async function makeEventNode(
         if (isLocalisationIndexEnabled()) {
             let localizedTitle = await getLocalisedTextCached(eventId, renderContext);
             if (localizedTitle !== undefined && localizedTitle !== null && localizedTitle !== eventId) {
-                contentText += `<br/>${localizedTitle}`;
+                contentText += `<br/>${htmlTextEscape(localizedTitle)}`;
                 displayTitle = localizedTitle;
             } else {
                 localizedTitle = await getLocalisedTextCached(`${eventId}.t`, renderContext);
                 if (localizedTitle !== undefined && localizedTitle !== null && localizedTitle !== `${eventId}.t`) {
-                    contentText += `<br/>${localizedTitle}`;
+                    contentText += `<br/>${htmlTextEscape(localizedTitle)}`;
                     displayTitle = localizedTitle;
                 }
             }
@@ -675,9 +675,9 @@ async function makeEventNode(
                 ${styleTable.style('white-space-nowrap', () => 'white-space: nowrap;')}
             ">
                 ${makeIcon('question', styleTable)}
-                ${eventId}
+                ${htmlTextEscape(eventId)}
                 <br/>
-                ${makeIcon('symbol-namespace', styleTable)} ${scope}
+                ${makeIcon('symbol-namespace', styleTable)} ${htmlTextEscape(scope)}
                 ${contentText}
             </p>`;
     
@@ -697,12 +697,12 @@ function makeIcon(type: string, styleTable: StyleTable): string {
 }
 
 async function makeOptionNode(option: OptionNode, styleTable: StyleTable, renderContext: EventRenderContext): Promise<string> {
-    let content = option.optionName;
+    let content = htmlTextEscape(option.optionName);
     let title = option.optionName;
     if (isLocalisationIndexEnabled()) {
         const optionName = await getLocalisedTextCached(option.optionName, renderContext);
         if (optionName !== undefined && optionName !== null && optionName !== option.optionName) {
-            content = `${option.optionName} <br/> ${optionName}`;
+            content = `${htmlTextEscape(option.optionName)} <br/> ${htmlTextEscape(optionName)}`;
             title = `${option.optionName} \n ${optionName}`;
         }
     }

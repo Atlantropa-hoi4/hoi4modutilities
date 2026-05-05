@@ -24,6 +24,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
+    rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
 } = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 
@@ -112,5 +113,37 @@ describe('localisation index helpers', () => {
     it('extracts the localisation language key from non-underscore file names', () => {
         assert.strictEqual(getLocalisationIndexLangKeyFromPath('korean/MEO - New Soul l_korean.yml'), 'l_korean');
         assert.strictEqual(getLocalisationIndexLangKeyFromPath('english/test_l_english.yml'), 'l_english');
+    });
+
+    it('rebuilds workspace localisation from per-file indexes without dropping same-language files', () => {
+        const fileIndexes: Record<string, Record<string, Record<string, string>>> = {
+            'localisation/a_l_english.yml': {
+                l_english: {
+                    KEY_A: 'A',
+                },
+            },
+            'localisation/b_l_english.yml': {
+                l_english: {
+                    KEY_B: 'B',
+                },
+            },
+            'localisation/c_l_korean.yml': {
+                l_korean: {
+                    KEY_C: 'C',
+                },
+            },
+        };
+
+        delete fileIndexes['localisation/a_l_english.yml'];
+        const rebuilt = rebuildLocalisationIndexFromFileIndexes(fileIndexes);
+
+        assert.deepStrictEqual(rebuilt, {
+            l_english: {
+                KEY_B: 'B',
+            },
+            l_korean: {
+                KEY_C: 'C',
+            },
+        });
     });
 });

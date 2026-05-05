@@ -283,13 +283,13 @@ async function renderTechnologyTreeGridBox(
 function findXorGroups(treeMap: Record<string, Technology>, technology: Technology, folder: string): Technology[][] | undefined {
     const techChildren = technology.leadsToTechs
         .map(techName => treeMap[techName])
-        .filter(tech => tech && folder in technology.folders);
+        .filter((tech): tech is Technology => !!tech && folder in tech.folders);
     const xorGroupMap: Record<string, Technology[]> = {};
 
     for (const xorChild of techChildren) {
         const xorTechs = xorChild.xor
             .map(techName => treeMap[techName])
-            .filter(tech => tech && folder in technology.folders && tech !== xorChild && tech.xor.includes(xorChild.id));
+            .filter((tech): tech is Technology => !!tech && folder in tech.folders && tech !== xorChild && tech.xor.includes(xorChild.id));
         if (xorTechs.length === 0) {
             continue;
         }

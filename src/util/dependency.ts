@@ -39,7 +39,7 @@ async function scanReferences(): Promise<void> {
 }
 
 async function scanReferencesForEvents(editor: vscode.TextEditor) {
-    const eventFiles = await listFilesFromModOrHOI4('events');
+    const eventFiles = await listFilesFromModOrHOI4('events', { recursively: true });
     const document = editor.document;
     const events = (await Promise.all(eventFiles.map(async (file) => {
         try {
@@ -109,7 +109,7 @@ async function scanReferencesForEvents(editor: vscode.TextEditor) {
     existingEventDependency.push(relativePath);
     const moreEventDependencyContent = includedEventFiles.filter(f => !existingEventDependency.includes(f)).map(f => `#!event:${f}\n`).join('');
 
-    const localizationFiles = await listFilesFromModOrHOI4('localisation');
+    const localizationFiles = await listFilesFromModOrHOI4('localisation', { recursively: true });
     const language = getLanguageIdInYml();
     const localizations = (await Promise.all(localizationFiles.map(async (file) => {
         try {

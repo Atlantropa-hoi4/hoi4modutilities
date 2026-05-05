@@ -10,7 +10,7 @@ import { RenderNodeCommonOptions } from '../../util/hoi4gui/nodecommon';
 import { html, htmlEscape } from '../../util/html';
 import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 import { localize } from '../../util/i18n';
-import { getSpriteByGfxName } from '../../util/image/imagecache';
+import { getSpriteByGfxNameFromResolvedFiles } from '../../util/image/imagecache';
 import { LoaderSession } from '../../util/loader/loader';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { GuiFileLoader, GuiFileLoaderResult } from "./loader";
@@ -240,6 +240,6 @@ function makeToggleContainerWindowToggleItemsRecursively(containerWindow: HOIPar
 
 function defaultGetSprite(gfxFiles: string[]) {
     return (sprite: string) => {
-        return getSpriteByGfxName(sprite, gfxFiles);
+        return getSpriteByGfxNameFromResolvedFiles(sprite, gfxFiles);
     };
 }

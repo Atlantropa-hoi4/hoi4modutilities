@@ -4,7 +4,7 @@ import worldmapviewstyles from './worldmapview.css';
 import { localize, localizeText, i18nTableAsScript } from '../../util/i18n';
 import { html } from '../../util/html';
 import { error, debug } from '../../util/debug';
-import { WorldMapMessage, ProgressReporter, WorldMapData, MapItemMessage, RequestMapItemMessage } from './definitions';
+import { WorldMapMessage, WorldMapData, MapItemMessage, RequestMapItemMessage } from './definitions';
 import { matchPathEnd } from '../../util/nodecommon';
 import { writeFile, mkdirs, getDocumentByUri, dirUri } from '../../util/vsccommon';
 import { slice, debounceByInput, forceError } from '../../util/common';
@@ -22,13 +22,13 @@ export class WorldMap {
     private worldMapLoader: WorldMapLoader;
     private worldMapDependencies: string[] | undefined;
     private cachedWorldMap: WorldMapData | undefined;
+    private loadGeneration = 0;
 
     private lastRequestedExportUri: vscode.Uri | undefined;
 
     constructor(panel: vscode.WebviewPanel) {
         this.panel = panel;
-        this.worldMapLoader = new WorldMapLoader();
-        this.worldMapLoader.onProgress(this.progressReporter);
+        this.worldMapLoader = this.createWorldMapLoader(this.loadGeneration);
     }
 
     public initialize(): void {
@@ -80,24 +80,45 @@ export class WorldMap {
                     await this.sendProvinceMapSummaryToWebview(msg.force);
                     break;
                 case 'requestprovinces':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('provinces', msg, (await this.worldMapLoader.getWorldMap()).provinces);
                     break;
                 case 'requeststates':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('states', msg, (await this.worldMapLoader.getWorldMap()).states);
                     break;
                 case 'requestcountries':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('countries', msg, (await this.worldMapLoader.getWorldMap()).countries);
                     break;
                 case 'requeststrategicregions':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('strategicregions', msg, (await this.worldMapLoader.getWorldMap()).strategicRegions);
                     break;
                 case 'requestsupplyareas':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('supplyareas', msg, (await this.worldMapLoader.getWorldMap()).supplyAreas);
                     break;
                 case 'requestrailways':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('railways', msg, (await this.worldMapLoader.getWorldMap()).railways);
                     break;
                 case 'requestsupplynodes':
+                    if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+                        break;
+                    }
                     await this.sendMapData('supplynodes', msg, (await this.worldMapLoader.getWorldMap()).supplyNodes);
                     break;
                 case 'openfile':
@@ -119,33 +140,53 @@ export class WorldMap {
     }
 
     private sendMapData(command: MapItemMessage['command'], msg: RequestMapItemMessage, value: unknown[]) {
+        if (!this.isCurrentLoadGeneration(msg.loadGeneration)) {
+            return false;
+        }
+
         return this.postMessageToWebview({
             command: command,
             data: JSON.stringify(slice(value, msg.start, msg.end)),
             start: msg.start,
             end: msg.end,
+            loadGeneration: msg.loadGeneration,
         } as WorldMapMessage);
     }
 
-    private progressReporter: ProgressReporter = async (progress: string) => {
-        debug('Progress:', progress);
-        await this.postMessageToWebview({
-            command: 'progress',
-            data: progress,
-        } as WorldMapMessage);
-    };
+    private createWorldMapLoader(loadGeneration: number): WorldMapLoader {
+        const loader = new WorldMapLoader();
+        loader.onProgress(async progress => {
+            if (!this.isCurrentLoadGeneration(loadGeneration)) {
+                return;
+            }
+
+            debug('Progress:', progress);
+            await this.postMessageToWebview({
+                command: 'progress',
+                data: progress,
+                loadGeneration,
+            } as WorldMapMessage);
+        });
+        return loader;
+    }
 
     private async sendProvinceMapSummaryToWebview(force: boolean) {
+        const loadGeneration = ++this.loadGeneration;
+        const worldMapLoader = this.createWorldMapLoader(loadGeneration);
         try {
-            this.worldMapLoader.shallowForceReload();
             const oldCachedWorldMap = this.cachedWorldMap;
-            const loaderSession = new LoaderSession(force, () => this.panel === undefined);
+            const loaderSession = new LoaderSession(force, () => this.panel === undefined || !this.isCurrentLoadGeneration(loadGeneration));
             const { result: worldMap, dependencies } = await measureAsync('worldmap.load', { force }, () =>
-                this.worldMapLoader.load(loaderSession));
+                worldMapLoader.load(loaderSession));
+            if (!this.isCurrentLoadGeneration(loadGeneration)) {
+                return;
+            }
+
+            this.worldMapLoader = worldMapLoader;
             this.worldMapDependencies = dependencies;
             this.cachedWorldMap = worldMap;
 
-            if (!force && oldCachedWorldMap && await measureAsync('worldmap.diff', {}, () => this.sendDifferences(oldCachedWorldMap, worldMap))) {
+            if (!force && oldCachedWorldMap && await measureAsync('worldmap.diff', {}, () => this.sendDifferences(oldCachedWorldMap, worldMap, loadGeneration))) {
                 return;
             }
 
@@ -161,13 +202,19 @@ export class WorldMap {
             await this.postMessageToWebview({
                 command: 'provincemapsummary',
                 data: summary,
+                loadGeneration,
             } as WorldMapMessage);
         } catch (e) {
+            if (!this.isCurrentLoadGeneration(loadGeneration)) {
+                return;
+            }
+
             error(e);
 
             await this.postMessageToWebview({
                 command: 'error',
                 data: localize('worldmap.failedtoload', 'Failed to load world map: {0}.', forceError(e).toString()),
+                loadGeneration,
             } as WorldMapMessage);
         }
     }
@@ -217,8 +264,8 @@ export class WorldMap {
         }
     }
 
-    private async sendDifferences(cachedWorldMap: WorldMapData, worldMap: WorldMapData): Promise<boolean> {
-        await this.progressReporter(localize('worldmap.progress.comparing', 'Comparing changes...'));
+    private async sendDifferences(cachedWorldMap: WorldMapData, worldMap: WorldMapData, loadGeneration: number): Promise<boolean> {
+        await this.postProgress(localize('worldmap.progress.comparing', 'Comparing changes...'), loadGeneration);
         const changeMessages: WorldMapMessage[] = [];
         const comparisonBudget = createWorldMapComparisonBudget();
 
@@ -291,13 +338,22 @@ export class WorldMap {
             return false;
         }
 
-        await this.progressReporter(localize('worldmap.progress.applying', 'Applying changes...'));
+        if (!this.isCurrentLoadGeneration(loadGeneration)) {
+            return true;
+        }
+
+        await this.postProgress(localize('worldmap.progress.applying', 'Applying changes...'), loadGeneration);
 
         for (const message of changeMessages) {
+            if (!this.isCurrentLoadGeneration(loadGeneration)) {
+                return true;
+            }
+
+            Object.assign(message, { loadGeneration });
             await this.postMessageToWebview(message);
         }
 
-        await this.progressReporter('');
+        await this.postProgress('', loadGeneration);
         return true;
     }
 
@@ -322,6 +378,7 @@ export class WorldMap {
                         data: JSON.stringify(slice(list, lastDifferenceStart, i)),
                         start: lastDifferenceStart,
                         end: i,
+                        loadGeneration: this.loadGeneration,
                     });
                     if (changeMessages.length > changeMessagesCountLimit) {
                         return false;
@@ -343,6 +400,7 @@ export class WorldMap {
                         data: JSON.stringify(slice(list, lastDifferenceStart, i)),
                         start: lastDifferenceStart,
                         end: i,
+                        loadGeneration: this.loadGeneration,
                     });
                     if (changeMessages.length > changeMessagesCountLimit) {
                         return false;
@@ -358,6 +416,7 @@ export class WorldMap {
                         data: JSON.stringify(slice(list, lastDifferenceStart, i)),
                         start: lastDifferenceStart,
                         end: i,
+                        loadGeneration: this.loadGeneration,
                     });
                     if (changeMessages.length > changeMessagesCountLimit) {
                         return false;
@@ -387,6 +446,23 @@ export class WorldMap {
             recordPerf('worldmap.postMessage', Date.now() - startedAt, { command: message.command }, false, error);
             throw error;
         }
+    }
+
+    private async postProgress(progress: string, loadGeneration: number): Promise<void> {
+        if (!this.isCurrentLoadGeneration(loadGeneration)) {
+            return;
+        }
+
+        debug('Progress:', progress);
+        await this.postMessageToWebview({
+            command: 'progress',
+            data: progress,
+            loadGeneration,
+        } as WorldMapMessage);
+    }
+
+    private isCurrentLoadGeneration(loadGeneration: number | undefined): boolean {
+        return loadGeneration === undefined || loadGeneration === this.loadGeneration;
     }
 
     private async requestExportMap() {

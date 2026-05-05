@@ -67,6 +67,7 @@ export class Loader extends Subscriber {
     private loadingProvinceMap: WorldMapData & { provincesCount: number; statesCount: number; countriesCount: number; } | undefined;
     private loadingQueue: WorldMapMessage[] = [];
     private loadingQueueStartLength = 0;
+    private loadGeneration = 0;
 
     constructor() {
         super();
@@ -87,6 +88,7 @@ export class Loader extends Subscriber {
             const message = event.data as WorldMapMessage;
             switch (message.command) {
                 case 'provincemapsummary':
+                    this.loadGeneration = message.loadGeneration ?? this.loadGeneration + 1;
                     this.loadingProvinceMap = { ...message.data };
                     this.loadingProvinceMap.provinces = new Array(this.loadingProvinceMap.provincesCount);
                     this.loadingProvinceMap.states = new Array(this.loadingProvinceMap.statesCount);
@@ -96,62 +98,89 @@ export class Loader extends Subscriber {
                     this.startLoading();
                     break;
                 case 'provinces':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.provinces, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'states':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.states, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'countries':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.countries, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'strategicregions':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.strategicRegions, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'supplyareas':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.supplyAreas, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'railways':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.railways, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'supplynodes':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.receiveData(this.loadingProvinceMap?.supplyNodes, message.start, message.end, message.data);
                     this.loadNext();
                     break;
                 case 'warnings':
-                    if (this.loadingProvinceMap) {
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
                         this.loadingProvinceMap.warnings = JSON.parse(message.data);
                         this.loadNext();
                     }
                     break;
                 case 'continents':
-                    if (this.loadingProvinceMap) {
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
                         this.loadingProvinceMap.continents = JSON.parse(message.data);
                         this.loadNext();
                     }
                     break;
                 case 'terrains':
-                    if (this.loadingProvinceMap) {
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
                         this.loadingProvinceMap.terrains = JSON.parse(message.data);
                         this.loadNext();
                     }
                     break;
                 case 'resources':
-                    if (this.loadingProvinceMap) {
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
                         this.loadingProvinceMap.resources = JSON.parse(message.data);
                         this.loadNext();
                     }
                     break;
                 case 'progress':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.progressText = message.data;
                     this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
                     break;
                 case 'error':
+                    if (!this.isCurrentLoadMessage(message)) {
+                        break;
+                    }
                     this.progressText = message.data;
                     this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
                     this.loading$.next(false);
@@ -193,6 +222,7 @@ export class Loader extends Subscriber {
                 command,
                 start: i,
                 end: Math.min(i + step, offset + count),
+                loadGeneration: this.loadGeneration,
             });
         }
     }
@@ -218,6 +248,12 @@ export class Loader extends Subscriber {
         if (arr) {
             copyArray(JSON.parse(data), arr, 0, start, end - start);
         }
+    }
+
+    private isCurrentLoadMessage(message: WorldMapMessage): boolean {
+        return !('loadGeneration' in message)
+            || message.loadGeneration === undefined
+            || message.loadGeneration === this.loadGeneration;
     }
 }
 

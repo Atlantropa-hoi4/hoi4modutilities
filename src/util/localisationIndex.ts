@@ -22,6 +22,7 @@ const localisationIndexBuildConcurrency = 8;
 
 const globalLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationIndex: LocalisationData = {};
+let workspaceLocalisationFileIndexes: Record<string, LocalisationData> = {};
 const localisationIndexService = new IndexService<Record<string, string>>({
     global: {
         build: estimatedSize => buildGlobalLocalisationIndex(estimatedSize),
@@ -37,6 +38,7 @@ const localisationIndexService = new IndexService<Record<string, string>>({
         build: estimatedSize => buildWorkspaceLocalisationIndex(estimatedSize),
         reset: () => {
             workspaceLocalisationIndex = {};
+            workspaceLocalisationFileIndexes = {};
         },
         statusMessage: 'Building workspace Localisation index...',
         telemetryEvent: 'localisationIndex.workspace',
@@ -196,8 +198,14 @@ async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise
     const options = { mod: true, hoi4: false, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
-    await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, f =>
-        fillLocalisationItems('localisation/' + f, workspaceLocalisationIndex, options, estimatedSize));
+    const fileIndexes = await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, async f => {
+        const relativePath = 'localisation/' + f;
+        const fileIndex: LocalisationData = {};
+        await fillLocalisationItems(relativePath, fileIndex, options, estimatedSize);
+        return [relativePath, fileIndex] as const;
+    });
+    workspaceLocalisationFileIndexes = Object.fromEntries(fileIndexes);
+    workspaceLocalisationIndex = rebuildLocalisationIndexFromFileIndexes(workspaceLocalisationFileIndexes);
 }
 
 function ensureGlobalLocalisationIndex(): Promise<void> {
@@ -348,8 +356,7 @@ function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
 
 const onChangeTextDocumentImpl = debounceByInput(
     (file: vscode.Uri) => {
-        removeWorkspaceLocalisationIndex(file);
-        addWorkspaceLocalisationIndex(file);
+        void replaceWorkspaceLocalisationIndex(file);
     },
     file => file.toString(),
     1000,
@@ -362,8 +369,7 @@ function onCloseTextDocument(document: vscode.TextDocument) {
     }
     const file = document.uri;
     if (file.path.endsWith('.yml')) {
-        removeWorkspaceLocalisationIndex(file);
-        addWorkspaceLocalisationIndex(file);
+        void replaceWorkspaceLocalisationIndex(file);
     }
 }
 
@@ -373,7 +379,7 @@ function onCreateFiles(e: vscode.FileCreateEvent) {
     }
     for (const file of e.files) {
         if (file.path.endsWith('.yml')) {
-            addWorkspaceLocalisationIndex(file);
+            void addWorkspaceLocalisationIndex(file);
         }
     }
 }
@@ -398,24 +404,52 @@ function onRenameFiles(e: vscode.FileRenameEvent) {
 }
 
 function removeWorkspaceLocalisationIndex(file: vscode.Uri) {
-    const wsFolder = vscode.workspace.getWorkspaceFolder(file);
-    if (wsFolder) {
-        const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
-        if (relative && relative.startsWith('localisation/')) {
-            const langKey = getLocalisationIndexLangKeyFromPath(relative);
-            delete workspaceLocalisationIndex[langKey];
-        }
+    const relative = getWorkspaceLocalisationIndexRelativePath(file);
+    if (relative) {
+        delete workspaceLocalisationFileIndexes[relative];
+        workspaceLocalisationIndex = rebuildLocalisationIndexFromFileIndexes(workspaceLocalisationFileIndexes);
     }
 }
 
-function addWorkspaceLocalisationIndex(file: vscode.Uri) {
+async function addWorkspaceLocalisationIndex(file: vscode.Uri): Promise<void> {
+    const relative = getWorkspaceLocalisationIndexRelativePath(file);
+    if (relative) {
+        const fileIndex: LocalisationData = {};
+        await fillLocalisationItems(relative, fileIndex, { hoi4: false });
+        workspaceLocalisationFileIndexes[relative] = fileIndex;
+        workspaceLocalisationIndex = rebuildLocalisationIndexFromFileIndexes(workspaceLocalisationFileIndexes);
+    }
+}
+
+async function replaceWorkspaceLocalisationIndex(file: vscode.Uri): Promise<void> {
+    removeWorkspaceLocalisationIndex(file);
+    await addWorkspaceLocalisationIndex(file);
+}
+
+function getWorkspaceLocalisationIndexRelativePath(file: vscode.Uri): string | undefined {
     const wsFolder = vscode.workspace.getWorkspaceFolder(file);
-    if (wsFolder) {
-        const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
-        if (relative && relative.startsWith('localisation/')) {
-            fillLocalisationItems(relative, workspaceLocalisationIndex, { hoi4: false });
+    if (!wsFolder) {
+        return undefined;
+    }
+
+    const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
+    return relative
+        && relative.startsWith('localisation/')
+        && isLocalisationIndexFilePath(relative)
+        ? relative
+        : undefined;
+}
+
+export function rebuildLocalisationIndexFromFileIndexes(fileIndexes: Record<string, LocalisationData>): LocalisationData {
+    const result: LocalisationData = {};
+    for (const fileIndex of Object.values(fileIndexes)) {
+        for (const [langKey, entries] of Object.entries(fileIndex)) {
+            result[langKey] = result[langKey] ?? {};
+            Object.assign(result[langKey], entries);
         }
     }
+
+    return result;
 }
 
 export function isLocalisationIndexFilePath(filePath: string): boolean {

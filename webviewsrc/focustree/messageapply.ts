@@ -50,7 +50,9 @@ export function applyFocusTreeContentUpdate(
             context.applyFocusTreePatches(message.focusTreePatches);
         }
         const previousSelectionStillExists = !!previousSelectedTreeId
-            && !!message.focusTrees?.some(focusTree => focusTree.id === previousSelectedTreeId);
+            && (message.focusTrees
+                ? message.focusTrees.some(focusTree => focusTree.id === previousSelectedTreeId)
+                : true);
         context.setSelectedFocusTreeById(
             previousSelectionStillExists
                 ? previousSelectedTreeId

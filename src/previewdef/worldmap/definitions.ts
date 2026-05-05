@@ -225,6 +225,7 @@ export interface RequestMapItemMessage {
     command: 'requestprovinces' | 'requeststates' | 'requestcountries' | 'requeststrategicregions' | 'requestsupplyareas' | 'requestrailways' | 'requestsupplynodes';
     start: number;
     end: number;
+    loadGeneration?: number;
 }
 
 export interface MapItemMessage {
@@ -232,21 +233,25 @@ export interface MapItemMessage {
     data: string;
     start: number;
     end: number;
+    loadGeneration?: number;
 }
 
 export interface ErrorMessage {
     command: 'error';
     data: string;
+    loadGeneration?: number;
 }
 
 export interface ProgressMessage {
     command: 'progress';
     data: string;
+    loadGeneration?: number;
 }
 
 export interface ProvinceMapSummaryMessage {
     command: 'provincemapsummary';
     data: WorldMapData;
+    loadGeneration?: number;
 }
 
 export interface OpenFileMessage {

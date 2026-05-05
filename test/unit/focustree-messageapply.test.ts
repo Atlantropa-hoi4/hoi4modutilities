@@ -174,4 +174,44 @@ describe('focustree message apply', () => {
         assert.strictEqual(result, true);
         assert.strictEqual(selectedTreeId, 'tree_beta');
     });
+
+    it('preserves the selected tree during partial tree patch updates', () => {
+        let selectedTreeId: string | undefined;
+        const result = applyFocusTreeContentUpdate({
+            snapshotVersion: 3,
+            documentVersion: 4,
+            changedSlots: ['treeDefinitions'],
+            selectedTreeId: 'tree_alpha',
+            focusTreePatches: [
+                { treeId: 'tree_beta', tree: { id: 'tree_beta', focuses: {}, warnings: [], inlayWindows: [] } as any },
+            ],
+        }, {
+            getSnapshotVersion: () => 2,
+            setSnapshotVersion: () => undefined,
+            getDocumentVersion: () => 3,
+            setDocumentVersion: () => undefined,
+            setFocusPositionActiveFile: () => undefined,
+            getCurrentSelectionTreeId: () => 'tree_beta',
+            setSelectedFocusTreeById: treeId => {
+                selectedTreeId = treeId;
+            },
+            setFocusTrees: () => {
+                throw new Error('should patch trees instead of replacing them');
+            },
+            applyFocusTreePatches: () => undefined,
+            setRenderedFocus: () => undefined,
+            patchRenderedFocus: () => undefined,
+            setRenderedInlayWindows: () => undefined,
+            patchRenderedInlayWindows: () => undefined,
+            refreshFocusTreeSelectorOptions: () => undefined,
+            refreshWarningsButtonVisibility: () => undefined,
+            setGridBox: () => undefined,
+            setGridSizeX: () => undefined,
+            setGridSizeY: () => undefined,
+            replaceDynamicStyleCss: () => undefined,
+        });
+
+        assert.strictEqual(result, true);
+        assert.strictEqual(selectedTreeId, 'tree_beta');
+    });
 });

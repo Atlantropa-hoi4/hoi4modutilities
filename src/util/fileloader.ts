@@ -105,7 +105,7 @@ export async function getFilePathFromModOrHOI4(relativePath: string, options?: {
         if (replacePaths) {
             const relativePathDir = path.dirname(relativePath);
             for (const replacePath of replacePaths) {
-                if (isSamePath(relativePathDir, replacePath)) {
+                if (isPathCoveredByReplacePath(relativePathDir, replacePath)) {
                     return absolutePath;
                 }
             }
@@ -283,7 +283,7 @@ export async function listFilesFromModOrHOI4(relativePath: string, options?: { m
             const replacePaths = await getReplacePaths();
             if (replacePaths) {
                 for (const replacePath of replacePaths) {
-                    if (isSamePath(relativePath, replacePath)) {
+                    if (isPathCoveredByReplacePath(relativePath, replacePath)) {
                         return result.filter((v, i, a) => i === a.indexOf(v));
                     }
                 }
@@ -532,6 +532,16 @@ export function getModRootCandidatePaths(modFilePath: string, descriptorPath?: s
 
     addCandidate(modFileDirectory);
     return candidates;
+}
+
+export function isPathCoveredByReplacePath(relativePath: string, replacePath: string): boolean {
+    const normalizedRelativePath = path.resolve(path.normalize(relativePath));
+    const normalizedReplacePath = path.resolve(path.normalize(replacePath));
+    const relativeToReplacePath = path.relative(normalizedReplacePath, normalizedRelativePath);
+    return relativeToReplacePath === ''
+        || (!!relativeToReplacePath
+            && !relativeToReplacePath.startsWith('..')
+            && !path.isAbsolute(relativeToReplacePath));
 }
 
 async function getReplacePathsFromModFile(absolutePath: string): Promise<string[]> {
