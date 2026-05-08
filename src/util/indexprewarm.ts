@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
 import { error } from './debug';
 import { prewarmGfxIndex } from './gfxindex';
-import { prewarmLocalisationIndex } from './localisationIndex';
 import { prewarmSharedFocusIndex } from './sharedFocusIndex';
 
-const previewIndexPrewarmDelayMs = 250;
+const previewIndexPrewarmDelayMs = 5000;
 
 export function registerIndexPrewarm(): vscode.Disposable {
     const timer = setTimeout(() => {
@@ -21,14 +20,13 @@ async function prewarmPreviewIndexes(): Promise<void> {
     const steps = [
         prewarmSharedFocusIndex,
         prewarmGfxIndex,
-        prewarmLocalisationIndex,
     ];
 
-    await Promise.all(steps.map(async step => {
+    for (const step of steps) {
         try {
             await step();
         } catch (e) {
             error(e);
         }
-    }));
+    }
 }

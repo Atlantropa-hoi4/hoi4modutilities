@@ -1,9 +1,9 @@
-import { State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory, Resource } from "../definitions";
-import { Enum, SchemaDef, CustomMap, DetailValue } from "../../../hoiformat/schema";
-import { readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
+import { State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory, Resource, StateDatedHistory } from "../definitions";
+import { convertNodeToJson, Enum, SchemaDef, CustomMap, DetailValue } from "../../../hoiformat/schema";
+import { readFileFromModOrHOI4, readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
 import { error } from "../../../util/debug";
 import { LoadResult, FolderLoader, FileLoader, mergeInLoadResult, sortItems, mergeRegion, convertColor, LoadResultOD } from "./common";
-import { Token } from "../../../hoiformat/hoiparser";
+import { Node, parseHoi4File, Token } from "../../../hoiformat/hoiparser";
 import { arrayToMap, UserError } from "../../../util/common";
 import { DefaultMapLoader } from "./provincemap";
 import { localize } from "../../../util/i18n";
@@ -23,14 +23,18 @@ interface StateDefinition {
     history: StateHistory;
     provinces: Enum;
     impassable: boolean;
+    local_supplies: number;
+    buildings_max_level_factor: number;
     resources: CustomMap<number>;
     _token: Token;
 }
 
 interface StateHistory {
     owner: string;
+    controller: string;
     victory_points: Enum[];
     add_core_of: string[];
+    set_demilitarized_zone: boolean;
 }
 
 const stateFileSchema: SchemaDef<StateFile> = {
@@ -42,6 +46,7 @@ const stateFileSchema: SchemaDef<StateFile> = {
             state_category: "string",
             history: {
                 owner: "string",
+                controller: "string",
                 victory_points: {
                     _innerType: "enum",
                     _type: "array",
@@ -50,9 +55,12 @@ const stateFileSchema: SchemaDef<StateFile> = {
                     _innerType: "string",
                     _type: "array",
                 },
+                set_demilitarized_zone: "boolean",
             },
             provinces: "enum",
             impassable: "boolean",
+            local_supplies: "number",
+            buildings_max_level_factor: "number",
             resources: {
                 _innerType: "number",
                 _type: "map",
@@ -230,56 +238,176 @@ class StateCategoryLoader extends FileLoader<StateCategory[]> {
 
 async function loadState(stateFile: string, globalWarnings: WorldMapWarning[]): Promise<StateNoBoundingBox[]> {
     try {
-        const data = await readFileFromModOrHOI4AsJson<StateFile>(stateFile, stateFileSchema);
-        const result: StateNoBoundingBox[] = [];
-
-        for (const state of data.state) {
-            const warnings: string[] = [];
-            const id = state.id ? state.id : (warnings.push(localize('worldmap.warnings.statenoid', "A state in {0} doesn't have id field.", stateFile)), -1);
-            const name = state.name ? state.name : (warnings.push(localize('worldmap.warnings.statenoname', "The state doesn't have name field.")), '');
-            const manpower = state.manpower ?? 0;
-            const category = state.state_category ? state.state_category : (warnings.push(localize('worldmap.warnings.statenocategory', "The state doesn't have category field.")), '');
-            const owner = state.history?.owner;
-            const provinces = state.provinces._values.map(v => parseInt(v));
-            const cores = state.history?.add_core_of.map(v => v).filter((v, i, a): v is string => v !== undefined && i === a.indexOf(v)) ?? [];
-            const impassable = state.impassable ?? false;
-            const victoryPointsArray = state.history?.victory_points.filter(v => v._values.length >= 2).map(v => v._values.slice(0, 2).map(v => parseInt(v)) as [number, number]) ?? [];
-            const victoryPoints = arrayToMap(victoryPointsArray, "0", v => v[1]);
-            const resources = arrayToMap(
-                Object.values(state.resources._map), '_key', v => v._value);
-
-            if (provinces.length === 0) {
-                globalWarnings.push({
-                    source: [{ type: 'state', id }],
-                    relatedFiles: [stateFile],
-                    text: localize('worldmap.warnings.statenoprovinces', "State {0} in \"{1}\" doesn't have provinces.", id, stateFile),
-                });
-            }
-
-            for (const vpPair of victoryPointsArray) {
-                if (!provinces.includes(vpPair[0])) {
-                    warnings.push(localize('worldmap.warnings.provincenothere', 'Province {0} not included in this state. But victory points defined here.', vpPair[0]));
-                }
-            }
-
-            globalWarnings.push(...warnings.map<WorldMapWarning>(warning => ({
-                source: [{ type: 'state', id }],
-                relatedFiles: [stateFile],
-                text: warning,
-            })));
-
-            result.push({
-                id, name, manpower, category, owner, provinces, cores, impassable, victoryPoints, resources,
-                file: stateFile,
-                token: state._token ?? null,
-            });
-        }
-
-        return result;
+        const [buffer, realPath] = await readFileFromModOrHOI4(stateFile);
+        const root = parseHoi4File(buffer.toString(), localize('infile', 'In file {0}:\n', realPath));
+        return parseStateRoot(stateFile, root, globalWarnings);
     } catch (e) {
         error(e);
         return [];
     }
+}
+
+export function parseStateFileContentForTest(content: string, stateFile = 'test_state.txt'): any[] {
+    return parseStateRoot(stateFile, parseHoi4File(content), []);
+}
+
+function parseStateRoot(stateFile: string, root: Node, globalWarnings: WorldMapWarning[]): StateNoBoundingBox[] {
+    const data = convertNodeToJson<StateFile>(root, stateFileSchema);
+    const stateNodes = getNamedChildren(root, 'state');
+    const result: StateNoBoundingBox[] = [];
+
+    for (const [index, state] of data.state.entries()) {
+        const stateNode = stateNodes[index];
+        const historyNode = getFirstNamedChild(stateNode, 'history');
+        const warnings: string[] = [];
+        const id = state.id ? state.id : (warnings.push(localize('worldmap.warnings.statenoid', "A state in {0} doesn't have id field.", stateFile)), -1);
+        const name = state.name ? state.name : (warnings.push(localize('worldmap.warnings.statenoname', "The state doesn't have name field.")), '');
+        const manpower = state.manpower ?? 0;
+        const category = state.state_category ? state.state_category : (warnings.push(localize('worldmap.warnings.statenocategory', "The state doesn't have category field.")), '');
+        const owner = state.history?.owner;
+        const controller = state.history?.controller;
+        const provinces = state.provinces._values.map(v => parseInt(v));
+        const provinceTokens = collectProvinceTokens(stateNode);
+        const cores = state.history?.add_core_of.map(v => v).filter((v, i, a): v is string => v !== undefined && i === a.indexOf(v)) ?? [];
+        const impassable = state.impassable ?? false;
+        const demilitarized = state.history?.set_demilitarized_zone;
+        const localSupplies = state.local_supplies ?? 0;
+        const buildingsMaxLevelFactor = state.buildings_max_level_factor ?? 1;
+        const { buildings, provinceBuildings } = parseBuildings(getFirstNamedChild(historyNode, 'buildings'));
+        const datedHistory = parseDatedHistory(historyNode);
+        const victoryPointsArray = state.history?.victory_points.filter(v => v._values.length >= 2).map(v => v._values.slice(0, 2).map(v => parseInt(v)) as [number, number]) ?? [];
+        const victoryPoints = arrayToMap(victoryPointsArray, "0", v => v[1]);
+        const resources = arrayToMap(
+            Object.values(state.resources._map), '_key', v => v._value);
+
+        if (provinces.length === 0) {
+            globalWarnings.push({
+                source: [{ type: 'state', id }],
+                relatedFiles: [stateFile],
+                text: localize('worldmap.warnings.statenoprovinces', "State {0} in \"{1}\" doesn't have provinces.", id, stateFile),
+            });
+        }
+
+        for (const vpPair of victoryPointsArray) {
+            if (!provinces.includes(vpPair[0])) {
+                warnings.push(localize('worldmap.warnings.provincenothere', 'Province {0} not included in this state. But victory points defined here.', vpPair[0]));
+            }
+        }
+
+        globalWarnings.push(...warnings.map<WorldMapWarning>(warning => ({
+            source: [{ type: 'state', id }],
+            relatedFiles: [stateFile],
+            text: warning,
+        })));
+
+        result.push({
+            id, name, manpower, category, owner, controller, provinces, provinceTokens, cores, impassable, demilitarized, localSupplies,
+            buildingsMaxLevelFactor, buildings, provinceBuildings, victoryPoints, resources, datedHistory,
+            file: stateFile,
+            token: state._token ?? null,
+        });
+    }
+
+    return result;
+}
+
+const dateNodeNameRegex = /^\d{1,4}\.\d{1,2}\.\d{1,2}$/;
+
+function getNodeChildren(node: Node | undefined): Node[] {
+    return node && Array.isArray(node.value) ? node.value : [];
+}
+
+function getNamedChildren(node: Node | undefined, name: string): Node[] {
+    return getNodeChildren(node).filter(child => child.name?.toLowerCase() === name);
+}
+
+function getFirstNamedChild(node: Node | undefined, name: string): Node | undefined {
+    return getNamedChildren(node, name)[0];
+}
+
+function collectProvinceTokens(stateNode: Node | undefined): Record<number, Token> {
+    const result: Record<number, Token> = {};
+    for (const child of getNodeChildren(getFirstNamedChild(stateNode, 'provinces'))) {
+        if (!child.name || !/^\d+$/.test(child.name)) {
+            continue;
+        }
+
+        const provinceId = parseInt(child.name, 10);
+        if (child.nameToken && result[provinceId] === undefined) {
+            result[provinceId] = child.nameToken;
+        }
+    }
+    return result;
+}
+
+function getSymbolOrStringValue(node: Node | undefined): string | undefined {
+    if (!node) {
+        return undefined;
+    }
+    return typeof node.value === 'string' ? node.value :
+        typeof node.value === 'object' && node.value !== null && 'name' in node.value ? node.value.name :
+        undefined;
+}
+
+function getBooleanValue(node: Node | undefined): boolean | undefined {
+    const value = getSymbolOrStringValue(node);
+    return value === 'yes' ? true : value === 'no' ? false : undefined;
+}
+
+function parseNumberMap(nodes: Node[]): Record<string, number | undefined> {
+    const result: Record<string, number | undefined> = {};
+    for (const node of nodes) {
+        if (!node.name || typeof node.value !== 'number') {
+            continue;
+        }
+        result[node.name] = node.value;
+    }
+    return result;
+}
+
+function parseBuildings(buildingsNode: Node | undefined): {
+    buildings: Record<string, number | undefined>;
+    provinceBuildings: Record<number, Record<string, number | undefined> | undefined>;
+} {
+    const buildings: Record<string, number | undefined> = {};
+    const provinceBuildings: Record<number, Record<string, number | undefined> | undefined> = {};
+
+    for (const child of getNodeChildren(buildingsNode)) {
+        if (!child.name) {
+            continue;
+        }
+
+        if (typeof child.value === 'number') {
+            buildings[child.name] = child.value;
+        } else if (/^\d+$/.test(child.name) && Array.isArray(child.value)) {
+            provinceBuildings[parseInt(child.name)] = parseNumberMap(child.value);
+        }
+    }
+
+    return { buildings, provinceBuildings };
+}
+
+function parseDatedHistory(historyNode: Node | undefined): StateDatedHistory[] {
+    return getNodeChildren(historyNode)
+        .filter(child => child.name !== null && dateNodeNameRegex.test(child.name))
+        .map(child => {
+            const historyChildren = getNodeChildren(child);
+            const { buildings, provinceBuildings } = parseBuildings(getFirstNamedChild(child, 'buildings'));
+            const cores = historyChildren
+                .filter(v => v.name?.toLowerCase() === 'add_core_of')
+                .map(v => getSymbolOrStringValue(v))
+                .filter((v, i, a): v is string => v !== undefined && i === a.indexOf(v));
+
+            return {
+                date: child.name!,
+                owner: getSymbolOrStringValue(getFirstNamedChild(child, 'owner')),
+                controller: getSymbolOrStringValue(getFirstNamedChild(child, 'controller')),
+                cores,
+                demilitarized: getBooleanValue(getFirstNamedChild(child, 'set_demilitarized_zone')),
+                buildings,
+                provinceBuildings,
+            };
+        });
 }
 
 function sortStates(states: StateNoBoundingBox[], warnings: WorldMapWarning[]): { sortedStates: StateNoBoundingBox[], badStateId: number } {

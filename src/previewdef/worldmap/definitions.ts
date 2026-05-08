@@ -32,7 +32,7 @@ export interface WorldMapData {
 export interface ProvinceBmp {
     width: number;
     height: number;
-    colorByPosition: number[]; // width * height
+    colorByPosition: Uint32Array; // width * height
     colorToProvince: Record<number, ProvinceGraph>;
     provinces: ProvinceGraph[];
 }
@@ -40,7 +40,7 @@ export interface ProvinceBmp {
 export interface ProvinceMap {
     width: number;
     height: number;
-    colorByPosition: number[]; // width * height
+    colorByPosition: Uint32Array; // width * height
     provinces: (Province | undefined | null)[]; // count of provinces
     badProvincesCount: number;
     continents: string[];
@@ -91,11 +91,29 @@ export interface State extends Region, TokenInFile {
     manpower: number;
     category: string;
     owner: string | undefined;
+    controller: string | undefined;
     provinces: number[];
+    provinceTokens?: Record<number, Token>;
     cores: string[];
     impassable: boolean;
+    demilitarized: boolean | undefined;
+    localSupplies: number;
+    buildingsMaxLevelFactor: number;
+    buildings: Record<string, number | undefined>;
+    provinceBuildings: Record<number, Record<string, number | undefined> | undefined>;
     victoryPoints: Record<number, number | undefined>;
     resources: Record<string, number | undefined>;
+    datedHistory: StateDatedHistory[];
+}
+
+export interface StateDatedHistory {
+    date: string;
+    owner: string | undefined;
+    controller: string | undefined;
+    cores: string[];
+    demilitarized: boolean | undefined;
+    buildings: Record<string, number | undefined>;
+    provinceBuildings: Record<number, Record<string, number | undefined> | undefined>;
 }
 
 export interface Railway {
@@ -164,6 +182,14 @@ export interface StrategicRegion extends Region, TokenInFile {
     name: string;
     provinces: number[];
     navalTerrain: string | null;
+    staticModifiers: Record<string, number | undefined>;
+    weatherPeriods: StrategicRegionWeatherPeriod[];
+}
+
+export interface StrategicRegionWeatherPeriod {
+    between: [number, number] | undefined;
+    temperature: [number, number] | undefined;
+    values: Record<string, number | [number, number] | undefined>;
 }
 
 export interface SupplyArea extends Region, TokenInFile {

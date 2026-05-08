@@ -76,12 +76,6 @@
             "default": "",
             "description": "%hoi4modutilities.modFile.desc%"
           },
-          "hoi4ModUtilities.enableSupplyArea": {
-            "title": "%hoi4modutilities.enableSupplyArea.title%",
-            "type": "boolean",
-            "default": false,
-            "description": "%hoi4modutilities.enableSupplyArea.desc%"
-          },
           "hoi4ModUtilities.previewLocalisation": {
             "title": "%hoi4modutilities.previewLocalisation.title%",
             "type": "string",

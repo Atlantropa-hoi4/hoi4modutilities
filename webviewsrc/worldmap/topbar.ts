@@ -9,9 +9,9 @@ import { BehaviorSubject, combineLatest, fromEvent } from 'rxjs';
 import { Renderer } from './renderer';
 import { sendEvent } from '../util/telemetry';
 
-export type ViewMode = 'province' | 'state' | 'strategicregion' | 'supplyarea' | 'warnings';
+export type ViewMode = 'province' | 'state' | 'strategicregion' | 'warnings';
 export type ColorSet = 'provinceid' | 'provincetype' | 'terrain' | 'country' | 'stateid' | 'manpower' |
-    'victorypoint' | 'continent' | 'warnings' | 'strategicregionid' | 'supplyareaid' | 'supplyvalue' | 'resources';
+    'victorypoint' | 'continent' | 'warnings' | 'strategicregionid' | 'resources' | 'localsupplies';
 
 export const topBarHeight = 40;
 
@@ -24,8 +24,6 @@ export class TopBar extends Subscriber {
     public selectedStateId$: BehaviorSubject<number | undefined>;
     public hoverStrategicRegionId$: BehaviorSubject<number | undefined>;
     public selectedStrategicRegionId$: BehaviorSubject<number | undefined>;
-    public hoverSupplyAreaId$: BehaviorSubject<number | undefined>;
-    public selectedSupplyAreaId$: BehaviorSubject<number | undefined>;
     public warningFilter: DivDropdown;
     public display: DivDropdown;
 
@@ -47,8 +45,6 @@ export class TopBar extends Subscriber {
         this.selectedStateId$ = new BehaviorSubject<number | undefined>(state.selectedStateId ?? undefined);
         this.hoverStrategicRegionId$ = new BehaviorSubject<number | undefined>(undefined);
         this.selectedStrategicRegionId$ = new BehaviorSubject<number | undefined>(state.selectedStrategicRegionId ?? undefined);
-        this.hoverSupplyAreaId$ = new BehaviorSubject<number | undefined>(undefined);
-        this.selectedSupplyAreaId$ = new BehaviorSubject<number | undefined>(state.selectedSupplyAreaId ?? undefined);
         if (state.warningFilter) {
             this.warningFilter.selectedValues$.next(state.warningFilter);
         } else {
@@ -161,7 +157,16 @@ export class TopBar extends Subscriber {
 
     private openMapItem(useHoverValue = false) {
         sendEvent('worldmap.open.' + this.viewMode$.value + (useHoverValue ? '.dblclick' : ''));
-        if (this.viewMode$.value === 'state') {
+        if (this.viewMode$.value === 'province') {
+            const provinceId = useHoverValue ? this.hoverProvinceId$.value : this.selectedProvinceId$.value;
+            if (provinceId) {
+                const state = this.loader.worldMap.getStateByProvinceId(provinceId);
+                if (state) {
+                    const token = state.provinceTokens?.[provinceId] ?? state.token;
+                    vscode.postMessage<WorldMapMessage>({ command: 'openfile', type: 'state', file: state.file, start: token?.start, end: token?.end });
+                }
+            }
+        } else if (this.viewMode$.value === 'state') {
             const selected = useHoverValue ? this.hoverStateId$.value : this.selectedStateId$.value;
             if (selected) {
                 const state = this.loader.worldMap.getStateById(selected);
@@ -178,15 +183,6 @@ export class TopBar extends Subscriber {
                         start: strategicRegion.token?.start, end: strategicRegion.token?.end });
                 }
             }
-        } else if (this.viewMode$.value === 'supplyarea') {
-            const selected = useHoverValue ? this.hoverSupplyAreaId$.value : this.selectedSupplyAreaId$.value;
-            if (selected) {
-                const supplyArea = this.loader.worldMap.getSupplyAreaById(selected);
-                if (supplyArea) {
-                    vscode.postMessage<WorldMapMessage>({ command: 'openfile', type: 'supplyarea', file: supplyArea.file,
-                        start: supplyArea.token?.start, end: supplyArea.token?.end });
-                }
-            }
         }
     }
 
@@ -197,11 +193,10 @@ export class TopBar extends Subscriber {
             this.openMapItem();
         }));
 
-        this.addSubscription(combineLatest([this.viewMode$, this.selectedStateId$, this.selectedStrategicRegionId$, this.selectedSupplyAreaId$]).subscribe(
-            ([viewMode, selectedStateId, selectedStrategicRegionId, selectedSupplyAreaId]) => {
+        this.addSubscription(combineLatest([this.viewMode$, this.selectedStateId$, this.selectedStrategicRegionId$]).subscribe(
+            ([viewMode, selectedStateId, selectedStrategicRegionId]) => {
                 open.disabled = !((viewMode === 'state' && selectedStateId !== undefined) ||
-                    (viewMode === 'strategicregion' && selectedStrategicRegionId !== undefined) ||
-                    (viewMode === 'supplyarea' && selectedSupplyAreaId !== undefined));
+                    (viewMode === 'strategicregion' && selectedStrategicRegionId !== undefined));
             }
         ));
     }
@@ -243,7 +238,6 @@ export class TopBar extends Subscriber {
                 this.hoverProvinceId$.next(undefined);
                 this.hoverStateId$.next(undefined);
                 this.hoverStrategicRegionId$.next(undefined);
-                this.hoverSupplyAreaId$.next(undefined);
                 return;
             }
     
@@ -260,14 +254,12 @@ export class TopBar extends Subscriber {
             this.hoverProvinceId$.next(worldMap.getProvinceByPosition(x, y)?.id);
             this.hoverStateId$.next(this.hoverProvinceId$.value === undefined ? undefined : worldMap.getStateByProvinceId(this.hoverProvinceId$.value)?.id);
             this.hoverStrategicRegionId$.next(this.hoverProvinceId$.value === undefined ? undefined : worldMap.getStrategicRegionByProvinceId(this.hoverProvinceId$.value)?.id);
-            this.hoverSupplyAreaId$.next(this.hoverStateId$.value === undefined ? undefined : worldMap.getSupplyAreaByStateId(this.hoverStateId$.value)?.id);
         }));
     
         this.addSubscription(fromEvent(canvas, 'mouseleave').subscribe(() => {
             this.hoverProvinceId$.next(undefined);
             this.hoverStateId$.next(undefined);
             this.hoverStrategicRegionId$.next(undefined);
-            this.hoverSupplyAreaId$.next(undefined);
         }));
     
         this.addSubscription(fromEvent(canvas, 'click').subscribe(() => {
@@ -280,9 +272,6 @@ export class TopBar extends Subscriber {
                     break;
                 case 'strategicregion':
                     this.selectedStrategicRegionId$.next(this.selectedStrategicRegionId$.value === this.hoverStrategicRegionId$.value ? undefined : this.hoverStrategicRegionId$.value);
-                    break;
-                case 'supplyarea':
-                    this.selectedSupplyAreaId$.next(this.selectedSupplyAreaId$.value === this.hoverSupplyAreaId$.value ? undefined : this.hoverSupplyAreaId$.value);
                     break;
             }
         }));
@@ -317,7 +306,6 @@ export class TopBar extends Subscriber {
             viewMode === 'province' ? [this.loader.worldMap.getProvinceById, this.selectedProvinceId$] :
             viewMode === 'state' ? [this.loader.worldMap.getStateById, this.selectedStateId$] :
             viewMode === 'strategicregion' ? [this.loader.worldMap.getStrategicRegionById, this.selectedStrategicRegionId$] :
-            viewMode === 'supplyarea' ? [this.loader.worldMap.getSupplyAreaById, this.selectedSupplyAreaId$] :
             [() => undefined, undefined];
             
         const region = getRegionById(number);
@@ -342,9 +330,6 @@ export class TopBar extends Subscriber {
                 break;
             case 'strategicregion':
                 placeholder = worldMap.strategicRegionsCount > 1 ? `1-${worldMap.strategicRegionsCount - 1}` : '';
-                break;
-            case 'supplyarea':
-                placeholder = worldMap.supplyAreasCount > 1 ? `1-${worldMap.supplyAreasCount - 1}` : '';
                 break;
             default:
                 break;

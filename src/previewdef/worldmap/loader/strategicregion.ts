@@ -1,13 +1,13 @@
-import { Enum, SchemaDef } from "../../../hoiformat/schema";
-import { StrategicRegion, WorldMapWarning, Province, WorldMapWarningSource, State, Terrain, Region } from "../definitions";
+import { convertNodeToJson, Enum, SchemaDef } from "../../../hoiformat/schema";
+import { StrategicRegion, WorldMapWarning, Province, WorldMapWarningSource, State, Terrain, Region, StrategicRegionWeatherPeriod } from "../definitions";
 import { DefaultMapLoader } from "./provincemap";
 import { FolderLoader, FileLoader, LoadResult, mergeInLoadResult, sortItems, mergeRegion, LoadResultOD } from "./common";
-import { readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
+import { readFileFromModOrHOI4 } from "../../../util/fileloader";
 import { error } from "../../../util/debug";
 import { localize } from "../../../util/i18n";
 import { StatesLoader } from "./states";
 import { arrayToMap, UserError } from "../../../util/common";
-import { Token } from "../../../hoiformat/hoiparser";
+import { Node, parseHoi4File, Token } from "../../../hoiformat/hoiparser";
 import { LoaderSession } from "../../../util/loader/loader";
 import { flatMap } from "lodash";
 
@@ -20,6 +20,7 @@ interface StrategicRegionDefinition {
     name: string;
     provinces: Enum;
     naval_terrain: string;
+    static_modifiers: Enum;
     _token: Token;
 }
 
@@ -30,6 +31,7 @@ const strategicRegionFileSchema: SchemaDef<StrategicRegionFile> = {
             name: "string",
             provinces: "enum",
             naval_terrain: "string",
+            static_modifiers: "enum",
         },
         _type: "array",
     },
@@ -107,41 +109,110 @@ class StrategicRegionLoader extends FileLoader<StrategicRegionNoRegion[]> {
 
 type StrategicRegionNoRegion = Omit<StrategicRegion, keyof Region>;
 async function loadStrategicRegion(file: string, globalWarnings: WorldMapWarning[]): Promise<StrategicRegionNoRegion[]> {
-    const result: StrategicRegionNoRegion[] = [];
     try {
-        const data = await readFileFromModOrHOI4AsJson<StrategicRegionFile>(file, strategicRegionFileSchema);
-        for (const strategicRegion of data.strategic_region) {
-            const warnings: string[] = [];
-            const id = strategicRegion.id ? strategicRegion.id : (warnings.push(localize('worldmap.warnings.strategicregionnoid', "A strategic region in \"{0}\" doesn't have id field.", file)), -1);
-            const name = strategicRegion.name ? strategicRegion.name : (warnings.push(localize('worldmap.warnings.strategicregionnoname', "Strategic region {0} doesn't have name field.", id)), '');
-            const provinces = strategicRegion.provinces._values.map(v => parseInt(v));
-            const navalTerrain = strategicRegion.naval_terrain ?? null;
-
-            if (provinces.length === 0) {
-                warnings.push(localize('worldmap.warnings.strategicregionnoprovinces', "Strategic region {0} in \"{1}\" doesn't have provinces.", id, file));
-            }
-
-            globalWarnings.push(...warnings.map<WorldMapWarning>(warning => ({
-                source: [{ type: 'strategicregion', id }],
-                relatedFiles: [file],
-                text: warning,
-            })));
-
-            result.push({
-                id,
-                name,
-                provinces,
-                navalTerrain,
-                file,
-                token: strategicRegion._token ?? null,
-            });
-        }
+        const [buffer, realPath] = await readFileFromModOrHOI4(file);
+        const root = parseHoi4File(buffer.toString(), localize('infile', 'In file {0}:\n', realPath));
+        return parseStrategicRegionRoot(file, root, globalWarnings);
 
     } catch (e) {
         error(e);
     }
 
+    return [];
+}
+
+export function parseStrategicRegionFileContentForTest(content: string, file = 'test_strategic_region.txt'): any[] {
+    return parseStrategicRegionRoot(file, parseHoi4File(content), []);
+}
+
+function parseStrategicRegionRoot(file: string, root: Node, globalWarnings: WorldMapWarning[]): StrategicRegionNoRegion[] {
+    const result: StrategicRegionNoRegion[] = [];
+    const data = convertNodeToJson<StrategicRegionFile>(root, strategicRegionFileSchema);
+    const regionNodes = getNamedChildren(root, 'strategic_region');
+    for (const [index, strategicRegion] of data.strategic_region.entries()) {
+        const regionNode = regionNodes[index];
+        const warnings: string[] = [];
+        const id = strategicRegion.id ? strategicRegion.id : (warnings.push(localize('worldmap.warnings.strategicregionnoid', "A strategic region in \"{0}\" doesn't have id field.", file)), -1);
+        const name = strategicRegion.name ? strategicRegion.name : (warnings.push(localize('worldmap.warnings.strategicregionnoname', "Strategic region {0} doesn't have name field.", id)), '');
+        const provinces = strategicRegion.provinces._values.map(v => parseInt(v));
+        const navalTerrain = strategicRegion.naval_terrain ?? null;
+        const staticModifiers = parseNumberMap(getNamedChildren(getFirstNamedChild(regionNode, 'static_modifiers'), undefined));
+        const weatherPeriods = parseWeatherPeriods(getFirstNamedChild(regionNode, 'weather'));
+
+        if (provinces.length === 0) {
+            warnings.push(localize('worldmap.warnings.strategicregionnoprovinces', "Strategic region {0} in \"{1}\" doesn't have provinces.", id, file));
+        }
+
+        globalWarnings.push(...warnings.map<WorldMapWarning>(warning => ({
+            source: [{ type: 'strategicregion', id }],
+            relatedFiles: [file],
+            text: warning,
+        })));
+
+        result.push({
+            id,
+            name,
+            provinces,
+            navalTerrain,
+            staticModifiers,
+            weatherPeriods,
+            file,
+            token: strategicRegion._token ?? null,
+        });
+    }
+
     return result;
+}
+
+function getNodeChildren(node: Node | undefined): Node[] {
+    return node && Array.isArray(node.value) ? node.value : [];
+}
+
+function getNamedChildren(node: Node | undefined, name: string | undefined): Node[] {
+    return getNodeChildren(node).filter(child => name === undefined || child.name?.toLowerCase() === name);
+}
+
+function getFirstNamedChild(node: Node | undefined, name: string): Node | undefined {
+    return getNamedChildren(node, name)[0];
+}
+
+function parseNumberMap(nodes: Node[]): Record<string, number | undefined> {
+    const result: Record<string, number | undefined> = {};
+    for (const node of nodes) {
+        if (node.name && typeof node.value === 'number') {
+            result[node.name] = node.value;
+        }
+    }
+    return result;
+}
+
+function parseNumberPair(node: Node | undefined): [number, number] | undefined {
+    const children = getNodeChildren(node).map(child => typeof child.value === 'number' ? child.value :
+        child.name !== null && !isNaN(parseFloat(child.name)) ? parseFloat(child.name) : undefined);
+    return children[0] !== undefined && children[1] !== undefined ? [children[0], children[1]] : undefined;
+}
+
+function parseWeatherPeriods(weatherNode: Node | undefined): StrategicRegionWeatherPeriod[] {
+    return getNamedChildren(weatherNode, 'period').map(periodNode => {
+        const values: Record<string, number | [number, number] | undefined> = {};
+        for (const child of getNodeChildren(periodNode)) {
+            if (!child.name || child.name === 'between' || child.name === 'temperature') {
+                continue;
+            }
+
+            if (typeof child.value === 'number') {
+                values[child.name] = child.value;
+            } else {
+                values[child.name] = parseNumberPair(child);
+            }
+        }
+
+        return {
+            between: parseNumberPair(getFirstNamedChild(periodNode, 'between')),
+            temperature: parseNumberPair(getFirstNamedChild(periodNode, 'temperature')),
+            values,
+        };
+    });
 }
 
 function validateStrategicRegions(strategicRegions: StrategicRegionNoRegion[], terrains: Terrain[], warnings: WorldMapWarning[]): void {

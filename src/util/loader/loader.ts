@@ -158,6 +158,11 @@ export abstract class Loader<T, E = {}> {
         return {};
     };
 
+    public clearCache(): void {
+        this.cachedValue = undefined;
+        this.loadingPromise = undefined;
+    }
+
     protected abstract loadImpl(session: LoaderSession): Promise<LoadResult<T, E>>;
 }
 

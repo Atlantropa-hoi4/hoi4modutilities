@@ -13,7 +13,6 @@ interface Hoi4ModUtilitiesConfigurationValues {
     readonly loadDlcContents: boolean;
     readonly modFile: string;
     readonly featureFlags: string[];
-    readonly enableSupplyArea: boolean;
     readonly previewLocalisation: PreviewLocalisation;
 }
 
@@ -24,7 +23,6 @@ const defaultConfigurationValues: Hoi4ModUtilitiesConfigurationValues = {
     loadDlcContents: true,
     modFile: '',
     featureFlags: [],
-    enableSupplyArea: false,
     previewLocalisation: 'English',
 };
 
@@ -61,7 +59,6 @@ function getConfigurationValues(configuration: Partial<Hoi4ModUtilitiesConfigura
         loadDlcContents: getConfigurationValue(configuration, 'loadDlcContents'),
         modFile: getConfigurationValue(configuration, 'modFile'),
         featureFlags: Array.isArray(featureFlags) ? [...featureFlags] : [...defaultConfigurationValues.featureFlags],
-        enableSupplyArea: getConfigurationValue(configuration, 'enableSupplyArea'),
         previewLocalisation: getConfigurationValue(configuration, 'previewLocalisation'),
     };
 }

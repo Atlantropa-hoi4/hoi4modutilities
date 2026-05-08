@@ -5,9 +5,7 @@ import { StatesLoader } from "./states";
 import { DefaultMapLoader } from "./provincemap";
 import { debug } from "../../../util/debug";
 import { StrategicRegionsLoader } from "./strategicregion";
-import { SupplyAreasLoader } from "./supplyarea";
 import { LoaderSession } from "../../../util/loader/loader";
-import { getConfiguration } from "../../../util/vsccommon";
 import { RailwayLoader, SupplyNodeLoader } from "./railway";
 import { ResourceDefinitionLoader } from "./resource";
 
@@ -16,7 +14,6 @@ export class WorldMapLoader extends Loader<WorldMapData> {
     private statesLoader: StatesLoader;
     private countriesLoader: CountriesLoader;
     private strategicRegionsLoader: StrategicRegionsLoader;
-    private supplyAreasLoader: SupplyAreasLoader;
     private railwayLoader: RailwayLoader;
     private supplyNodeLoader: SupplyNodeLoader;
     private resourcesLoader: ResourceDefinitionLoader;
@@ -38,9 +35,6 @@ export class WorldMapLoader extends Loader<WorldMapData> {
 
         this.strategicRegionsLoader = new StrategicRegionsLoader(this.defaultMapLoader, this.statesLoader);
         this.strategicRegionsLoader.onProgress(e => this.onProgressEmitter.fire(e));
-
-        this.supplyAreasLoader = new SupplyAreasLoader(this.defaultMapLoader, this.statesLoader);
-        this.supplyAreasLoader.onProgress(e => this.onProgressEmitter.fire(e));
 
         this.railwayLoader = new RailwayLoader(this.defaultMapLoader);
         this.railwayLoader.onProgress(e => this.onProgressEmitter.fire(e));
@@ -68,20 +62,10 @@ export class WorldMapLoader extends Loader<WorldMapData> {
         const strategicRegions = await this.strategicRegionsLoader.load(session);
         session.throwIfCancelled();
 
-        const enableSupplyArea = getConfiguration().enableSupplyArea;
-        const supplyAreas = enableSupplyArea ?
-            await this.supplyAreasLoader.load(session) :
-            { warnings: [], result: { supplyAreas: [], badSupplyAreasCount: 0 }, dependencies: [] };
+        const railways = await this.railwayLoader.load(session);
         session.throwIfCancelled();
         
-        const railways = enableSupplyArea ?
-            { warnings: [], result: { railways: [] }, dependencies: [] } :
-            await this.railwayLoader.load(session);
-        session.throwIfCancelled();
-        
-        const supplyNodes = enableSupplyArea ?
-            { warnings: [], result: { supplyNodes: [] }, dependencies: [] } :
-            await this.supplyNodeLoader.load(session);
+        const supplyNodes = await this.supplyNodeLoader.load(session);
         session.throwIfCancelled();
 
         const resources = await this.resourcesLoader.load(session);
@@ -90,7 +74,8 @@ export class WorldMapLoader extends Loader<WorldMapData> {
         const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
         debug('Loader session', loadedLoaders);
 
-        const subLoaderResults = [ provinceMap, stateMap, countries, strategicRegions, supplyAreas, railways, supplyNodes, resources ];
+        const supplyAreas = { warnings: [], result: { supplyAreas: [], badSupplyAreasCount: 0 }, dependencies: [] };
+        const subLoaderResults = [ provinceMap, stateMap, countries, strategicRegions, railways, supplyNodes, resources ];
         const warnings = mergeInLoadResult(subLoaderResults, 'warnings');
 
         const worldMap: WorldMapData = {
@@ -113,6 +98,7 @@ export class WorldMapLoader extends Loader<WorldMapData> {
         };
 
         delete (worldMap as unknown as Partial<ProvinceMap>)['colorByPosition'];
+        this.defaultMapLoader.releaseTransientCache();
 
         const dependencies = mergeInLoadResult(subLoaderResults, 'dependencies');
         debug('World map dependencies', dependencies);

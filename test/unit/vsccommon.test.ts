@@ -9,7 +9,6 @@ const directConfigurationValues = {
     loadDlcContents: false,
     modFile: 'direct.mod',
     featureFlags: ['directFlag'],
-    enableSupplyArea: false,
     previewLocalisation: 'English',
 };
 const configurationGetValues = {
@@ -17,7 +16,6 @@ const configurationGetValues = {
     loadDlcContents: true,
     modFile: 'get.mod',
     featureFlags: ['getFlag'],
-    enableSupplyArea: true,
     previewLocalisation: 'Korean',
 };
 
@@ -56,7 +54,6 @@ describe('vscode configuration helpers', () => {
         assert.strictEqual(configuration.previewLocalisation, 'Korean');
         assert.strictEqual(configuration.installPath, 'get-install-path');
         assert.deepStrictEqual(configuration.featureFlags, ['getFlag']);
-        assert.strictEqual(configuration.enableSupplyArea, true);
         assert.strictEqual(getLanguageIdInYml(), 'l_korean');
     });
 });

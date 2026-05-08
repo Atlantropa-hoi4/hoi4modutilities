@@ -145,6 +145,11 @@ export class DefaultMapLoader extends FileLoader<ProvinceMap> {
         };
     }
 
+    public releaseTransientCache(): void {
+        this.provinceBmpLoader?.clearCache();
+        this.clearCache();
+    }
+
     public toString() {
         return `[DefaultMapLoader]`;
     }

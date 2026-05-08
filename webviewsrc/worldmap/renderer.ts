@@ -1,4 +1,4 @@
-import { Province, Point, State, Zone, Terrain, StrategicRegion, SupplyArea } from "../../src/previewdef/worldmap/definitions";
+import { Province, Point, State, Zone, Terrain, StrategicRegion } from "../../src/previewdef/worldmap/definitions";
 import { FEWorldMap, Loader } from "./loader";
 import { ViewPoint } from "./viewpoint";
 import { bboxCenter, distanceSqr, distanceHamming } from "./graphutils";
@@ -6,7 +6,7 @@ import { TopBar, topBarHeight, ColorSet, ViewMode } from "./topbar";
 import { Subscriber } from "../util/event";
 import { arrayToMap } from "../util/common";
 import { feLocalize } from "../util/i18n";
-import { chain, max, padStart } from "lodash";
+import { max, padStart } from "lodash";
 import { combineLatest, fromEvent } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
 
@@ -19,7 +19,6 @@ const renderScaleByViewMode: Record<ViewMode, { edge: number, labels: number }> 
     province: { edge: 2, labels: 3 },
     state: { edge: 1, labels: 1 },
     strategicregion: { edge: 0.25, labels: 0.25 },
-    supplyarea: { edge: 0.5, labels: 1 },
     warnings: { edge: 2, labels: 3 },
 };
 
@@ -29,7 +28,6 @@ interface RenderContext {
     mapCanvasContext: CanvasRenderingContext2D;
     provinceToState: Record<number, number | undefined>;
     provinceToStrategicRegion: Record<number, number | undefined>;
-    stateToSupplyArea: Record<number, number | undefined>;
     renderedProvincesByOffset: Record<number, Province[]>;
     renderedProvincesById: Record<number, Province>;
     renderedProvinces?: Province[];
@@ -79,8 +77,6 @@ export class Renderer extends Subscriber {
                 topBar.selectedStateId$,
                 topBar.hoverStrategicRegionId$,
                 topBar.selectedStrategicRegionId$,
-                topBar.hoverSupplyAreaId$,
-                topBar.selectedSupplyAreaId$,
                 topBar.warningFilter.selectedValues$,
                 topBar.display.selectedValues$,
             ]).pipe(
@@ -125,9 +121,6 @@ export class Renderer extends Subscriber {
                 break;
             case 'strategicregion':
                 this.renderStrategicRegionHoverSelection(this.loader.worldMap);
-                break;
-            case 'supplyarea':
-                this.renderSupplyAreaHoverSelection(this.loader.worldMap);
                 break;
         }
 
@@ -186,7 +179,6 @@ export class Renderer extends Subscriber {
             mapCanvasContext,
             provinceToState: worldMap.getProvinceToStateMap(),
             provinceToStrategicRegion: worldMap.getProvinceToStrategicRegionMap(),
-            stateToSupplyArea: worldMap.getStateToSupplyAreaMap(),
             renderedProvincesByOffset: {},
             renderedProvincesById: {},
             extraState: undefined,
@@ -326,7 +318,7 @@ export class Renderer extends Subscriber {
     }
 
     private static renderMapLabels(renderContext: RenderContext, worldMap: FEWorldMap, context: CanvasRenderingContext2D, xOffset: number) {
-        const { provinceToState, provinceToStrategicRegion, stateToSupplyArea, topBar, viewPoint } = renderContext;
+        const { provinceToState, provinceToStrategicRegion, topBar, viewPoint } = renderContext;
         const renderedProvinces = renderContext.renderedProvincesByOffset[xOffset] ?? [];
         const viewMode = topBar.viewMode$.value;
         const colorSet = topBar.colorSet$.value;
@@ -346,11 +338,10 @@ export class Renderer extends Subscriber {
         } else {
             const renderedRegions: Record<number, boolean> = {};
             const regionMap = viewMode === 'state' ? provinceToState : provinceToStrategicRegion;
-            const getRegionById = viewMode === 'state' ? worldMap.getStateById : viewMode === 'supplyarea' ? worldMap.getSupplyAreaById : worldMap.getStrategicRegionById;
+            const getRegionById = viewMode === 'state' ? worldMap.getStateById : worldMap.getStrategicRegionById;
 
             for (const province of renderedProvinces) {
-                const stateId = viewMode === 'supplyarea' ? provinceToState[province.id] : undefined;
-                const regionId = viewMode === 'supplyarea' ? (stateId !== undefined ? stateToSupplyArea[stateId] : undefined) : regionMap[province.id];
+                const regionId = regionMap[province.id];
                 if (regionId !== undefined && !renderedRegions[regionId]) {
                     renderedRegions[regionId] = true;
                     const region = getRegionById(regionId);
@@ -379,7 +370,7 @@ export class Renderer extends Subscriber {
         isRed: boolean,
         preciseEdge?: boolean,
     ) {
-        const { provinceToState, provinceToStrategicRegion, stateToSupplyArea, renderedProvinces, topBar, viewPoint } = renderContext;
+        const { provinceToState, provinceToStrategicRegion, renderedProvinces, topBar, viewPoint } = renderContext;
         const scale = viewPoint.scale;
         const viewMode = topBar.viewMode$.value;
 
@@ -416,12 +407,6 @@ export class Renderer extends Subscriber {
                     }
                 } else if (viewMode === 'strategicregion') {
                     if (strategicRegionFromId === strategicRegionToId) {
-                        continue;
-                    }
-                } else if (viewMode === 'supplyarea') {
-                    if ((stateFromId === stateToId && (stateFromId !== undefined || strategicRegionFromId === strategicRegionToId)) ||
-                        (stateFromId !== undefined && stateToId !== undefined && stateToSupplyArea[stateFromId] === stateToSupplyArea[stateToId])
-                        ) {
                         continue;
                     }
                 }
@@ -490,12 +475,31 @@ export class Renderer extends Subscriber {
 
         context.fillStyle = 'rgb(200, 0, 0)';
         const size = Math.min(30, viewPoint.scale * 10);
+        const renderedSupplyNodes: Record<number, boolean> = {};
         worldMap.forEachSupplyNode(supplyNode => {
             const province = renderedProvincesById[supplyNode.province];
             if (province) {
+                renderedSupplyNodes[province.id] = true;
                 const x = viewPoint.convertX(province.centerOfMass.x + xOffset);
                 const y = viewPoint.convertY(province.centerOfMass.y);
                 context.fillRect(x - size / 2, y - size / 2, size, size);
+            }
+        });
+        worldMap.forEachState(state => {
+            for (const [provinceIdText, buildings] of Object.entries(state.provinceBuildings)) {
+                if ((buildings?.supply_node ?? 0) <= 0) {
+                    continue;
+                }
+                const provinceId = parseInt(provinceIdText, 10);
+                if (renderedSupplyNodes[provinceId]) {
+                    continue;
+                }
+                const province = renderedProvincesById[provinceId];
+                if (province) {
+                    const x = viewPoint.convertX(province.centerOfMass.x + xOffset);
+                    const y = viewPoint.convertY(province.centerOfMass.y);
+                    context.fillRect(x - size / 2, y - size / 2, size, size);
+                }
             }
         });
     }
@@ -624,9 +628,9 @@ export class Renderer extends Subscriber {
     private renderProvinceTooltip(province: Province, worldMap: FEWorldMap) {
         const stateObject = worldMap.getStateByProvinceId(province.id);
         const strategicRegion = worldMap.getStrategicRegionByProvinceId(province.id);
-        const supplyArea = stateObject ? worldMap.getSupplyAreaByStateId(stateObject.id) : undefined;
         const railwayLevel = worldMap.getRailwayLevelByProvinceId(province.id);
-        const supplyNode = worldMap.getSupplyNodeByProvinceId(province.id);
+        const provinceBuildings = stateObject?.provinceBuildings[province.id];
+        const supplyNode = worldMap.getSupplyNodeByProvinceId(province.id) || (provinceBuildings?.supply_node ?? 0) > 0;
         const vp = stateObject?.victoryPoints[province.id];
 
         this.renderTooltip(`
@@ -636,9 +640,6 @@ ${vp ? `${feLocalize('worldmap.tooltip.victorypoint', 'Victory point')}=${vp}` :
 ${stateObject ? `
 ${feLocalize('worldmap.tooltip.state', 'State')}=${stateObject.id}`: ''
 }
-${supplyArea ? `
-${feLocalize('worldmap.tooltip.supplyarea', 'Supply area')}=${supplyArea.id}
-` : ''}
 ${railwayLevel ? `
 ${feLocalize('worldmap.tooltip.railwaylevel', 'Railway level')}=${railwayLevel}
 ` : ''}
@@ -651,12 +652,16 @@ ${feLocalize('worldmap.tooltip.strategicregion', 'Strategic region')}=${strategi
 }
 ${stateObject ? `
 ${feLocalize('worldmap.tooltip.owner', 'Owner')}=${stateObject.owner}
+${stateObject.controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${stateObject.controller}` : ''}
+${stateObject.demilitarized ? feLocalize('worldmap.tooltip.demilitarized', 'Demilitarized') + '=true' : ''}
 ${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${stateObject.cores.join(',')}
-${feLocalize('worldmap.tooltip.manpower', 'Manpower')}=${toCommaDivideNumber(stateObject.manpower)}` : ''
+${feLocalize('worldmap.tooltip.manpower', 'Manpower')}=${toCommaDivideNumber(stateObject.manpower)}
+${feLocalize('worldmap.tooltip.localsupplies', 'Local supplies')}=${stateObject.localSupplies}
+${feLocalize('worldmap.tooltip.buildingsmaxlevelfactor', 'Buildings max level factor')}=${stateObject.buildingsMaxLevelFactor}
+${formatTooltipLine('worldmap.tooltip.buildings', 'Buildings', formatNumberMap(stateObject.buildings))}
+${formatTooltipLine('worldmap.tooltip.provincebuildings', 'Province buildings', formatNumberMap(provinceBuildings))}
+${formatTooltipLine('worldmap.tooltip.datedhistory', 'Dated history', formatDatedHistorySummary(stateObject))}` : ''
 }
-${supplyArea ? `
-${feLocalize('worldmap.tooltip.supplyvalue', 'Supply value')}=${supplyArea.value}
-` : ''}
 ${feLocalize('worldmap.tooltip.type', 'Type')}=${province.type}
 ${feLocalize('worldmap.tooltip.terrain', 'Terrain')}=${province.terrain}
 ${strategicRegion && strategicRegion.navalTerrain ? `
@@ -666,7 +671,7 @@ ${feLocalize('worldmap.tooltip.navalterrain', 'Naval terrain')}=${strategicRegio
 ${feLocalize('worldmap.tooltip.coastal', 'Coastal')}=${province.coastal}
 ${feLocalize('worldmap.tooltip.continent', 'Continent')}=${province.continent !== 0 ? `${worldMap.continents[province.continent]}(${province.continent})` : '0'}
 ${feLocalize('worldmap.tooltip.adjacencies', 'Adjecencies')}=${province.edges.filter(e => e.type !== 'impassable' && e.to !== -1).map(e => e.to).join(',')}
-${worldMap.getProvinceWarnings(province, stateObject, strategicRegion, supplyArea).map(v => '|r|' + v).join('\n')}`
+${worldMap.getProvinceWarnings(province, stateObject, strategicRegion).map(v => '|r|' + v).join('\n')}`
         );
     }
 
@@ -710,25 +715,6 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion, supplyAre
         hover && this.isTooltipVisible() && this.renderStrategicRegionTooltip(hover, worldMap);
     }
 
-    private renderSupplyAreaHoverSelection(worldMap: FEWorldMap) {
-        const hover = worldMap.getSupplyAreaById(this.topBar.hoverSupplyAreaId$.value);
-        const selected = worldMap.getSupplyAreaById(this.topBar.selectedSupplyAreaId$.value);
-        const toProvinces = (supplyArea: SupplyArea | undefined) => {
-            return supplyArea ?
-                {
-                    provinces: chain(supplyArea.states)
-                        .map(stateId => worldMap.getStateById(stateId)?.provinces)
-                        .filter((v): v is number[] => !!v)
-                        .flatten()
-                        .value()
-                } :
-                undefined;
-        };
-
-        this.renderHoverSelection(worldMap, toProvinces(hover), toProvinces(selected));
-        hover && this.isTooltipVisible() && this.renderSupplyAreaTooltip(hover, worldMap);
-    }
-
     private renderHoverSelection(worldMap: FEWorldMap, hover: { provinces: number[] } | undefined, selected: { provinces: number[] } | undefined) {
         if (selected) {
             for (const provinceId of selected.provinces) {
@@ -750,22 +736,22 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion, supplyAre
     }
 
     private renderStateTooltip(state: State, worldMap: FEWorldMap) {
-        const supplyArea = worldMap.getSupplyAreaByStateId(state.id);
         this.renderTooltip(`
 ${state.impassable ? '|r|' + feLocalize('worldmap.tooltip.impassable', 'Impassable') : ''}
 ${feLocalize('worldmap.tooltip.state', 'State')}=${state.id}
-${supplyArea ? `
-${feLocalize('worldmap.tooltip.supplyarea', 'Supply area')}=${supplyArea.id}
-` : ''}
 ${feLocalize('worldmap.tooltip.owner', 'Owner')}=${state.owner}
+${state.controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${state.controller}` : ''}
+${state.demilitarized ? feLocalize('worldmap.tooltip.demilitarized', 'Demilitarized') + '=true' : ''}
 ${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${state.cores.join(',')}
 ${feLocalize('worldmap.tooltip.manpower', 'Manpower')}=${toCommaDivideNumber(state.manpower)}
 ${feLocalize('worldmap.tooltip.category', 'Category')}=${state.category}
-${supplyArea ? `
-${feLocalize('worldmap.tooltip.supplyvalue', 'Supply value')}=${supplyArea.value}
-` : ''}
+${feLocalize('worldmap.tooltip.localsupplies', 'Local supplies')}=${state.localSupplies}
+${feLocalize('worldmap.tooltip.buildingsmaxlevelfactor', 'Buildings max level factor')}=${state.buildingsMaxLevelFactor}
+${formatTooltipLine('worldmap.tooltip.buildings', 'Buildings', formatNumberMap(state.buildings))}
+${formatTooltipLine('worldmap.tooltip.provincebuildings', 'Province buildings', formatProvinceBuildingsSummary(state))}
+${formatTooltipLine('worldmap.tooltip.datedhistory', 'Dated history', formatDatedHistorySummary(state))}
 ${feLocalize('worldmap.tooltip.provinces', 'Provinces')}=${state.provinces.join(',')}
-${worldMap.getStateWarnings(state, supplyArea).map(v => '|r|' + v).join('\n')}`,
+${worldMap.getStateWarnings(state).map(v => '|r|' + v).join('\n')}`,
             (width, height) => {
                 const { width: w, height: h } = Renderer.getResourcesSize(state);
                 return { width: Math.max(width, w), height: height + h };
@@ -782,16 +768,10 @@ ${strategicRegion.navalTerrain ? `
 ${feLocalize('worldmap.tooltip.navalterrain', 'Naval terrain')}=${strategicRegion.navalTerrain}
 `: ''
 }
+${formatTooltipLine('worldmap.tooltip.staticmodifiers', 'Static modifiers', formatNumberMap(strategicRegion.staticModifiers))}
+${formatTooltipLine('worldmap.tooltip.weather', 'Weather', formatWeatherSummary(strategicRegion))}
 ${feLocalize('worldmap.tooltip.provinces', 'Provinces')}=${strategicRegion.provinces.join(',')}
 ${worldMap.getStrategicRegionWarnings(strategicRegion).map(v => '|r|' + v).join('\n')}`);
-    }
-
-    private renderSupplyAreaTooltip(supplyArea: SupplyArea, worldMap: FEWorldMap) {
-        this.renderTooltip(`
-${feLocalize('worldmap.tooltip.supplyarea', 'Supply area')}=${supplyArea.id}
-${feLocalize('worldmap.tooltip.supplyvalue', 'Supply value')}=${supplyArea.value}
-${feLocalize('worldmap.tooltip.states', 'States')}=${supplyArea.states.join(',')}
-${worldMap.getSupplyAreaWarnings(supplyArea).map(v => '|r|' + v).join('\n')}`);
     }
 
     private renderTooltip(tooltip: string, sizeCallback?: (width: number, height: number) => {width: number, height: number}, renderCallback?: (x: number, y: number) => void) {
@@ -996,7 +976,6 @@ function getColorByColorSet(
 ): number {
     const { provinceToState,
         provinceToStrategicRegion,
-        stateToSupplyArea,
         topBar } = renderContext;
     switch (colorSet) {
         case 'provincetype':
@@ -1038,13 +1017,10 @@ function getColorByColorSet(
                 const stateId = provinceToState[province.id];
                 const state = worldMap.getStateById(stateId);
                 const strategicRegion = worldMap.getStrategicRegionById(provinceToStrategicRegion[province.id]);
-                const supplyAreaId = stateId ? stateToSupplyArea[stateId] : undefined;
-                const supplyArea = worldMap.getSupplyAreaById(supplyAreaId);
                 return worldMap.getProvinceWarnings(
                         viewMode !== "warnings" || warningFilter.includes('province') ? province : undefined,
                         viewMode !== "warnings" || warningFilter.includes('state') ? state : undefined,
-                        viewMode !== "warnings" || warningFilter.includes('strategicregion') ? strategicRegion : undefined,
-                        viewMode !== "warnings" || warningFilter.includes('supplyarea') ? supplyArea : undefined
+                        viewMode !== "warnings" || warningFilter.includes('strategicregion') ? strategicRegion : undefined
                     ).length > 0 ?
                     (isLand ? landWarning : waterWarning) :
                     (isLand ? landNoWarning : waterNoWarning);
@@ -1112,31 +1088,22 @@ function getColorByColorSet(
                 const strategicRegionId = provinceToStrategicRegion[province.id];
                 return valueAndMaxToColor(strategicRegionId === undefined || strategicRegionId < 0 ? 0 : strategicRegionId, renderContext.extraState);
             }
-        case 'supplyareaid':
-            {
-                if (renderContext.extraState === undefined) {
-                    renderContext.extraState = avoidPowerOf2(worldMap.supplyAreasCount);
-                }
-                const stateId = provinceToState[province.id];
-                const supplyAreaId = stateId !== undefined ? stateToSupplyArea[stateId] : undefined;
-                return supplyAreaId !== undefined ? valueAndMaxToColor(supplyAreaId < 0 ? 0 : supplyAreaId, renderContext.extraState) : defaultColor(province);
-            }
-        case 'supplyvalue':
+        case 'localsupplies':
             {
                 if (province.type === 'sea') {
                     return defaultColor(province);
                 }
 
                 if (renderContext.extraState === undefined) {
-                    let maxSupplyValue = 0;
-                    worldMap.forEachSupplyArea(supplyArea => (supplyArea.value > maxSupplyValue ? maxSupplyValue = supplyArea.value: 0, false));
-                    renderContext.extraState = maxSupplyValue;
+                    let maxLocalSupplies = 0;
+                    worldMap.forEachState(state => (state.localSupplies > maxLocalSupplies ? maxLocalSupplies = state.localSupplies: 0, false));
+                    renderContext.extraState = maxLocalSupplies;
                 }
 
                 const stateId = provinceToState[province.id];
-                const supplyAreaId = stateId ? stateToSupplyArea[stateId] : undefined;
-                const supplyArea = worldMap.getSupplyAreaById(supplyAreaId);
-                const value = (supplyArea?.value ?? 0) / (renderContext.extraState);
+                const state = worldMap.getStateById(stateId);
+                const maxLocalSupplies = renderContext.extraState;
+                const value = maxLocalSupplies > 0 ? (state?.localSupplies ?? 0) / maxLocalSupplies : 0;
                 return valueToColorGYR(value);
             }
         default:
@@ -1204,6 +1171,54 @@ function avoidPowerOf2(value: number): number {
 function isCriticalPoint(path: Point[], index: number): boolean {
     return index === 0 || index === path.length - 1 ||
         (distanceHamming(path[index], path[index - 1]) > 2 && distanceHamming(path[index], path[index + 1]) > 2);
+}
+
+function formatTooltipLine(localizationKey: string, fallback: string, value: string | undefined): string {
+    return value ? `${feLocalize(localizationKey, fallback)}=${value}` : '';
+}
+
+function formatNumberMap(values: Record<string, number | undefined> | undefined): string | undefined {
+    if (!values) {
+        return undefined;
+    }
+
+    const entries = Object.entries(values).filter(([, value]) => value !== undefined);
+    return entries.length > 0 ? entries.map(([key, value]) => `${key}:${value}`).join(', ') : undefined;
+}
+
+function formatProvinceBuildingsSummary(state: State): string | undefined {
+    const entries = Object.entries(state.provinceBuildings)
+        .map(([province, buildings]) => {
+            const summary = formatNumberMap(buildings);
+            return summary ? `${province}(${summary})` : undefined;
+        })
+        .filter((v): v is string => !!v);
+    return entries.length > 0 ? entries.slice(0, 8).join(', ') + (entries.length > 8 ? `, +${entries.length - 8}` : '') : undefined;
+}
+
+function formatDatedHistorySummary(state: State): string | undefined {
+    if (state.datedHistory.length === 0) {
+        return undefined;
+    }
+
+    const firstDates = state.datedHistory.slice(0, 5).map(h => h.date).join(', ');
+    return `${state.datedHistory.length} (${firstDates}${state.datedHistory.length > 5 ? ', ...' : ''})`;
+}
+
+function formatWeatherSummary(strategicRegion: StrategicRegion): string | undefined {
+    if (strategicRegion.weatherPeriods.length === 0) {
+        return undefined;
+    }
+
+    const firstPeriods = strategicRegion.weatherPeriods.slice(0, 3).map(period => {
+        const between = period.between ? `${period.between[0]}-${period.between[1]}` : '?';
+        const weatherKeys = Object.entries(period.values)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => `${key}:${Array.isArray(value) ? value.join('-') : value}`)
+            .join(', ');
+        return `${between}${weatherKeys ? ` ${weatherKeys}` : ''}`;
+    }).join('; ');
+    return `${strategicRegion.weatherPeriods.length} (${firstPeriods}${strategicRegion.weatherPeriods.length > 3 ? '; ...' : ''})`;
 }
 
 function defaultColor(province: Province) {

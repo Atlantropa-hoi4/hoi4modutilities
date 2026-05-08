@@ -460,3 +460,24 @@ P1 fix note 2026-05-05:
 - [x] Reverify with TypeScript checks, targeted mocha, lint, build, and full unit tests.
 
 Review note: Resolved the P1 audit findings without broad feature redesign. The fixes add regression coverage for localisation per-file aggregation, `replace_path` descendant matching, and Focus Tree partial selection preservation; broader webview/UI race behavior was verified with compile/build/unit coverage rather than a VS Code UI smoke run.
+
+Memory reduction 2026-05-08:
+- [x] Identify world map and eager preview index prewarm as the main memory pressure points.
+- [x] Use typed arrays for province pixel/visited maps and release transient world-map loader caches after building the final payload.
+- [x] Delay preview index prewarm and avoid eager localisation index construction at startup.
+- [x] Reverify with TypeScript checks, lint, and diff review.
+
+Preview Map HOI4 1.18 syntax 2026-05-08:
+- [x] Parse modern state `local_supplies`, `buildings_max_level_factor`, state/province buildings, demilitarized flags, controller, and dated history blocks.
+- [x] Parse strategic region `weather`, `static_modifiers`, and preserve `naval_terrain`.
+- [x] Replace the old Supply Area UI/config path with modern railways, supply nodes, local supplies, and building-derived supply node display.
+- [x] Add focused parser regression coverage and refresh Preview Map strings/docs.
+
+Review note: Preview Map now targets the local HOI4 Case Green 1.18.1 syntax for state and strategic-region data while leaving date selection out of the UI. The old `hoi4ModUtilities.enableSupplyArea` setting and Supply Area view/color controls were removed; `Show Supply` now renders railways, `map/supply_nodes.txt`, and province `supply_node` buildings.
+
+Preview Map province source navigation 2026-05-08:
+- [x] Store token ranges for each province id listed in a parsed state `provinces` block.
+- [x] Let Province view double-click open the assigned state file at the matching province token, with state-block fallback when the token is unavailable.
+- [x] Reverify with TypeScript checks, focused unit coverage, build, and diff whitespace checks.
+
+Review note: Province double-click navigation is scoped to Preview Map webview behavior and reuses the existing `openfile` host path; the toolbar Open button behavior remains unchanged.

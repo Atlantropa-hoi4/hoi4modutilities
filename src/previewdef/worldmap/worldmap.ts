@@ -12,7 +12,6 @@ import { getFilePathFromMod, getHoiOpenedFileOriginalUri, readFileFromModOrHOI4 
 import { WorldMapLoader } from './loader/worldmaploader';
 import { LoaderSession } from '../../util/loader/loader';
 import { TelemetryMessage, sendByMessage } from '../../util/telemetry';
-import { getConfiguration } from '../../util/vsccommon';
 import { areEqualWithinBudget, createWorldMapComparisonBudget, WorldMapComparisonBudget } from './worldmapdiff';
 import { measureAsync, recordPerf } from '../../util/perf';
 
@@ -56,6 +55,9 @@ export class WorldMap {
         { trailing: true });
 
     public dispose() {
+        this.worldMapLoader.clearCache();
+        this.worldMapDependencies = undefined;
+        this.cachedWorldMap = undefined;
         this.panel = undefined;
     }
 
@@ -65,7 +67,6 @@ export class WorldMap {
             localizeText(worldmapview),
             [
                 { content: i18nTableAsScript() },
-                { content: 'window.__enableSupplyArea = ' + getConfiguration().enableSupplyArea + ';' },
                 'worldmap.js'
             ],
             ['common.css', 'codicon.css', { content: worldmapviewstyles }]
