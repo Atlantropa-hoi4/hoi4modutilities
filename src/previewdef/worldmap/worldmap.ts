@@ -22,12 +22,15 @@ export class WorldMap {
     private worldMapDependencies: string[] | undefined;
     private cachedWorldMap: WorldMapData | undefined;
     private loadGeneration = 0;
+    private progressLoadGeneration = 0;
+    private loaderProgressGenerations = new WeakMap<WorldMapLoader, number>();
+    private loadInProgress = false;
 
     private lastRequestedExportUri: vscode.Uri | undefined;
 
     constructor(panel: vscode.WebviewPanel) {
         this.panel = panel;
-        this.worldMapLoader = this.createWorldMapLoader(this.loadGeneration);
+        this.worldMapLoader = this.createWorldMapLoader();
     }
 
     public initialize(): void {
@@ -154,9 +157,10 @@ export class WorldMap {
         } as WorldMapMessage);
     }
 
-    private createWorldMapLoader(loadGeneration: number): WorldMapLoader {
+    private createWorldMapLoader(): WorldMapLoader {
         const loader = new WorldMapLoader();
         loader.onProgress(async progress => {
+            const loadGeneration = this.loaderProgressGenerations.get(loader) ?? 0;
             if (!this.isCurrentLoadGeneration(loadGeneration)) {
                 return;
             }
@@ -173,7 +177,14 @@ export class WorldMap {
 
     private async sendProvinceMapSummaryToWebview(force: boolean) {
         const loadGeneration = ++this.loadGeneration;
-        const worldMapLoader = this.createWorldMapLoader(loadGeneration);
+        this.progressLoadGeneration = loadGeneration;
+        const worldMapLoader = this.loadInProgress ? this.createWorldMapLoader() : this.worldMapLoader;
+        this.loaderProgressGenerations.set(worldMapLoader, loadGeneration);
+        if (force) {
+            worldMapLoader.clearCache();
+        }
+
+        this.loadInProgress = true;
         try {
             const oldCachedWorldMap = this.cachedWorldMap;
             const loaderSession = new LoaderSession(force, () => this.panel === undefined || !this.isCurrentLoadGeneration(loadGeneration));
@@ -217,6 +228,10 @@ export class WorldMap {
                 data: localize('worldmap.failedtoload', 'Failed to load world map: {0}.', forceError(e).toString()),
                 loadGeneration,
             } as WorldMapMessage);
+        } finally {
+            if (this.progressLoadGeneration === loadGeneration) {
+                this.loadInProgress = false;
+            }
         }
     }
 

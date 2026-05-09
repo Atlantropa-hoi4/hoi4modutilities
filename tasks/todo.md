@@ -481,3 +481,11 @@ Preview Map province source navigation 2026-05-08:
 - [x] Reverify with TypeScript checks, focused unit coverage, build, and diff whitespace checks.
 
 Review note: Province double-click navigation is scoped to Preview Map webview behavior and reuses the existing `openfile` host path; the toolbar Open button behavior remains unchanged.
+
+Preview Map loading performance 2026-05-09:
+- [x] Reuse World Map loader caches across normal reloads while preserving generation cancellation.
+- [x] Batch webview chunk application so full canvas redraws do not happen per chunk.
+- [x] Memoize webview lookup maps and optimize province edge concatenation.
+- [x] Reverify with focused tests, TypeScript checks, lint, build, and unit tests where feasible.
+
+Review note: Preview Map normal reloads now keep the existing `WorldMapLoader` cache path unless an overlapping load requires an isolated loader, webview chunk receipt no longer emits a full world map per chunk, common lookup maps are memoized per frontend map instance, and province edge concatenation uses endpoint indexes instead of repeated list scans. Reverified with `npm run compile-ts`, focused World Map mocha tests, `npm run lint`, `npm run build`, and `npm run test:unit`.

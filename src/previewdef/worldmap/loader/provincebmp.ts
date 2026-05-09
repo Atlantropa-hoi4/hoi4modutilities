@@ -271,9 +271,11 @@ function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number
     return edgePixels;
 }
 
-function concatEdges(edges: [Point, Point][]): Point[][] {
+export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
     const result: Point[][] = [];
     const accessedEdges = new Array<boolean>(edges.length).fill(false);
+    const edgesByStart = buildEdgesByEndpoint(edges, 0);
+    const edgesByEnd = buildEdgesByEndpoint(edges, 1);
     for (let i = 0; i < edges.length; i++) {
         if (accessedEdges[i]) {
             continue;
@@ -285,13 +287,13 @@ function concatEdges(edges: [Point, Point][]): Point[][] {
         let foundNew = true;
         while (foundNew) {
             foundNew = false;
-            const headTail = edges.findIndex((e, i) => !accessedEdges[i] && pointEqual(edge[0], e[1]));
+            const headTail = findUnaccessedEdge(edgesByEnd, edge[0], accessedEdges);
             if (headTail !== -1) {
                 accessedEdges[headTail] = foundNew = true;
                 edge.unshift(edges[headTail][0]);
             }
 
-            const tailHead = edges.findIndex((e, i) => !accessedEdges[i] && pointEqual(edge[edge.length - 1], e[0]));
+            const tailHead = findUnaccessedEdge(edgesByStart, edge[edge.length - 1], accessedEdges);
             if (tailHead !== -1) {
                 accessedEdges[tailHead] = foundNew = true;
                 edge.push(edges[tailHead][1]);
@@ -317,6 +319,30 @@ function concatEdges(edges: [Point, Point][]): Point[][] {
     }
 
     return result;
+}
+
+const concatEdges = concatEdgesForTest;
+
+function buildEdgesByEndpoint(edges: [Point, Point][], endpointIndex: 0 | 1): Record<string, number[]> {
+    const result: Record<string, number[]> = {};
+    edges.forEach((edge, index) => {
+        const key = pointKey(edge[endpointIndex]);
+        (result[key] ??= []).push(index);
+    });
+    return result;
+}
+
+function findUnaccessedEdge(edgesByEndpoint: Record<string, number[]>, point: Point, accessedEdges: boolean[]): number {
+    const candidates = edgesByEndpoint[pointKey(point)];
+    if (!candidates) {
+        return -1;
+    }
+
+    return candidates.find(index => !accessedEdges[index]) ?? -1;
+}
+
+function pointKey(point: Point): string {
+    return `${point.x},${point.y}`;
 }
 
 function validateProvince(colorByPosition: Uint32Array, width: number, height: number, file: string, warnings: WorldMapWarning[]) {
