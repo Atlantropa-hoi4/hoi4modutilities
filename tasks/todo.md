@@ -489,3 +489,8 @@ Preview Map loading performance 2026-05-09:
 - [x] Reverify with focused tests, TypeScript checks, lint, build, and unit tests where feasible.
 
 Review note: Preview Map normal reloads now keep the existing `WorldMapLoader` cache path unless an overlapping load requires an isolated loader, webview chunk receipt no longer emits a full world map per chunk, common lookup maps are memoized per frontend map instance, and province edge concatenation uses endpoint indexes instead of repeated list scans. Reverified with `npm run compile-ts`, focused World Map mocha tests, `npm run lint`, `npm run build`, and `npm run test:unit`.
+
+Focus Tree pdxscript lint refresh 2026-05-13:
+- [x] Align focus relation lint with current HOI4 national-focus semantics for external prerequisite and mutually exclusive references.
+- [x] Report invalid `focus_tree.shared_focus` references that no longer resolve to shared/joint focus definitions.
+- [x] Reverify with focused Focus Tree lint/schema tests plus TypeScript and lint checks.

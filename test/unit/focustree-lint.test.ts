@@ -75,23 +75,26 @@ describe('focus tree structural lint', () => {
         assert.ok(tree.focuses.CHILD.lintMessages?.some(message => message.includes('relative_position_id ROOT')));
     });
 
-    it('detects missing prerequisite and mutually exclusive targets', () => {
+    it('allows external prerequisite and mutually exclusive focus references without missing-target warnings', () => {
         const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(parseHoi4File(`
             focus_tree = {
                 id = test_tree
                 focus = {
-                    id = BROKEN
+                    id = EXTERNAL_LINKS
                     x = 0
                     y = 0
-                    prerequisite = { focus = MISSING_PARENT }
-                    mutually_exclusive = { focus = MISSING_EXCLUSIVE }
+                    prerequisite = { focus = OTHER_TREE_PARENT }
+                    mutually_exclusive = { focus = OTHER_TREE_EXCLUSIVE }
                 }
             }
         `), [], 'common/national_focus/test.txt');
 
-        assert.ok(tree.warnings.some((entry: any) => entry.code === 'missing-prerequisite-target'));
-        assert.ok(tree.warnings.some((entry: any) => entry.code === 'missing-exclusive-target'));
+        assert.ok(!tree.warnings.some((entry: any) =>
+            entry.code === 'missing-prerequisite-target' || entry.code === 'missing-exclusive-target'));
+        assert.ok(tree.warnings.some((entry: any) =>
+            entry.code === 'focus-unreachable-candidate'
+            && entry.severity === 'info'));
     });
 
     it('marks prerequisite cycles without roots as candidate unreachable info', () => {
@@ -157,7 +160,7 @@ describe('focus tree structural lint', () => {
                 focus = {
                     x = 0
                     y = 0
-                    mutually_exclusive = { focus = MISSING_EXCLUSIVE }
+                    relative_position_id = STABLE_FOCUS
                 }
                 focus = {
                     id = STABLE_FOCUS
@@ -169,7 +172,7 @@ describe('focus tree structural lint', () => {
 
         assert.ok(tree.warnings.length >= 2);
         assert.strictEqual(tree.warnings[0].kind, 'lint');
-        assert.strictEqual(tree.warnings[0].code, 'missing-exclusive-target');
+        assert.strictEqual(tree.warnings[0].code, 'relative-position-prerequisite-mismatch');
         assert.strictEqual(tree.warnings.some((entry: any) => entry.code === 'focus-missing-id'), true);
     });
 });

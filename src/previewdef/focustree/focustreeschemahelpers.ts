@@ -297,6 +297,17 @@ function addSharedFocus(
         (sft.kind === 'shared' || sft.kind === 'joint')
         && sharedFocusId in sft.focuses);
     if (!sharedFocusTree) {
+        const regularFocusTree = sharedFocusTrees.find(sft =>
+            sft.kind === 'focus'
+            && sharedFocusId in sft.focuses);
+        warnings.push(createParseWarning({
+            code: regularFocusTree ? 'shared-focus-target-not-shared' : 'shared-focus-target-missing',
+            text: regularFocusTree
+                ? localize('TODO', 'Shared focus reference {0} resolves to a regular focus tree focus, not a shared or joint focus.', sharedFocusId)
+                : localize('TODO', 'Shared focus reference {0} does not resolve to a shared or joint focus.', sharedFocusId),
+            source: sharedFocusId,
+            relatedFocusIds: [sharedFocusId],
+        }));
         return;
     }
 

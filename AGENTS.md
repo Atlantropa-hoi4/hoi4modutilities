@@ -61,19 +61,35 @@ Use the narrowest meaningful verification first, then broaden when risk warrants
 
 ## Standard Commands
 
+Recommended local environment:
+
+- Node.js 20 LTS
+- npm 10+
+- Windows when matching the packaged release workflow matters
+
 - Install dependencies: `npm ci`
 - Type-check: `npm run compile-ts`
+- Extension-host type-check only: `npm run check-types:extension`
+- Webview type-check only: `npm run check-types:webview`
 - Build: `npm run build`
+- Development build: `npm run build:dev`
+- Watch extension-host type-check, webview type-check, and bundles together: `npm run watch`
+- Compile tests to `out`: `npm run compile-tests`
 - Lint: `npm run lint`
 - Unit tests: `npm run test:unit`
 - Full tests: `npm run test`
 - VS Code integration/UI tests: `npm run test-ui`
 - Package VSIX: `npm run package`
 - Full verification: `npm run verify`
+- Clean generated build/test output: `npm run clean`
+- Clean only `dist` and `static`: `npm run clean:build`
+- Clean only `out`: `npm run clean:out`
 
 ## Command Selection
 
 - TypeScript-only changes: run `npm run compile-ts`; add `npm run lint` when style or static checks may be affected.
+- While iterating locally, prefer `npm run watch`; the default VS Code build task runs `npm run build:dev`.
+- For targeted test debugging, `npm run compile-tests` is the narrow compile step before running emitted tests from `out/test`.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
 - Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run test-ui` when feasible.
 - Packaging, contribution, or metadata changes: run `npm run build` and consider `npm run package`.

@@ -169,6 +169,33 @@ describe('focus tree schema fixtures', () => {
         assert.ok(focusTree);
         assert.strictEqual(focusTree?.focuses.REGULAR_EXTERNAL, undefined);
         assert.strictEqual(focusTree?.focuses.LOCAL_ONLY.isInCurrentFile, true);
+        assert.ok(focusTree?.warnings.some((entry: any) =>
+            entry.code === 'shared-focus-target-not-shared'
+            && entry.source === 'REGULAR_EXTERNAL'));
+    });
+
+    it('reports focus_tree shared_focus references that cannot be resolved', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = main_tree
+                    shared_focus = MISSING_SHARED
+                    focus = {
+                        id = LOCAL_ONLY
+                        x = 1
+                        y = 1
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/main.txt',
+        );
+
+        assert.ok(tree);
+        assert.ok(tree.warnings.some((entry: any) =>
+            entry.code === 'shared-focus-target-missing'
+            && entry.source === 'MISSING_SHARED'));
     });
 
     it('captures editable continuous focus position metadata for local focus trees', () => {

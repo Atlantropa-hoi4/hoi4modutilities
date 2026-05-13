@@ -15,37 +15,9 @@ export interface FocusLintResult {
 export function collectFocusLint(focuses: Record<string, Focus>, currentFilePath?: string): FocusLintResult {
     const warnings: FocusWarning[] = [];
     const focusList = Object.values(focuses);
-    const missingPrerequisiteKeys = new Set<string>();
-    const missingExclusiveKeys = new Set<string>();
     const asymmetricExclusivePairs = new Set<string>();
 
     for (const focus of focusList) {
-        for (const group of focus.prerequisite) {
-            for (const targetId of group) {
-                if (focuses[targetId]) {
-                    continue;
-                }
-
-                const key = `${focus.id}::${targetId}`;
-                if (missingPrerequisiteKeys.has(key)) {
-                    continue;
-                }
-                missingPrerequisiteKeys.add(key);
-                warnings.push(createLintWarning({
-                    code: 'missing-prerequisite-target',
-                    source: focus.id,
-                    text: localize(
-                        'TODO',
-                        'Focus {0} references missing prerequisite target {1}.',
-                        focus.id,
-                        targetId,
-                    ),
-                    relatedFocusIds: [focus.id],
-                    navigations: buildFocusNavigations([focus]),
-                }));
-            }
-        }
-
         for (const targetId of focus.exclusive) {
             if (focuses[targetId]) {
                 const pairKey = [focus.id, targetId].sort().join('::');
@@ -66,24 +38,6 @@ export function collectFocusLint(focuses: Record<string, Focus>, currentFilePath
                 }
                 continue;
             }
-
-            const key = `${focus.id}::${targetId}`;
-            if (missingExclusiveKeys.has(key)) {
-                continue;
-            }
-            missingExclusiveKeys.add(key);
-            warnings.push(createLintWarning({
-                code: 'missing-exclusive-target',
-                source: focus.id,
-                text: localize(
-                    'TODO',
-                    'Focus {0} references missing mutually exclusive target {1}.',
-                    focus.id,
-                    targetId,
-                ),
-                relatedFocusIds: [focus.id],
-                navigations: buildFocusNavigations([focus]),
-            }));
         }
 
         if (focus.relativePositionId && focuses[focus.relativePositionId]) {
