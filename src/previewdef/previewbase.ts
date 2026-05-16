@@ -92,6 +92,13 @@ export abstract class PreviewBase {
         return 250;
     }
 
+    public getDependencyChangeDebounceMs(
+        _uri: vscode.Uri,
+        _changeKind: 'change' | 'create' | 'delete',
+    ): number {
+        return 1000;
+    }
+
     public getDebugState(): unknown {
         return undefined;
     }

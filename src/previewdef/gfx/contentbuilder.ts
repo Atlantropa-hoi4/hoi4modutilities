@@ -1,26 +1,29 @@
 import * as vscode from 'vscode';
-import { parseHoi4File } from '../../hoiformat/hoiparser';
-import { getSpriteTypes } from '../../hoiformat/spritetype';
 import { getImageByPath } from '../../util/image/imagecache';
 import { localize } from '../../util/i18n';
-import { SpriteType } from '../../hoiformat/spritetype';
-import { html, htmlEscape } from '../../util/html';
+import { html, htmlAttributeEscape, htmlEscape, htmlTextEscape } from '../../util/html';
 import { StyleTable } from '../../util/styletable';
 import { forceError } from '../../util/common';
+import { extractUiShaderSpriteBindings } from '../uishader/gfxbinding';
+import { buildUiShaderPreviewModel } from '../uishader/model';
+import { UiShaderPreviewModel, UiShaderSpriteBinding } from '../uishader/types';
 
 export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
-        const spriteTypes = getSpriteTypes(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', uri.toString())));
+        const spriteTypes = extractUiShaderSpriteBindings(fileContent, localize('infile', 'In file {0}:\n', uri.toString()));
+        const shaderPreviewModels = await buildShaderPreviewModels(spriteTypes, uri.toString());
         const styleTable = new StyleTable();
-        const baseContent = await renderSpriteTypes(spriteTypes, styleTable);
+        const baseContent = await renderSpriteTypes(spriteTypes, shaderPreviewModels, styleTable);
         return html(
             webview,
             baseContent, 
             [
                 setPreviewFileUriScript,
+                { content: `window.uiShaderPreviewModels = ${safeJson(shaderPreviewModels)};` },
                 'gfx.js',
+                'uishaderpreview.js',
             ],
             [
                 'common.css',
@@ -34,8 +37,21 @@ export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webvie
     }
 }
 
-async function renderSpriteTypes(spriteTypes: SpriteType[], styleTable: StyleTable): Promise<string> {
-    const imageList = (await Promise.all(spriteTypes.map(st => renderSpriteType(st, styleTable)))).join('');
+async function buildShaderPreviewModels(spriteTypes: UiShaderSpriteBinding[], gfxFile: string): Promise<Record<string, UiShaderPreviewModel>> {
+    const entries = await Promise.all(spriteTypes.map(async spriteType => {
+        const model = await buildUiShaderPreviewModel(spriteType, gfxFile);
+        return model ? [spriteType.name, model] as const : undefined;
+    }));
+    return Object.fromEntries(entries.filter((entry): entry is readonly [string, UiShaderPreviewModel] => !!entry));
+}
+
+async function renderSpriteTypes(
+    spriteTypes: UiShaderSpriteBinding[],
+    shaderPreviewModels: Record<string, UiShaderPreviewModel>,
+    styleTable: StyleTable,
+): Promise<string> {
+    const imageList = (await Promise.all(spriteTypes.map(st => renderSpriteType(st, shaderPreviewModels[st.name], styleTable)))).join('');
+    const shaderPanel = renderShaderVisualPanel(shaderPreviewModels, styleTable);
     const filter = `<div
     class="${styleTable.style('filterBar', () => `
         position: fixed;
@@ -56,15 +72,22 @@ async function renderSpriteTypes(spriteTypes: SpriteType[], styleTable: StyleTab
     </div>`;
 
     return `${filter}
-    <div class="${styleTable.style('imageList', () => `margin-top: 40px`)}">
+    ${shaderPanel}
+    <div class="${styleTable.style('imageList', () => `margin-top: ${Object.keys(shaderPreviewModels).length > 0 ? 12 : 40}px`)}">
         ${imageList}
     </div>`;
 }
 
-async function renderSpriteType(spriteType: SpriteType, styleTable: StyleTable): Promise<string> {
+async function renderSpriteType(
+    spriteType: UiShaderSpriteBinding,
+    shaderPreviewModel: UiShaderPreviewModel | undefined,
+    styleTable: StyleTable,
+): Promise<string> {
     const image = await getImageByPath(spriteType.texturefile);
+    const shaderPreview = shaderPreviewModel ? renderShaderPreviewTrigger(spriteType, shaderPreviewModel, styleTable) : '';
+    const titleText = `${spriteType.name}${image ? ` (${image.width / spriteType.noOfFrames}x${image.height}x${spriteType.noOfFrames})` : ''}\n${image ? image.path : localize('gfx.imagenotfound', 'Image not found')}`;
     return `<div
-        id="${spriteType.name}"
+        id="${htmlAttributeEscape(spriteType.name)}"
         class="
             spriteTypePreview
             navigator
@@ -75,11 +98,9 @@ async function renderSpriteType(spriteType: SpriteType, styleTable: StyleTable):
                 cursor: pointer;
             `)}
         "
-        start="${spriteType.token?.start}"
-        end="${spriteType.token?.end}"
-        title="${spriteType.name}${image ? ` (${
-            image.width / spriteType.noofframes}x${image.height}x${spriteType.noofframes})` : ''
-            }\n${image ? image.path : localize('gfx.imagenotfound', 'Image not found')}">
+        start="${spriteType.tokenStart ?? ''}"
+        end="${spriteType.tokenEnd ?? ''}"
+        title="${htmlAttributeEscape(titleText)}">
         ${image ? `<img src="${image.uri}" />` :
             `<div 
             class="${styleTable.style('missingImageOuter', () => `
@@ -106,5 +127,64 @@ async function renderSpriteType(spriteType: SpriteType, styleTable: StyleTable):
         ">
             ${htmlEscape(spriteType.name)}
         </p>
+        ${shaderPreview}
     </div>`;
+}
+
+function renderShaderVisualPanel(
+    shaderPreviewModels: Record<string, UiShaderPreviewModel>,
+    styleTable: StyleTable,
+): string {
+    return `<section
+        id="uiShaderVisualPanel"
+        class="${styleTable.style('uiShaderVisualPanel', () => `
+            margin: 48px 10px 10px;
+            padding: 10px;
+            border: 1px solid var(--vscode-panel-border);
+            background: var(--vscode-editor-background);
+        `)}"
+        data-model-count="${Object.keys(shaderPreviewModels).length}">
+        <div id="uiShaderVisualPanelMount">${localize('gfx.uishader.loading', 'Loading UI shader preview...')}</div>
+    </section>`;
+}
+
+function renderShaderPreviewTrigger(
+    spriteType: UiShaderSpriteBinding,
+    model: UiShaderPreviewModel,
+    styleTable: StyleTable,
+): string {
+    const warnings = model.warnings.length > 0
+        ? `<span class="${styleTable.style('uiShaderPreviewWarningBadge', () => `
+            color: var(--vscode-editorWarning-foreground);
+            margin-left: 4px;
+        `)}" title="${htmlAttributeEscape(model.warnings.map(warning => warning.message).join('\n'))}">!</span>`
+        : '';
+    return `<button
+        type="button"
+        class="uiShaderPreviewTrigger ${styleTable.style('uiShaderPreviewTrigger', () => `
+            display: block;
+            margin: 6px auto 0;
+            max-width: 240px;
+            border: 1px solid var(--vscode-button-border, transparent);
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            cursor: pointer;
+        `)}"
+        data-sprite-name="${htmlAttributeEscape(spriteType.name)}"
+        data-status="${htmlAttributeEscape(model.status)}"
+        data-template-id="${htmlAttributeEscape(model.templateId)}"
+        title="${htmlAttributeEscape(model.supportReason)}">
+        <span class="${styleTable.style('uiShaderPreviewTriggerLabel', () => `
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: 6px auto 0;
+            max-width: 220px;
+            font-size: 11px;
+        `)}">Shader Preview: ${htmlTextEscape(model.templateId)}${warnings}</span>
+    </button>`;
+}
+
+function safeJson(value: unknown): string {
+    return JSON.stringify(value).replace(/</g, '\\u003c');
 }

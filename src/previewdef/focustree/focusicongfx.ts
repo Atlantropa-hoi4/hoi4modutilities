@@ -47,9 +47,10 @@ export async function resolveFocusIconGfxAssets(
 ): Promise<FocusIconAssetResolution> {
     const uniqueIconNames = uniq(iconNames.filter(isResolvableFocusIconName));
     const resolvedFiles = new Set<string>();
-    const unresolvedNames = new Set<string>();
+    const unresolvedNames = new Set<string>(uniqueIconNames);
     const resolvedIconNamesByFile = new Map<string, Set<string>>();
     const gfxFileByIconName: Record<string, string> = {};
+    const scannedGfxFiles = new Set<string>();
 
     const addResolvedIcon = (gfxFile: string, iconName: string) => {
         resolvedFiles.add(gfxFile);
@@ -59,14 +60,51 @@ export async function resolveFocusIconGfxAssets(
         resolvedIconNamesByFile.set(gfxFile, iconNamesForFile);
     };
 
-    for (const iconName of uniqueIconNames) {
+    const scanGfxFile = async (gfxFile: string): Promise<void> => {
+        resolver.throwIfCancelled?.();
+        if (unresolvedNames.size === 0) {
+            return;
+        }
+
+        const normalizedGfxFile = normalizeGfxFileKey(gfxFile);
+        if (scannedGfxFiles.has(normalizedGfxFile)) {
+            return;
+        }
+
+        scannedGfxFiles.add(normalizedGfxFile);
+        let spriteNames: Set<string>;
+        try {
+            spriteNames = new Set(await resolver.readSpriteNames(gfxFile));
+            resolver.throwIfCancelled?.();
+        } catch {
+            return;
+        }
+
+        let matched = false;
+        for (const unresolvedName of Array.from(unresolvedNames)) {
+            if (spriteNames.has(unresolvedName)) {
+                unresolvedNames.delete(unresolvedName);
+                addResolvedIcon(gfxFile, unresolvedName);
+                matched = true;
+            }
+        }
+
+        if (matched) {
+            resolvedFiles.add(gfxFile);
+        }
+    };
+
+    for (const gfxFile of resolver.priorityGfxFiles ?? []) {
+        await scanGfxFile(gfxFile);
+    }
+
+    for (const iconName of Array.from(unresolvedNames)) {
         resolver.throwIfCancelled?.();
         const indexedFile = await resolver.resolveIndexedFile(iconName);
         resolver.throwIfCancelled?.();
         if (indexedFile) {
+            unresolvedNames.delete(iconName);
             addResolvedIcon(indexedFile, iconName);
-        } else {
-            unresolvedNames.add(iconName);
         }
     }
 
@@ -88,30 +126,11 @@ export async function resolveFocusIconGfxAssets(
         resolver.fallbackScanLimit,
     );
     for (const gfxFile of fallbackGfxFiles) {
-        resolver.throwIfCancelled?.();
         if (unresolvedNames.size === 0) {
             break;
         }
 
-        let spriteNames: Set<string>;
-        try {
-            spriteNames = new Set(await resolver.readSpriteNames(gfxFile));
-            resolver.throwIfCancelled?.();
-        } catch {
-            continue;
-        }
-        let matched = false;
-        for (const unresolvedName of Array.from(unresolvedNames)) {
-            if (spriteNames.has(unresolvedName)) {
-                unresolvedNames.delete(unresolvedName);
-                addResolvedIcon(gfxFile, unresolvedName);
-                matched = true;
-            }
-        }
-
-        if (matched) {
-            resolvedFiles.add(gfxFile);
-        }
+        await scanGfxFile(gfxFile);
     }
 
     const textureResolution = await resolveTextureFiles(resolvedIconNamesByFile, resolver);

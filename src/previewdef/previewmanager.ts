@@ -19,7 +19,7 @@ import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor'
 
 type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
 type PreviewExternalFileChangeKind = 'change' | 'create' | 'delete';
-const previewDependencyWatcherGlob = '**/*.{txt,gfx,gui,yml,dds,tga,png,mod}';
+const previewDependencyWatcherGlob = '**/*.{txt,gfx,gui,yml,dds,tga,png,shader,fxh,lua,mod}';
 
 interface PreviewManagerOptions {
     previewProviders: PreviewDescriptor[];
@@ -248,7 +248,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
                 continue;
             }
 
-            this.dependencyUpdateScheduler.schedule(previewUri, 1000, async () => {
+            this.dependencyUpdateScheduler.schedule(previewUri, otherPreview.getDependencyChangeDebounceMs(uri, changeKind), async () => {
                 const otherDocument = getDocumentByUri(otherPreview.uri);
                 if (otherDocument && !otherPreview.isDisposed) {
                     await measureAsync('preview.refresh', { source: 'dependency', preview: otherPreview.constructor.name }, () =>

@@ -5,10 +5,11 @@ import { getSpriteTypes } from '../hoiformat/spritetype';
 import { debounceByInput, forceError, mapWithConcurrency, UserError } from './common';
 import { error } from './debug';
 import { isGfxIndexEnabled } from './featureflags';
-import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
+import { getSelectedModRootFolders, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { localize } from './i18n';
 import { uniq } from 'lodash';
 import { IndexService } from '../services/indexService';
+import { ConfigurationKey } from '../constants';
 
 interface GfxIndexItem {
     file: string;
@@ -42,12 +43,31 @@ const gfxIndexService = new IndexService<GfxIndexItem>({
 export function registerGfxIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
     if (isGfxIndexEnabled()) {
+        let modRootWatchers: vscode.Disposable[] = [];
+        const disposeModRootWatchers = () => {
+            modRootWatchers.forEach(watcher => watcher.dispose());
+            modRootWatchers = [];
+        };
+        const rebuildModRootWatchers = async () => {
+            disposeModRootWatchers();
+            const roots = await getSelectedModRootFolders();
+            modRootWatchers = roots.map(root => createGfxIndexFileWatcher(new vscode.RelativePattern(root, '**/*.gfx')));
+        };
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
         disposables.push(vscode.workspace.onDidCloseTextDocument(onCloseTextDocument));
         disposables.push(vscode.workspace.onDidCreateFiles(onCreateFiles));
         disposables.push(vscode.workspace.onDidDeleteFiles(onDeleteFiles));
         disposables.push(vscode.workspace.onDidRenameFiles(onRenameFiles));
+        disposables.push(createGfxIndexFileWatcher('**/*.gfx'));
+        disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void rebuildModRootWatchers(); }));
+        disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
+                void rebuildModRootWatchers();
+            }
+        }));
+        disposables.push(new vscode.Disposable(disposeModRootWatchers));
+        void rebuildModRootWatchers();
     }
 
     return vscode.Disposable.from(...disposables);
@@ -157,7 +177,7 @@ const onChangeTextDocumentImpl = debounceByInput(
         addWorkspaceGfxIndex(file);
     },
     file => file.toString(),
-    1000,
+    50,
     { trailing: true }
 );
 
@@ -200,6 +220,41 @@ function onRenameFiles(e: vscode.FileRenameEvent) {
     }
     onDeleteFiles({ files: e.files.map(f => f.oldUri) });
     onCreateFiles({ files: e.files.map(f => f.newUri) });
+}
+
+function createGfxIndexFileWatcher(pattern: vscode.GlobPattern): vscode.Disposable {
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    return vscode.Disposable.from(
+        watcher,
+        watcher.onDidChange(onChangeGfxFile),
+        watcher.onDidCreate(onCreateGfxFile),
+        watcher.onDidDelete(onDeleteGfxFile),
+    );
+}
+
+function onChangeGfxFile(file: vscode.Uri) {
+    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+        return;
+    }
+
+    removeWorkspaceGfxIndex(file);
+    addWorkspaceGfxIndex(file);
+}
+
+function onCreateGfxFile(file: vscode.Uri) {
+    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+        return;
+    }
+
+    addWorkspaceGfxIndex(file);
+}
+
+function onDeleteGfxFile(file: vscode.Uri) {
+    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+        return;
+    }
+
+    removeWorkspaceGfxIndex(file);
 }
 
 function removeWorkspaceGfxIndex(file: vscode.Uri) {

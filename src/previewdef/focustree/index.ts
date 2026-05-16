@@ -97,6 +97,10 @@ export class FocusTreePreview extends PreviewBase {
         return 75;
     }
 
+    public override getDependencyChangeDebounceMs(): number {
+        return 150;
+    }
+
     public override async onDocumentChange(
         document: vscode.TextDocument,
         options?: { source?: 'document' | 'dependency' },

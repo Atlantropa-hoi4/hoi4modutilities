@@ -1,3 +1,45 @@
+HOI4 UI Shader Preview visibility fix 2026-05-14:
+- [x] Keep the `.gfx` UI Shader Preview panel visible even when no shader preview models are produced.
+- [x] Show a clear no-model message from the webview for `.gfx` files whose sprites/progress bars do not have `effectFile`.
+- [x] Add unit coverage for the no-model `.gfx` preview shell so the panel does not silently disappear again.
+
+Review note: the visual panel no longer depends on having at least one resolved shader model, so plain sprite-only `.gfx` files now show a diagnostic shell instead of making the feature look absent. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted `uishader-preview` mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build:dev`, and `npm run test-ui`.
+
+HOI4 UI Shader Preview visual panel 2026-05-14:
+- [x] Replace per-card collapsed shader details with a selected-sprite visual panel inside the `.gfx` preview.
+- [x] Add sprite-level `Shader Preview` triggers that do not steal the existing source navigation click path.
+- [x] Add optional visual hints for preview kind, preferred size, texture roles, and progress direction.
+- [x] Prioritize renderable progress-style models for initial panel selection.
+- [x] Render progress, radial progress, rotating notch, and fallback texture previews through one selected WebGL2 panel with play, reset, progress, speed, layer, and effect controls.
+
+Review note: UI Shader Preview now behaves like a visual inspection panel rather than card-local metadata. The host emits visual hints from `.gfx` progress fields and shader classification, while the webview selects the best initial sprite, reuses one preview canvas, animates progress values, and keeps shader metadata under collapsed `Shader details`. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted `uishader-preview` mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build:dev`, and `npm run test-ui`.
+
+HOI4 UI Shader Preview progressbartype 2026-05-14:
+- [x] Include `.gfx` `progressbartype` blocks in shader preview binding extraction.
+- [x] Preserve progress bar fields such as `textureFile1`, `textureFile2`, `color`, `size`, `horizontal`, and `steps` in the preview model.
+- [x] Bind `TextureOne` to `textureFile1` and `TextureTwo` to `textureFile2` for progress-style shaders.
+- [x] Add fixture-backed coverage for progressbartype extraction and model texture binding.
+
+Review note: `progressbartype` now flows through the same UI Shader Preview path as sprite bindings, using `textureFile1` as the display/base texture while keeping secondary texture and progress metadata available to the shader model. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted `uishader-preview` mocha coverage, `npm run lint`, and full `npm run test:unit`.
+
+HOI4 UI Shader Preview model v1 2026-05-14:
+- [x] Stabilize preview model v1 with `schemaVersion`, structured warnings, `supportReason`, `dependencies`, and `templateId`.
+- [x] Strengthen shader parsing/classification for repeated blocks, raw code metadata, feature flags, include source tracking, and map-shader unsupported status.
+- [x] Expand sampler binding and preview templates for buttonstate, sprite animation, progress/radial, rotating notch, and ARG senate-style approximations.
+- [x] Convert the `.gfx` preview shader section to collapsed lazy initialization so WebGL work starts only when opened.
+- [x] Add fixture-backed unit coverage for extractor/parser/classifier/model/content shell behavior and reverify build plus UI smoke coverage.
+
+Review note: model v1 is now explicit and warning-rich: host-side JSON includes dependencies for `.gfx`, resolved shader/include files, texture assets, and failed shader candidates, while renderer support is classified by named templates. The webview initializes shader canvases lazily from collapsed details, exposes template-specific controls, and falls back to metadata/warnings for unsupported or incomplete inputs. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted `uishader-preview` mocha coverage, `npm run build:dev`, `npm run lint`, full `npm run test:unit`, and `npm run test-ui`.
+
+HOI4 UI Shader Preview MVP 2026-05-14:
+- [x] Add shader-preview sprite binding extraction for `.gfx` `effectFile` and animation fields.
+- [x] Add lightweight `.shader`/`.fxh` scanner for includes, samplers, constants, main-code entrypoints, and effects.
+- [x] Build preview model JSON with texture/include warnings and unsupported map shader classification.
+- [x] Attach a WebGL2 quad preview and metadata fallback to existing `.gfx` preview cards.
+- [x] Reverify with focused unit tests, TypeScript checks, lint, and build output review.
+
+Review note: added the first UI Shader Preview slice behind the existing `.gfx` preview. The host side now extracts `effectFile` and animation fields, resolves `.lua` effect names to `.shader` candidates, scans shader/include metadata, classifies unsupported map shaders, and emits warning-rich preview JSON. The webview side adds an approximate WebGL2 quad renderer with metadata fallback. Reverified with `npm run compile-ts`, `npm run compile-tests`, targeted `uishader-preview` mocha coverage, `npm run build:dev`, `npm run lint`, and full `npm run test:unit`.
+
 - [x] Broaden shine-button detection from exact `goals.gfx` to goals-like `.gfx` files.
 - [x] Update fallback source discovery to find goals-like source files, not only `interface/goals.gfx`.
 - [x] Reverify with a non-exact goals fixture and refresh review notes.

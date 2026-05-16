@@ -79,6 +79,7 @@ const webviewEntries = [
     { in: 'webviewsrc/techtree.ts', out: 'techtree' },
     { in: 'webviewsrc/worldmap/index.ts', out: 'worldmap' },
     { in: 'webviewsrc/gfx.ts', out: 'gfx' },
+    { in: 'webviewsrc/uishaderpreview.ts', out: 'uishaderpreview' },
     { in: 'webviewsrc/guipreview.ts', out: 'guipreview' },
     { in: 'webviewsrc/miopreview.ts', out: 'miopreview' },
     { in: 'webviewsrc/characterpreview.ts', out: 'characterpreview' },
