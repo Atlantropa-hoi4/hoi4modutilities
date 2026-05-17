@@ -18,7 +18,9 @@ These instructions apply to the whole repository unless a nested `AGENTS.md` pro
 Primary entry points:
 
 - `src/extension.ts`
+- `src/features/catalog.ts`
 - `src/ddsviewprovider.ts`
+- `scripts/build.mjs`
 - `webviewsrc/*.ts`
 - `package.json`
 
@@ -39,6 +41,7 @@ Treat these as requiring extra care and targeted verification:
 - Extension activation and deactivation behavior in `src/extension.ts`
 - Custom editor registration and lifecycle, especially `src/ddsviewprovider.ts`
 - Preview lifecycle, disposal, state restoration, webview CSP, and webview messaging
+- `.gfx` UI shader preview model/rendering across `src/previewdef/uishader/*`, `src/previewdef/gfx/contentbuilder.ts`, and `webviewsrc/uishaderpreview.ts`
 - Parser, formatter, validation, and indexing services
 - Localisation files and key usage across `i18n` and `l10n`
 - `package.json` contributions, activation events, commands, views, custom editors, scripts, and packaging metadata
@@ -90,10 +93,12 @@ Recommended local environment:
 - TypeScript-only changes: run `npm run compile-ts`; add `npm run lint` when style or static checks may be affected.
 - While iterating locally, prefer `npm run watch`; the default VS Code build task runs `npm run build:dev`.
 - For targeted test debugging, `npm run compile-tests` is the narrow compile step before running emitted tests from `out/test`.
+- Run focused unit tests after `npm run compile-tests` with `npx mocha out/test/unit/<test-file>.test.js`; use multiple emitted test files when the behavior crosses fixtures or preview boundaries.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
-- Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run test-ui` when feasible.
+- Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run build:dev` and `npm run test-ui` when feasible. Reload or restart the Extension Development Host after changing bundled webview/static preview assets before judging live behavior.
 - Packaging, contribution, or metadata changes: run `npm run build` and consider `npm run package`.
 - Broad or release-sensitive changes: run `npm run verify`.
+- Before reporting completion, prefer `git diff --check` after manual edits to catch whitespace issues.
 
 ## Task Tracking
 
