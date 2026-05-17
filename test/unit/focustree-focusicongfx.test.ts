@@ -281,4 +281,35 @@ describe('focus icon gfx resolver', () => {
         });
         assert.notStrictEqual(first.styleSignature, second.styleSignature);
     });
+
+    it('reads each texture expiry token once for shared icon textures', async () => {
+        const expiryTokenReads: string[] = [];
+        const result = await resolveFocusIconGfxAssets(
+            ['GFX_alpha', 'GFX_beta', 'GFX_gamma'],
+            {
+                resolveIndexedFile: async () => 'interface/icons.gfx',
+                listInterfaceGfxFiles: async () => [],
+                readSpriteNames: async () => [],
+                readSpriteTextureFiles: async () => ({
+                    GFX_alpha: 'gfx/interface/goals/shared.dds',
+                    GFX_beta: 'gfx\\interface\\goals\\shared.dds',
+                    GFX_gamma: 'gfx/interface/goals/other.dds',
+                }),
+                readTextureExpiryToken: async (textureFile) => {
+                    expiryTokenReads.push(textureFile);
+                    return `mtime:${textureFile}`;
+                },
+            },
+        );
+
+        assert.deepStrictEqual(expiryTokenReads.sort(), [
+            'gfx/interface/goals/other.dds',
+            'gfx/interface/goals/shared.dds',
+        ]);
+        assert.deepStrictEqual(result.textureExpiryTokenByIconName, {
+            GFX_alpha: 'mtime:gfx/interface/goals/shared.dds',
+            GFX_beta: 'mtime:gfx/interface/goals/shared.dds',
+            GFX_gamma: 'mtime:gfx/interface/goals/other.dds',
+        });
+    });
 });

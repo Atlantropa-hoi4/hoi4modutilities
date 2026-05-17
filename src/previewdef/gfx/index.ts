@@ -9,8 +9,10 @@ function canPreviewGfx(document: vscode.TextDocument) {
 }
 
 class GfxPreview extends PreviewBase {
-    protected getContent(document: vscode.TextDocument): Promise<string> {
-        return renderGfxFile(document.getText(), document.uri, this.panel.webview);
+    protected async getContent(document: vscode.TextDocument): Promise<string> {
+        const rendered = await renderGfxFile(document.getText(), document.uri, this.panel.webview);
+        this.updateDependencies(rendered.dependencies);
+        return rendered.html;
     }
 }
 

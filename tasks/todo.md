@@ -1,3 +1,10 @@
+GFX UI Shader Preview dependency refresh 2026-05-17:
+- [x] Surface UI shader preview model dependencies from `.gfx` HTML rendering.
+- [x] Register those dependencies through the existing preview dependency tracker.
+- [x] Add targeted coverage for `.gfx` shader dependency exposure.
+
+Review note: open `.gfx` previews now publish shader/include/texture dependencies discovered by UI Shader Preview models, so watched `.shader`, `.fxh`, `.lua`, and texture changes can flow through the existing PreviewManager dependency refresh path.
+
 HOI4 UI Shader Preview visibility fix 2026-05-14:
 - [x] Keep the `.gfx` UI Shader Preview panel visible even when no shader preview models are produced.
 - [x] Show a clear no-model message from the webview for `.gfx` files whose sprites/progress bars do not have `effectFile`.
