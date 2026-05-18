@@ -263,7 +263,7 @@ describe('preview manager', () => {
 
         try {
             await manager['showPreviewImpl'](dependentDocument.uri as any);
-            previews[0].emitDependencies(['gfx/interface/goals/icon.dds']);
+            previews[0].emitDependencies(['gfx\\interface\\goals\\icon.dds']);
 
             watchedAssetChanges.forEach(listener => listener(createUri('file:///workspace/gfx/interface/goals/icon.dds')));
             await Promise.resolve();
@@ -664,6 +664,10 @@ class FakePreview {
 
     public getDocumentChangeDebounceMs(): number {
         return this.documentChangeDebounceMs;
+    }
+
+    public getDependencyChangeDebounceMs(): number {
+        return 0;
     }
 
     public async onDocumentChange(document: FakeDocument, options?: { source?: string }): Promise<void> {

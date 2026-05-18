@@ -12,7 +12,7 @@ export class PreviewDependencyTracker {
     public add(preview: PreviewBase, dependencies: string[]): void {
         for (const dependency of dependencies) {
             this.subscriptions.push({
-                segments: dependency.split('/').filter(Boolean),
+                segments: dependency.replace(/\\+/g, '/').split('/').filter(Boolean),
                 preview,
             });
         }
