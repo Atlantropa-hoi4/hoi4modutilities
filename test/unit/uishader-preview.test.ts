@@ -417,13 +417,14 @@ Effect Up { PixelShader = "PixelShader" }`,
             asWebviewUri: () => 'static-resource',
         } as any);
 
-        assert.match(result, /window\.uiShaderPreviewModels/);
-        assert.match(result, /id="uiShaderVisualPanel"/);
-        assert.match(result, /id="uiShaderVisualPanelMount"/);
-        assert.match(result, /uiShaderPreviewTrigger/);
-        assert.match(result, /data-sprite-name="GFX_shader_shell"/);
-        assert.match(result, /Shader Preview: buttonstate/);
-        assert.match(result, /fixture warning/);
+        assert.match(result.html, /window\.uiShaderPreviewModels/);
+        assert.match(result.html, /id="uiShaderVisualPanel"/);
+        assert.match(result.html, /id="uiShaderVisualPanelMount"/);
+        assert.match(result.html, /uiShaderPreviewTrigger/);
+        assert.match(result.html, /data-sprite-name="GFX_shader_shell"/);
+        assert.match(result.html, /Shader Preview: buttonstate/);
+        assert.match(result.html, /fixture warning/);
+        assert.deepStrictEqual(result.dependencies, ['interface/shell.gfx', 'gfx/FX/shell.shader']);
     });
 
     it('renders the visual shader panel even when no shader models are available', async () => {
@@ -438,12 +439,13 @@ Effect Up { PixelShader = "PixelShader" }`,
             asWebviewUri: () => 'static-resource',
         } as any);
 
-        assert.match(result, /window\.uiShaderPreviewModels/);
-        assert.match(result, /id="uiShaderVisualPanel"/);
-        assert.match(result, /id="uiShaderVisualPanelMount"/);
-        assert.match(result, /data-model-count="0"/);
-        assert.match(result, /Loading UI shader preview/);
-        assert.doesNotMatch(result, /uiShaderPreviewTrigger/);
+        assert.match(result.html, /window\.uiShaderPreviewModels/);
+        assert.match(result.html, /id="uiShaderVisualPanel"/);
+        assert.match(result.html, /id="uiShaderVisualPanelMount"/);
+        assert.match(result.html, /data-model-count="0"/);
+        assert.match(result.html, /Loading UI shader preview/);
+        assert.doesNotMatch(result.html, /uiShaderPreviewTrigger/);
+        assert.deepStrictEqual(result.dependencies, []);
     });
 });
 

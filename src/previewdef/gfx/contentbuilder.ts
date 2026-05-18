@@ -8,7 +8,12 @@ import { extractUiShaderSpriteBindings } from '../uishader/gfxbinding';
 import { buildUiShaderPreviewModel } from '../uishader/model';
 import { UiShaderPreviewModel, UiShaderSpriteBinding } from '../uishader/types';
 
-export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
+export interface RenderedGfxFile {
+    html: string;
+    dependencies: string[];
+}
+
+export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webview: vscode.Webview): Promise<RenderedGfxFile> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
@@ -16,24 +21,30 @@ export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webvie
         const shaderPreviewModels = await buildShaderPreviewModels(spriteTypes, uri.toString());
         const styleTable = new StyleTable();
         const baseContent = await renderSpriteTypes(spriteTypes, shaderPreviewModels, styleTable);
-        return html(
-            webview,
-            baseContent, 
-            [
-                setPreviewFileUriScript,
-                { content: `window.uiShaderPreviewModels = ${safeJson(shaderPreviewModels)};` },
-                'gfx.js',
-                'uishaderpreview.js',
-            ],
-            [
-                'common.css',
-                styleTable,
-            ],
-        );
+        return {
+            html: html(
+                webview,
+                baseContent,
+                [
+                    setPreviewFileUriScript,
+                    { content: `window.uiShaderPreviewModels = ${safeJson(shaderPreviewModels)};` },
+                    'gfx.js',
+                    'uishaderpreview.js',
+                ],
+                [
+                    'common.css',
+                    styleTable,
+                ],
+            ),
+            dependencies: collectShaderPreviewDependencies(shaderPreviewModels),
+        };
 
     } catch (e) {
         const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
-        return html(webview, baseContent, [ setPreviewFileUriScript ], []);
+        return {
+            html: html(webview, baseContent, [ setPreviewFileUriScript ], []),
+            dependencies: [],
+        };
     }
 }
 
@@ -43,6 +54,10 @@ async function buildShaderPreviewModels(spriteTypes: UiShaderSpriteBinding[], gf
         return model ? [spriteType.name, model] as const : undefined;
     }));
     return Object.fromEntries(entries.filter((entry): entry is readonly [string, UiShaderPreviewModel] => !!entry));
+}
+
+function collectShaderPreviewDependencies(shaderPreviewModels: Record<string, UiShaderPreviewModel>): string[] {
+    return Array.from(new Set(Object.values(shaderPreviewModels).flatMap(model => model.dependencies)));
 }
 
 async function renderSpriteTypes(

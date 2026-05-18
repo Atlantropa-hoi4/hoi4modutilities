@@ -205,6 +205,7 @@ async function resolveTextureFiles(
     const textureFiles = new Set<string>();
     const textureFileByIconName: Record<string, string> = {};
     const textureExpiryTokenByIconName: Record<string, string> = {};
+    const textureExpiryTokenByFile = new Map<string, Promise<string>>();
     await Promise.all(Array.from(resolvedIconNamesByFile.entries()).map(async ([gfxFile, iconNames]) => {
         resolver.throwIfCancelled?.();
         let textureFilesByName: Record<string, string | undefined>;
@@ -224,7 +225,12 @@ async function resolveTextureFiles(
                 textureFileByIconName[iconName] = normalizedTextureFile;
                 if (resolver.readTextureExpiryToken) {
                     try {
-                        textureExpiryTokenByIconName[iconName] = await resolver.readTextureExpiryToken(normalizedTextureFile);
+                        let tokenPromise = textureExpiryTokenByFile.get(normalizedTextureFile);
+                        if (!tokenPromise) {
+                            tokenPromise = resolver.readTextureExpiryToken(normalizedTextureFile);
+                            textureExpiryTokenByFile.set(normalizedTextureFile, tokenPromise);
+                        }
+                        textureExpiryTokenByIconName[iconName] = await tokenPromise;
                         resolver.throwIfCancelled?.();
                     } catch {
                         textureExpiryTokenByIconName[iconName] = '';
