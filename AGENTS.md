@@ -42,6 +42,7 @@ Treat these as requiring extra care and targeted verification:
 - Custom editor registration and lifecycle, especially `src/ddsviewprovider.ts`
 - Preview lifecycle, disposal, state restoration, webview CSP, and webview messaging
 - `.gfx` UI shader preview model/rendering across `src/previewdef/uishader/*`, `src/previewdef/gfx/contentbuilder.ts`, and `webviewsrc/uishaderpreview.ts`
+- Preview dependency tracking and path normalisation across `src/previewdef/previewdependencytracker.ts`, preview content builders, and provider-specific dependency emitters
 - Parser, formatter, validation, and indexing services
 - Localisation files and key usage across `i18n` and `l10n`
 - `package.json` contributions, activation events, commands, views, custom editors, scripts, and packaging metadata
@@ -83,6 +84,7 @@ Recommended local environment:
 - Full tests: `npm run test`
 - VS Code integration/UI tests: `npm run test-ui`
 - Package VSIX: `npm run package`
+- Inspect installed VS Code typings: `npm ls @types/vscode`
 - Full verification: `npm run verify`
 - Clean generated build/test output: `npm run clean`
 - Clean only `dist` and `static`: `npm run clean:build`
@@ -95,7 +97,9 @@ Recommended local environment:
 - For targeted test debugging, `npm run compile-tests` is the narrow compile step before running emitted tests from `out/test`.
 - Run focused unit tests after `npm run compile-tests` with `npx mocha out/test/unit/<test-file>.test.js`; use multiple emitted test files when the behavior crosses fixtures or preview boundaries.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
+- Preview dependency refresh fixes: inspect both the dependency producer and `PreviewDependencyTracker`, then run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/previewmanager.test.js` and provider-specific coverage like `out/test/unit/uishader-preview.test.js` or `out/test/unit/focustree-focusicongfx.test.js`.
 - Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run build:dev` and `npm run test-ui` when feasible. Reload or restart the Extension Development Host after changing bundled webview/static preview assets before judging live behavior.
+- VS Code engine or API baseline changes: keep `package.json`, `package-lock.json`, and `@types/vscode` aligned; verify with `npm run compile-ts` and `npm ls @types/vscode`.
 - Packaging, contribution, or metadata changes: run `npm run build` and consider `npm run package`.
 - Broad or release-sensitive changes: run `npm run verify`.
 - Before reporting completion, prefer `git diff --check` after manual edits to catch whitespace issues.
