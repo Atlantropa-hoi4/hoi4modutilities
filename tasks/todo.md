@@ -3,7 +3,7 @@ Focus tree branch relative_position_id anchor 2026-05-26:
 - [x] Resolve the relative anchor through the selected parent branch root instead of the immediate parent.
 - [x] Reverify with focused Focus Tree position/relation tests, TypeScript checks, lint, and whitespace check.
 
-Review note: focus link edits now keep prerequisite targets as the selected parent focuses, but resolve `relative_position_id` through the selected branch root before writing source text or updating the live preview. Reverified with `npm run compile-tests`, targeted Focus Tree relation/position mocha coverage, `npm run compile-ts`, `npm run lint`, and `git diff --check`.
+Review note: focus link edits now keep prerequisite targets as the selected parent focuses, but resolve `relative_position_id` to the top focus of the selected parent's branch before writing source text or updating the live preview. Reverified with `npm run compile-tests`, targeted Focus Tree relation/position mocha coverage, `npm run compile-ts`, `npm run lint`, and `git diff --check`.
 
 Focus tree continuous focus position edit 2026-05-26:
 - [x] Trace the continuous focus edit path from webview drag coordinates to document update.

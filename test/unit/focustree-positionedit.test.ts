@@ -243,24 +243,31 @@ describe('focus tree position edit helpers', () => {
         y = 0
     }
     focus = {
-        id = PARENT
+        id = BRANCH
         prerequisite = { focus = ROOT }
         relative_position_id = ROOT
         x = 2
         y = 3
     }
     focus = {
-        id = CHILD
+        id = PARENT
+        prerequisite = { focus = BRANCH }
+        relative_position_id = BRANCH
         x = 4
         y = 5
     }
+    focus = {
+        id = CHILD
+        x = 6
+        y = 7
+    }
 }`;
-        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 7, 8, ['PARENT']);
+        const result = buildFocusLinkTextChanges(content, 'BRANCH', 'CHILD', 7, 8, ['PARENT']);
 
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = PARENT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 7[\s\S]*?y = 8/);
+        assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = PARENT \}[\s\S]*?relative_position_id = BRANCH[\s\S]*?x = 7[\s\S]*?y = 8/);
     });
 
     it('toggles an existing parent link off while updating local coordinates for the unlinked child', () => {

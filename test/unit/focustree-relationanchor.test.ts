@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 
 const {
-    getRelativePositionRootFocusId,
+    getRelativePositionBranchRootFocusId,
     getTopMostBranchRootFocusAnchorId,
     getTopMostFocusAnchorId,
 } = require('../../src/previewdef/focustree/relationanchor') as typeof import('../../src/previewdef/focustree/relationanchor');
@@ -36,7 +36,7 @@ describe('focus tree relation anchor helpers', () => {
         assert.strictEqual(fallbackAnchor, 'UNKNOWN');
     });
 
-    it('resolves a relative_position_id chain to the branch root focus', () => {
+    it('resolves a relative_position_id chain to the top focus of the current branch', () => {
         const focusTree = {
             focuses: {
                 ROOT: { id: 'ROOT', relativePositionId: undefined },
@@ -45,16 +45,18 @@ describe('focus tree relation anchor helpers', () => {
             },
         } as any;
 
-        assert.strictEqual(getRelativePositionRootFocusId('CHILD', focusTree), 'ROOT');
+        assert.strictEqual(getRelativePositionBranchRootFocusId('MID', focusTree), 'MID');
+        assert.strictEqual(getRelativePositionBranchRootFocusId('CHILD', focusTree), 'MID');
     });
 
     it('uses branch root focuses before choosing the top-most grouped anchor', () => {
         const focusTree = {
             focuses: {
-                ROOT_A: { id: 'ROOT_A', relativePositionId: undefined },
+                COMMON_ROOT: { id: 'COMMON_ROOT', relativePositionId: undefined },
+                ROOT_A: { id: 'ROOT_A', relativePositionId: 'COMMON_ROOT' },
                 MID_A: { id: 'MID_A', relativePositionId: 'ROOT_A' },
                 CHILD_A: { id: 'CHILD_A', relativePositionId: 'MID_A' },
-                ROOT_B: { id: 'ROOT_B', relativePositionId: undefined },
+                ROOT_B: { id: 'ROOT_B', relativePositionId: 'COMMON_ROOT' },
                 CHILD_B: { id: 'CHILD_B', relativePositionId: 'ROOT_B' },
             },
         } as any;

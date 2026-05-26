@@ -25,30 +25,29 @@ export function getTopMostFocusAnchorId(
     })[0];
 }
 
-export function getRelativePositionRootFocusId(
+export function getRelativePositionBranchRootFocusId(
     focusId: string,
     focusTree: Pick<FocusTree, 'focuses'> | undefined,
 ): string {
+    const focusIdChain: string[] = [];
     let currentFocusId = focusId;
-    let rootFocusId = focusId;
     const visitedFocusIds = new Set<string>();
 
     while (currentFocusId && !visitedFocusIds.has(currentFocusId)) {
         visitedFocusIds.add(currentFocusId);
+        focusIdChain.push(currentFocusId);
         const focus = focusTree?.focuses[currentFocusId];
-        if (!focus) {
+        const parentFocusId = focus?.relativePositionId;
+        if (!parentFocusId || !focusTree?.focuses[parentFocusId]) {
             break;
         }
 
-        rootFocusId = currentFocusId;
-        if (!focus.relativePositionId) {
-            break;
-        }
-
-        currentFocusId = focus.relativePositionId;
+        currentFocusId = parentFocusId;
     }
 
-    return rootFocusId;
+    return focusIdChain.length > 1
+        ? focusIdChain[focusIdChain.length - 2]
+        : focusId;
 }
 
 export function getTopMostBranchRootFocusAnchorId(
@@ -57,10 +56,10 @@ export function getTopMostBranchRootFocusAnchorId(
     positions: Record<string, NumberPosition>,
     fallbackFocusId: string,
 ): string {
-    const fallbackAnchorId = getRelativePositionRootFocusId(fallbackFocusId, focusTree);
+    const fallbackAnchorId = getRelativePositionBranchRootFocusId(fallbackFocusId, focusTree);
     const branchRootFocusIds = Array.from(new Set(
         (focusIds.length > 0 ? focusIds : [fallbackFocusId])
-            .map(focusId => getRelativePositionRootFocusId(focusId, focusTree))
+            .map(focusId => getRelativePositionBranchRootFocusId(focusId, focusTree))
             .filter((focusId): focusId is string => !!focusId),
     ));
 
