@@ -19,7 +19,7 @@ import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor'
 
 type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
 type PreviewExternalFileChangeKind = 'change' | 'create' | 'delete';
-const previewDependencyWatcherGlob = '**/*.{txt,gfx,gui,yml,dds,tga,png,shader,fxh,lua,mod}';
+const previewDependencyWatcherGlob = '**/*.{txt,gfx,gui,yml,dds,tga,png,mod}';
 
 interface PreviewManagerOptions {
     previewProviders: PreviewDescriptor[];

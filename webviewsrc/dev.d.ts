@@ -1,5 +1,4 @@
 declare var previewedFileUri: string | undefined;
-declare var uiShaderPreviewModels: Record<string, unknown> | undefined;
 declare function acquireVsCodeApi(): VSCodeAPI;
 
 declare interface VSCodeAPI {
