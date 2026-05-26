@@ -235,6 +235,34 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = OLD_PARENT \}[\s\S]*?prerequisite = \{ focus = ROOT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 7[\s\S]*?y = 8/);
     });
 
+    it('can write a child prerequisite while keeping relative_position_id anchored to the branch root', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = PARENT
+        prerequisite = { focus = ROOT }
+        relative_position_id = ROOT
+        x = 2
+        y = 3
+    }
+    focus = {
+        id = CHILD
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 7, 8, ['PARENT']);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = PARENT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 7[\s\S]*?y = 8/);
+    });
+
     it('toggles an existing parent link off while updating local coordinates for the unlinked child', () => {
         const content = `focus_tree = {
     focus = {

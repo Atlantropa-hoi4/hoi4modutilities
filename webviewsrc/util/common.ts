@@ -3,6 +3,7 @@ import { enableCheckboxes } from './checkbox';
 import { vscode } from './vscode';
 import { sendException } from './telemetry';
 import { forceError } from '../../src/util/common';
+import { normalizePreviewScale } from '../../src/util/previewscale';
 export { arrayToMap } from '../../src/util/common';
 
 export function setState(obj: Record<string, any>): void {
@@ -110,7 +111,11 @@ export function tryRun<T extends (...args: any[]) => any>(func: T): (...args: Pa
 
 let shouldDisableZoom = false;
 export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOffset: number): void {
-    let scale = getState().scale || 1;
+    const restoredScale = getState().scale;
+    let scale = normalizePreviewScale(restoredScale);
+    if (restoredScale !== undefined && restoredScale !== scale) {
+        setState({ scale });
+    }
     contentElement.style.transform = `scale(${scale})`;
     contentElement.style.transformOrigin = '0 0';
     window.addEventListener('wheel', function(e) {

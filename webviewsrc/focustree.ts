@@ -30,7 +30,7 @@ import {
 } from "../src/previewdef/focustree/localpreview";
 import { LatestOnlyBuildGuard } from "../src/previewdef/focustree/buildguard";
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
-import { getTopMostFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
+import { getTopMostBranchRootFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
 import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
 import { getFocusTreeViewportAnchorId } from "../src/previewdef/focustree/viewanchor";
 import {
@@ -38,6 +38,7 @@ import {
     resolveFocusTreeSelection as resolveFocusTreeSelectionValue,
 } from "../src/previewdef/focustree/selectionstate";
 import { FocusTreeContentUpdateDecision, FocusTreeContentUpdateMessage, getFocusTreeContentUpdateDecision } from "../src/previewdef/focustree/webviewupdate";
+import { normalizePreviewScale } from "../src/util/previewscale";
 import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } from "./focustree/messageapply";
 import { createFocusTreeWebviewInitialState } from "./focustree/state";
 
@@ -1623,7 +1624,7 @@ function resolveFocusDeleteTargetIds(anchorFocusId: string): string[] {
 }
 
 function resolvePendingFocusLinkAnchorId(parentFocusIds: readonly string[], fallbackFocusId: string): string {
-    return getTopMostFocusAnchorId(parentFocusIds, currentFocusPositions, fallbackFocusId);
+    return getTopMostBranchRootFocusAnchorId(parentFocusIds, currentRenderedFocusTree, currentFocusPositions, fallbackFocusId);
 }
 
 function areFocusIdArraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -1742,7 +1743,7 @@ function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPositio
         return undefined;
     }
 
-    const scale = getState().scale || 1;
+    const scale = normalizePreviewScale(getState().scale);
     const contentRect = contentElement.getBoundingClientRect();
     const localX = (event.clientX - contentRect.left) / scale;
     const localY = (event.clientY - contentRect.top) / scale;
@@ -1859,7 +1860,7 @@ function bindFocusPositionDragHandlers(focusIds?: readonly string[]) {
             focusElement.style.willChange = 'transform';
 
             const mouseMoveHandler = (moveEvent: MouseEvent) => {
-                const scale = getState().scale || 1;
+                const scale = normalizePreviewScale(getState().scale);
                 const deltaPageX = moveEvent.pageX - event.pageX;
                 const deltaPageY = moveEvent.pageY - event.pageY;
                 if (!dragGestureStarted && Math.max(Math.abs(deltaPageX), Math.abs(deltaPageY)) < focusPositionDragThresholdPx) {
@@ -1955,7 +1956,7 @@ function bindFocusPositionDragHandlers(focusIds?: readonly string[]) {
                 return;
             }
 
-            const scale = getState().scale || 1;
+            const scale = normalizePreviewScale(getState().scale);
             const deltaPageX = moveEvent.pageX - event.pageX;
             const deltaPageY = moveEvent.pageY - event.pageY;
             if (!dragGestureStarted && Math.max(Math.abs(deltaPageX), Math.abs(deltaPageY)) < focusPositionDragThresholdPx) {

@@ -1,3 +1,17 @@
+Focus tree branch relative_position_id anchor 2026-05-26:
+- [x] Trace the focus-link edit path from webview selection to source text update.
+- [x] Resolve the relative anchor through the selected parent branch root instead of the immediate parent.
+- [x] Reverify with focused Focus Tree position/relation tests, TypeScript checks, lint, and whitespace check.
+
+Review note: focus link edits now keep prerequisite targets as the selected parent focuses, but resolve `relative_position_id` through the selected branch root before writing source text or updating the live preview. Reverified with `npm run compile-tests`, targeted Focus Tree relation/position mocha coverage, `npm run compile-ts`, `npm run lint`, and `git diff --check`.
+
+Focus tree continuous focus position edit 2026-05-26:
+- [x] Trace the continuous focus edit path from webview drag coordinates to document update.
+- [x] Normalize restored preview zoom before coordinate math so corrupted tiny scale values cannot amplify drag deltas into huge `continuous_focus_position` values.
+- [x] Reverify with focused scale coverage, Focus Tree position edit coverage, TypeScript checks, lint, and whitespace check.
+
+Review note: restored preview zoom is now clamped before initial rendering and every Focus Tree coordinate calculation that divides pointer movement by scale, preventing stale tiny scale state from turning a normal continuous-focus drag into a huge document coordinate. Reverified with `npm run compile-tests`, targeted `previewscale` and `focustree-positionedit` mocha coverage, `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui`, and `git diff --check`.
+
 GFX UI Shader Preview dependency refresh 2026-05-17:
 - [x] Surface UI shader preview model dependencies from `.gfx` HTML rendering.
 - [x] Register those dependencies through the existing preview dependency tracker.
