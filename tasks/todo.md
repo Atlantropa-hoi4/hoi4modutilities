@@ -1,3 +1,12 @@
+Preview/editor audit and feature research 2026-05-30:
+- [x] Map preview/editor entry points and existing high-risk guidance.
+- [x] Fix overlapping mod-root dependency watcher rebuilds so stale async results cannot replace the newest watcher set.
+- [x] Reverify with targeted preview-manager coverage, TypeScript checks, lint, and whitespace checks.
+- [x] Research recent HOI4 modding community pain points and similar GitHub projects.
+- [x] Package findings and feature recommendations into DOCX and XLSX deliverables.
+
+Review note: `PreviewManager` mod-root watcher rebuilds now use a generation token so stale async results cannot replace the newest watcher set, and stale watcher instances are disposed. External research and benchmark recommendations were packaged in `outputs/preview-editor-audit/hoi4_preview_editor_audit.docx` and `outputs/preview-editor-audit/hoi4_preview_editor_feature_backlog.xlsx`. Reverified with `npm run compile-tests`, targeted `npx mocha out/test/unit/previewmanager.test.js`, `npm run compile-ts`, `npm run lint`, spreadsheet render/error scan, DOCX structural inspection, and `git diff --check`. DOCX PNG render could not run because `soffice` was not installed.
+
 Focus tree branch relative_position_id anchor 2026-05-26:
 - [x] Trace the focus-link edit path from webview selection to source text update.
 - [x] Resolve the relative anchor through the selected parent branch root instead of the immediate parent.

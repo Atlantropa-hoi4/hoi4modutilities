@@ -24,7 +24,10 @@ const watchedAssetChanges: Array<(uri: FakeUri) => void> = [];
 const watchedAssetCreates: Array<(uri: FakeUri) => void> = [];
 const watchedAssetDeletes: Array<(uri: FakeUri) => void> = [];
 const watchedPatterns: unknown[] = [];
+const activeWatcherPatterns: unknown[] = [];
+const disposedWatcherPatterns: unknown[] = [];
 let selectedModRoots: FakeUri[] = [];
+let getSelectedModRoots = async () => selectedModRoots;
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
     activeTab: undefined,
 };
@@ -77,20 +80,27 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidChangeConfiguration: () => new Disposable(),
                 createFileSystemWatcher: (pattern: unknown) => {
                     watchedPatterns.push(pattern);
+                    activeWatcherPatterns.push(pattern);
                     return {
-                    onDidChange: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
-                        watchedAssetChanges.push(thisArg ? listener.bind(thisArg) : listener);
-                        return new Disposable();
-                    },
-                    onDidCreate: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
-                        watchedAssetCreates.push(thisArg ? listener.bind(thisArg) : listener);
-                        return new Disposable();
-                    },
-                    onDidDelete: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
-                        watchedAssetDeletes.push(thisArg ? listener.bind(thisArg) : listener);
-                        return new Disposable();
-                    },
-                    dispose: () => undefined,
+                        onDidChange: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                            watchedAssetChanges.push(thisArg ? listener.bind(thisArg) : listener);
+                            return new Disposable();
+                        },
+                        onDidCreate: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                            watchedAssetCreates.push(thisArg ? listener.bind(thisArg) : listener);
+                            return new Disposable();
+                        },
+                        onDidDelete: (listener: (uri: FakeUri) => void, thisArg?: unknown) => {
+                            watchedAssetDeletes.push(thisArg ? listener.bind(thisArg) : listener);
+                            return new Disposable();
+                        },
+                        dispose: () => {
+                            disposedWatcherPatterns.push(pattern);
+                            const activeIndex = activeWatcherPatterns.indexOf(pattern);
+                            if (activeIndex >= 0) {
+                                activeWatcherPatterns.splice(activeIndex, 1);
+                            }
+                        },
                     };
                 },
                 openTextDocument: async (uri: FakeUri) => documents.get(uri.toString()),
@@ -175,7 +185,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     if ((request.endsWith('/util/fileloader') || request === '../util/fileloader')
         && parent?.filename?.includes('previewmanager')) {
         return {
-            getSelectedModRootFolders: async () => selectedModRoots,
+            getSelectedModRootFolders: () => getSelectedModRoots(),
         };
     }
 
@@ -204,7 +214,10 @@ describe('preview manager', () => {
         watchedAssetCreates.length = 0;
         watchedAssetDeletes.length = 0;
         watchedPatterns.length = 0;
+        activeWatcherPatterns.length = 0;
+        disposedWatcherPatterns.length = 0;
         selectedModRoots = [];
+        getSelectedModRoots = async () => selectedModRoots;
         activeTabState.activeTab = undefined;
     });
 
@@ -368,6 +381,40 @@ describe('preview manager', () => {
         } finally {
             disposable.dispose();
         }
+    });
+
+    it('keeps the newest mod-root watcher rebuild when overlapping async rebuilds finish out of order', async () => {
+        const firstRoots = createDeferred<FakeUri[]>();
+        const secondRoots = createDeferred<FakeUri[]>();
+        let callCount = 0;
+        getSelectedModRoots = () => {
+            callCount += 1;
+            return callCount === 1 ? firstRoots.promise : secondRoots.promise;
+        };
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+
+        const firstRebuild = manager['rebuildModRootWatchers']();
+        const secondRebuild = manager['rebuildModRootWatchers']();
+
+        secondRoots.resolve([createUri('file:///external/new-root')]);
+        await secondRebuild;
+        firstRoots.resolve([createUri('file:///external/old-root')]);
+        await firstRebuild;
+
+        assert.strictEqual(activeWatcherPatterns.length, 1);
+        assert.strictEqual((activeWatcherPatterns[0] as { base: FakeUri }).base.toString(), 'file:///external/new-root');
+        assert.ok(disposedWatcherPatterns.some(pattern =>
+            typeof pattern === 'object'
+            && pattern !== null
+            && 'base' in pattern
+            && (pattern as { base: FakeUri }).base.toString() === 'file:///external/old-root'
+        ));
+        assert.ok(!disposedWatcherPatterns.some(pattern =>
+            typeof pattern === 'object'
+            && pattern !== null
+            && 'base' in pattern
+            && (pattern as { base: FakeUri }).base.toString() === 'file:///external/new-root'
+        ));
     });
 
     it('uses the preview-provided document debounce when scheduling refreshes', async () => {
@@ -618,6 +665,14 @@ function createPanel(): FakePanel {
             this.disposeCount += 1;
         },
     };
+}
+
+function createDeferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(promiseResolve => {
+        resolve = promiseResolve;
+    });
+    return { promise, resolve };
 }
 
 function createPanelProvider(

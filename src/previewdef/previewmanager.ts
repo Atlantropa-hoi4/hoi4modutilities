@@ -37,6 +37,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private readonly documentUpdateScheduler: PreviewUpdateScheduler;
     private readonly dependencyUpdateScheduler: PreviewUpdateScheduler;
     private modRootWatchers: vscode.Disposable[] = [];
+    private modRootWatcherGeneration = 0;
 
     constructor(
         private readonly options: PreviewManagerOptions,
@@ -279,14 +280,25 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private async rebuildModRootWatchers(): Promise<void> {
-        this.disposeModRootWatchers();
+        this.disposeModRootWatchers(false);
+        const generation = ++this.modRootWatcherGeneration;
         const roots = await getSelectedModRootFolders();
-        this.modRootWatchers = roots.map(root => this.createPreviewDependencyWatcher(
+        const watchers = roots.map(root => this.createPreviewDependencyWatcher(
             new vscode.RelativePattern(root, previewDependencyWatcherGlob),
         ));
+
+        if (generation !== this.modRootWatcherGeneration) {
+            vscode.Disposable.from(...watchers).dispose();
+            return;
+        }
+
+        this.modRootWatchers = watchers;
     }
 
-    private disposeModRootWatchers(): void {
+    private disposeModRootWatchers(invalidatePendingRebuild = true): void {
+        if (invalidatePendingRebuild) {
+            this.modRootWatcherGeneration++;
+        }
         this.modRootWatchers.forEach(watcher => watcher.dispose());
         this.modRootWatchers = [];
     }
