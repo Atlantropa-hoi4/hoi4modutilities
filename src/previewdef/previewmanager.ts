@@ -270,6 +270,9 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     }
 
     private createPreviewDependencyWatcher(pattern: vscode.GlobPattern): vscode.Disposable {
+        incrementPerfCounter('preview.dependencyWatcher.create', {
+            pattern: getDependencyWatcherPatternLabel(pattern),
+        });
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
         return vscode.Disposable.from(
             watcher,
@@ -283,7 +286,12 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         this.disposeModRootWatchers(false);
         const generation = ++this.modRootWatcherGeneration;
         const roots = await getSelectedModRootFolders();
-        const watchers = roots.map(root => this.createPreviewDependencyWatcher(
+        const watchedRoots = roots.filter(root => !this.isCoveredByWorkspaceDependencyWatcher(root));
+        incrementPerfCounter('preview.modRootWatcher.rebuild', {
+            selectedRootCount: roots.length,
+            watchedRootCount: watchedRoots.length,
+        });
+        const watchers = watchedRoots.map(root => this.createPreviewDependencyWatcher(
             new vscode.RelativePattern(root, previewDependencyWatcherGlob),
         ));
 
@@ -295,6 +303,10 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         this.modRootWatchers = watchers;
     }
 
+    private isCoveredByWorkspaceDependencyWatcher(root: vscode.Uri): boolean {
+        return vscode.workspace.getWorkspaceFolder(root) !== undefined;
+    }
+
     private disposeModRootWatchers(invalidatePendingRebuild = true): void {
         if (invalidatePendingRebuild) {
             this.modRootWatcherGeneration++;
@@ -302,4 +314,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         this.modRootWatchers.forEach(watcher => watcher.dispose());
         this.modRootWatchers = [];
     }
+}
+
+function getDependencyWatcherPatternLabel(pattern: vscode.GlobPattern): string {
+    return typeof pattern === 'string' ? pattern : previewDependencyWatcherGlob;
 }

@@ -6,9 +6,11 @@ import { DDS } from './util/image/dds';
 import { html, htmlEscape } from './util/html';
 import { StyleTable } from './util/styletable';
 import { sendEvent } from './util/telemetry';
-import { forceError, toArrayBuffer } from './util/common';
+import { forceError, toArrayBuffer, UserError } from './util/common';
 import { readFile } from './util/vsccommon';
 import { getStaticResourceRoots } from './util/webview';
+import { formatByteSize, isImagePreviewWithinLimit, maxCustomEditorImageBytes } from './util/image/previewlimits';
+import { measureSync, recordPerf } from './util/perf';
 
 abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider {
     public async openCustomDocument(uri: vscode.Uri) {
@@ -24,17 +26,24 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
                 localResourceRoots: getStaticResourceRoots(),
             };
 
-            const buffer = await Promise.race([
-                readFile(document.uri),
-                new Promise<null>(resolve => token.onCancellationRequested(_ => resolve(null))),
-            ]);
+            const buffer = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Window,
+                title: localize('imagePreview.loading', 'Loading image preview...'),
+            }, () => this.readPreviewBuffer(document.uri, token));
 
             if (buffer === null) {
                 return;
             }
 
-            const png = this.getPng(Buffer.from(buffer));
-            const pngBuffer = PNG.sync.write(png);
+            const png = measureSync('imagePreview.decode', { provider: this.previewKind, bytes: buffer.byteLength }, () =>
+                this.getPng(Buffer.from(buffer)));
+            const pngBuffer = measureSync('imagePreview.encodePng', { provider: this.previewKind, width: png.width, height: png.height }, () =>
+                PNG.sync.write(png));
+            recordPerf('imagePreview.totalBytes', 0, {
+                provider: this.previewKind,
+                sourceBytes: buffer.byteLength,
+                pngBytes: pngBuffer.byteLength,
+            });
             const styleTable = new StyleTable();
 
             webviewPanel.webview.html = html(
@@ -50,11 +59,31 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
         }
     }
 
+    private async readPreviewBuffer(uri: vscode.Uri, token: vscode.CancellationToken): Promise<Buffer | null> {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if (!isImagePreviewWithinLimit(stat.size)) {
+            throw new UserError(localize(
+                'imagePreview.tooLarge',
+                'Image preview is disabled for files larger than {0}. This file is {1}; open it with an external image tool or reduce the texture before previewing.',
+                formatByteSize(maxCustomEditorImageBytes),
+                formatByteSize(stat.size),
+            ));
+        }
+
+        return await Promise.race([
+            readFile(uri),
+            new Promise<null>(resolve => token.onCancellationRequested(_ => resolve(null))),
+        ]);
+    }
+
+    protected abstract previewKind: string;
     protected abstract onOpen(): void;
     protected abstract getPng(buffer: Buffer): PNG;
 }
 
 export class DDSViewProvider extends CommonViewProvider {
+    protected previewKind = 'dds';
+
     protected onOpen(): void {
         sendEvent('preview.dds');
     }
@@ -66,6 +95,8 @@ export class DDSViewProvider extends CommonViewProvider {
 }
 
 export class TGAViewProvider extends CommonViewProvider {
+    protected previewKind = 'tga';
+
     protected onOpen(): void {
         sendEvent('preview.tga');
     }

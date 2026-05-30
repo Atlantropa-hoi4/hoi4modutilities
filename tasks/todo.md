@@ -7,6 +7,16 @@ Preview/editor audit and feature research 2026-05-30:
 
 Review note: `PreviewManager` mod-root watcher rebuilds now use a generation token so stale async results cannot replace the newest watcher set, and stale watcher instances are disposed. External research and benchmark recommendations were packaged in `outputs/preview-editor-audit/hoi4_preview_editor_audit.docx` and `outputs/preview-editor-audit/hoi4_preview_editor_feature_backlog.xlsx`. Reverified with `npm run compile-tests`, targeted `npx mocha out/test/unit/previewmanager.test.js`, `npm run compile-ts`, `npm run lint`, spreadsheet render/error scan, DOCX structural inspection, and `git diff --check`. DOCX PNG render could not run because `soffice` was not installed.
 
+Preview/editor bottleneck remediation 2026-05-30:
+- [x] Reconfirm P1/P2 bottleneck candidates from the generated audit document.
+- [x] Add DDS/TGA custom editor preview size limits, progress feedback, and decode/encode payload metrics.
+- [x] Add World Map retained-state diagnostics and postMessage payload-byte metrics for retained preview panels.
+- [x] Reduce duplicate selected mod-root dependency watchers already covered by workspace watchers and record rebuild counts.
+- [x] Surface Focus Tree dynamic/scripted localisation token limitations as preview warnings.
+- [x] Reverify changed behavior with targeted tests, TypeScript checks, lint, and whitespace checks.
+
+Review note: DDS/TGA custom editors now reject oversized image previews before extension-host decode/PNG work, World Map exposes hidden retained-state diagnostics like Focus Tree, selected mod roots inside existing workspaces skip duplicate broad watchers, and Focus Tree previews warn when resolved localisation still contains dynamic/scripted tokens. Reverified with `npm run compile-tests`, targeted `npx mocha out/test/unit/previewmanager.test.js out/test/unit/focustree-contentbuilder.test.js out/test/unit/image-preview-limits.test.js`, `npm run compile-ts`, `npm run lint`, and `git diff --check`.
+
 Focus tree branch relative_position_id anchor 2026-05-26:
 - [x] Trace the focus-link edit path from webview selection to source text update.
 - [x] Resolve the relative anchor through the selected parent branch root instead of the immediate parent.

@@ -37,11 +37,19 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         return {
             getLocalisedTextQuick: async (key: string) => {
                 localisationCalls.push(key);
-                return key === 'FOCUS_A' ? 'Localized focus A' : undefined;
+                return key === 'FOCUS_A'
+                    ? 'Localized focus A'
+                    : key === 'FOCUS_DYNAMIC'
+                        ? 'Dynamic $COUNTRY$ [Root.GetName]'
+                        : undefined;
             },
             getLocalisedTextQuickIfReady: (key: string) => {
                 localisationCalls.push(key);
-                return key === 'FOCUS_A' ? 'Localized focus A' : undefined;
+                return key === 'FOCUS_A'
+                    ? 'Localized focus A'
+                    : key === 'FOCUS_DYNAMIC'
+                        ? 'Dynamic $COUNTRY$ [Root.GetName]'
+                        : undefined;
             },
         };
     }
@@ -222,6 +230,73 @@ describe('focustree contentbuilder', () => {
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-common\s*\{/);
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-icon-slot\s*\{/);
         assert.match(result.payload.dynamicStyleCss, /\.st-focus-span\s*\{/);
+    });
+
+    it('surfaces dynamic localisation tokens as focus preview warnings', async () => {
+        localisationIndexEnabled = true;
+        const focus = {
+            id: 'FOCUS_DYNAMIC',
+            layoutEditKey: 'focus_dynamic',
+            x: 0,
+            y: 0,
+            icon: [],
+            availableIfCapitulated: false,
+            hasAiWillDo: false,
+            hasCompletionReward: false,
+            prerequisite: [],
+            prerequisiteGroupCount: 0,
+            prerequisiteFocusCount: 0,
+            exclusive: [],
+            exclusiveCount: 0,
+            hasAllowBranch: false,
+            inAllowBranch: [],
+            allowBranch: undefined,
+            relativePositionId: undefined,
+            offset: [],
+            token: { start: 10, end: 30 },
+            file: 'common/national_focus/test.txt',
+            isInCurrentFile: true,
+            lintWarningCount: 0,
+            lintInfoCount: 0,
+        };
+        const focusTree = {
+            id: 'tree_dynamic',
+            kind: 'focus',
+            focuses: { FOCUS_DYNAMIC: focus },
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            inlayConditionExprs: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState({
+            focusTrees: [focusTree],
+            allFocuses: [focus],
+            allInlays: [],
+            focusById: { FOCUS_DYNAMIC: focus },
+            gfxFiles: [],
+            focusIconGfxFileByName: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: true,
+        } as any);
+
+        assert.strictEqual(result.payload.hasWarningsButton, true);
+        assert.ok(focusTree.warnings.some((warning: any) =>
+            warning.code === 'focus-localisation-dynamic-token'
+            && warning.severity === 'info'
+            && warning.source === 'FOCUS_DYNAMIC'
+            && warning.navigations[0].start === 10));
     });
 
     it('reuses resolved focus icon gfx files while preparing icon styles', async () => {

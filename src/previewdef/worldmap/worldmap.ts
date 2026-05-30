@@ -13,7 +13,7 @@ import { WorldMapLoader } from './loader/worldmaploader';
 import { LoaderSession } from '../../util/loader/loader';
 import { TelemetryMessage, sendByMessage } from '../../util/telemetry';
 import { areEqualWithinBudget, createWorldMapComparisonBudget, WorldMapComparisonBudget } from './worldmapdiff';
-import { measureAsync, recordPerf } from '../../util/perf';
+import { getPerfSnapshot, measureAsync, recordPerf } from '../../util/perf';
 
 export class WorldMap {
     public panel: vscode.WebviewPanel | undefined;
@@ -62,6 +62,31 @@ export class WorldMap {
         this.worldMapDependencies = undefined;
         this.cachedWorldMap = undefined;
         this.panel = undefined;
+    }
+
+    public getDebugState(): unknown {
+        const cachedWorldMap = this.cachedWorldMap;
+        return {
+            hasPanel: !!this.panel,
+            loadGeneration: this.loadGeneration,
+            progressLoadGeneration: this.progressLoadGeneration,
+            loadInProgress: this.loadInProgress,
+            dependencyCount: this.worldMapDependencies?.length ?? 0,
+            cachedWorldMap: cachedWorldMap ? {
+                width: cachedWorldMap.width,
+                height: cachedWorldMap.height,
+                provincesCount: cachedWorldMap.provincesCount,
+                statesCount: cachedWorldMap.statesCount,
+                countriesCount: cachedWorldMap.countriesCount,
+                strategicRegionsCount: cachedWorldMap.strategicRegionsCount,
+                supplyAreasCount: cachedWorldMap.supplyAreasCount,
+                railwaysCount: cachedWorldMap.railwaysCount,
+                supplyNodesCount: cachedWorldMap.supplyNodesCount,
+                warningCount: cachedWorldMap.warnings.length,
+                retainedJsonBytes: getMessageSize(cachedWorldMap),
+            } : undefined,
+            performance: getPerfSnapshot({ limit: 25 }),
+        };
     }
 
     private renderWorldMap(webview: vscode.Webview): string {
@@ -453,9 +478,11 @@ export class WorldMap {
         const startedAt = Date.now();
         try {
             const result = await this.panel.webview.postMessage(message);
+            const payloadBytes = getMessageSize(message);
             recordPerf('worldmap.postMessage', Date.now() - startedAt, {
                 command: message.command,
-                size: getMessageSize(message),
+                payloadBytes,
+                size: payloadBytes,
             });
             return result;
         } catch (error) {
@@ -518,7 +545,7 @@ export class WorldMap {
     }
 }
 
-function getMessageSize(message: WorldMapMessage): number {
+function getMessageSize(message: unknown): number {
     try {
         return JSON.stringify(message).length;
     } catch {

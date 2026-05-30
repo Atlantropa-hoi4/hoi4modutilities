@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { FocusTree, Focus } from './schema';
+import type { FocusWarning } from './schema';
 import { getSpriteByGfxName, getSpriteByGfxNameFromResolvedFiles, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
 import { forceError, NumberPosition } from '../../util/common';
@@ -28,6 +29,7 @@ import {
     renderFocusHtmlTemplate,
     resolveFocusLocalizationTextByIdIfReady,
 } from './focusrender';
+import { sortFocusWarnings } from './focuslint';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
@@ -244,6 +246,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
     const localisationResolveStart = Date.now();
     const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses);
+    refreshUnsupportedLocalisationWarnings(baseState.focusTrees, focusLocalizationTextById);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
     const focusTemplateRenderStart = Date.now();
     const renderedFocus: Record<string, string> = {};
@@ -293,7 +296,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             focusPositionActiveFile: baseState.focusPositionActiveFile,
             conditionPresetsByTree: baseState.conditionPresetsByTree,
             hasFocusSelector: baseState.hasFocusSelector,
-            hasWarningsButton: baseState.hasWarningsButton,
+            hasWarningsButton: hasFocusTreeWarnings(baseState.focusTrees),
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
         metrics: {
@@ -309,6 +312,51 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
     };
+}
+
+const unsupportedLocalisationWarningCode = 'focus-localisation-dynamic-token';
+const unsupportedLocalisationTokenPattern = /\$[^$\r\n]+\$|\[[^\]\r\n]+\]/;
+
+function refreshUnsupportedLocalisationWarnings(
+    focusTrees: FocusTree[],
+    focusLocalizationTextById: Record<string, string | undefined>,
+): void {
+    for (const focusTree of focusTrees) {
+        const warnings: FocusWarning[] = focusTree.warnings
+            .filter(warning => warning.code !== unsupportedLocalisationWarningCode);
+
+        for (const focus of Object.values(focusTree.focuses)) {
+            const localisationText = focusLocalizationTextById[focus.id];
+            if (!localisationText || !unsupportedLocalisationTokenPattern.test(localisationText)) {
+                continue;
+            }
+
+            warnings.push({
+                code: unsupportedLocalisationWarningCode,
+                kind: 'parse',
+                severity: 'info',
+                source: focus.id,
+                relatedFocusIds: [focus.id],
+                navigations: focus.token ? [{
+                    file: focus.file,
+                    start: focus.token.start,
+                    end: focus.token.end,
+                }] : undefined,
+                text: localize(
+                    'focustree.warnings.localisationDynamicToken',
+                    'Focus {0} resolves to localisation text containing dynamic or scripted tokens that the preview may not evaluate: {1}',
+                    focus.id,
+                    localisationText,
+                ),
+            });
+        }
+
+        focusTree.warnings = sortFocusWarnings(warnings);
+    }
+}
+
+function hasFocusTreeWarnings(focusTrees: FocusTree[]): boolean {
+    return focusTrees.some(focusTree => focusTree.warnings.length > 0);
 }
 
 async function buildFocusTreeRenderState(

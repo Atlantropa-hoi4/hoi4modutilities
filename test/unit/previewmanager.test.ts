@@ -383,6 +383,24 @@ describe('preview manager', () => {
         }
     });
 
+    it('skips selected mod-root watchers already covered by the workspace watcher', async () => {
+        selectedModRoots = [createUri('file:///workspace/mod-root')];
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const disposable = manager.register();
+
+        try {
+            await Promise.resolve();
+            assert.ok(!watchedPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///workspace/mod-root'
+            ));
+        } finally {
+            disposable.dispose();
+        }
+    });
+
     it('keeps the newest mod-root watcher rebuild when overlapping async rebuilds finish out of order', async () => {
         const firstRoots = createDeferred<FakeUri[]>();
         const secondRoots = createDeferred<FakeUri[]>();

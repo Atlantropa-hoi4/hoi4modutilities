@@ -12,6 +12,7 @@ export class WorldMapContainer implements vscode.WebviewPanelSerializer {
     public register(): vscode.Disposable {
         const disposables: vscode.Disposable[] = [];
         disposables.push(vscode.commands.registerCommand(Commands.PreviewWorld, this.openPreview, this));
+        disposables.push(vscode.commands.registerCommand(Commands.DebugWorldMapPreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.PreviewWorldMap, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
@@ -67,5 +68,9 @@ export class WorldMapContainer implements vscode.WebviewPanelSerializer {
 
     private onCloseTextDocument(document: vscode.TextDocument): void {
         this.worldMap?.onDocumentChange(document.uri);
+    }
+
+    private getPreviewDebugState(): unknown {
+        return this.worldMap?.getDebugState();
     }
 }
