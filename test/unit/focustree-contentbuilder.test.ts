@@ -8,7 +8,7 @@ const broadScanCalls: string[] = [];
 const localisationCalls: string[] = [];
 let localisationIndexEnabled = false;
 
-nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
+function mockLoad(this: unknown, request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
             env: { language: 'en' },
@@ -85,7 +85,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     }
 
     return originalLoad.call(this, request, parent, isMain);
-};
+}
+
+nodeModule._load = mockLoad;
 
 const {
     buildFocusTreeRenderPayloadFromBaseState,
@@ -93,6 +95,7 @@ const {
 
 describe('focustree contentbuilder', () => {
     beforeEach(() => {
+        nodeModule._load = mockLoad;
         resolvedFileCalls.length = 0;
         broadScanCalls.length = 0;
         localisationCalls.length = 0;
