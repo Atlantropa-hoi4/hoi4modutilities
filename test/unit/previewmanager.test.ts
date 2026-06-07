@@ -366,11 +366,13 @@ describe('preview manager', () => {
     });
 
     it('registers dependency watchers for selected mod content roots', async () => {
+        const document = createDocument('file:///workspace/common/preview.txt');
         selectedModRoots = [createUri('file:///external/mod-root')];
         const manager = createManager([createPanelProvider('focus', () => 0)]);
         const disposable = manager.register();
 
         try {
+            await manager['showPreviewImpl'](document.uri as any);
             await Promise.resolve();
             assert.ok(watchedPatterns.some(pattern =>
                 typeof pattern === 'object'
@@ -384,11 +386,13 @@ describe('preview manager', () => {
     });
 
     it('skips selected mod-root watchers already covered by the workspace watcher', async () => {
+        const document = createDocument('file:///workspace/common/preview.txt');
         selectedModRoots = [createUri('file:///workspace/mod-root')];
         const manager = createManager([createPanelProvider('focus', () => 0)]);
         const disposable = manager.register();
 
         try {
+            await manager['showPreviewImpl'](document.uri as any);
             await Promise.resolve();
             assert.ok(!watchedPatterns.some(pattern =>
                 typeof pattern === 'object'
@@ -396,6 +400,34 @@ describe('preview manager', () => {
                 && 'base' in pattern
                 && (pattern as { base: FakeUri }).base.toString() === 'file:///workspace/mod-root'
             ));
+        } finally {
+            disposable.dispose();
+        }
+    });
+
+    it('creates broad dependency watchers only while previews are open', async () => {
+        const document = createDocument('file:///workspace/common/preview.txt');
+        const previews: FakePreview[] = [];
+        const manager = createManager([
+            createPanelProvider('focus', () => 0, (uri, panel) => {
+                const preview = new FakePreview(uri, panel);
+                previews.push(preview);
+                return preview as any;
+            }),
+        ]);
+        const disposable = manager.register();
+
+        try {
+            await Promise.resolve();
+            assert.deepStrictEqual(watchedPatterns, []);
+
+            await manager['showPreviewImpl'](document.uri as any);
+            await Promise.resolve();
+            assert.ok(watchedPatterns.some(pattern => pattern === '**/*.{txt,gfx,gui,yml,dds,tga,png,mod}'));
+            assert.strictEqual(activeWatcherPatterns.length, 1);
+
+            previews[0].dispose();
+            assert.strictEqual(activeWatcherPatterns.length, 0);
         } finally {
             disposable.dispose();
         }
@@ -760,6 +792,13 @@ class FakePreview {
     public emitDependencies(dependencies: string[]): void {
         for (const listener of this.dependencyListeners) {
             listener(dependencies);
+        }
+    }
+
+    public dispose(): void {
+        this.isDisposed = true;
+        for (const listener of this.disposeListeners) {
+            listener();
         }
     }
 }

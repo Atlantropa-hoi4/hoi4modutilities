@@ -33,6 +33,7 @@ Primary entry points:
 - Do not change dependency versions, package metadata, publisher identity, extension IDs, or VSIX packaging behavior unless required.
 - Use repository tools such as `rg`, `fd`, and `jq` where they make inspection safer or faster.
 - Before changing behavior, identify the relevant entry point, contribution, service, fixture, or test path.
+- Preserve lazy preview dependency watchers: broad workspace and selected-mod-root watchers should be created only for open previews and disposed when idle.
 
 ## High-Risk Areas
 
@@ -42,6 +43,9 @@ Treat these as requiring extra care and targeted verification:
 - Custom editor registration and lifecycle, especially `src/ddsviewprovider.ts`
 - Preview lifecycle, disposal, state restoration, webview CSP, and webview messaging
 - Preview dependency tracking and path normalisation across `src/previewdef/previewdependencytracker.ts`, preview content builders, and provider-specific dependency emitters
+- Preview watcher orchestration in `src/previewdef/previewmanager.ts`, especially lazy dependency watcher lifetime, mod-root watcher rebuild generations, selected-mod-root watchers, stale async rebuild results, and retained preview panel diagnostics
+- Focus Tree edit and live-preview paths across `webviewsrc/focustree.ts` and `src/previewdef/focustree/*`, especially `relative_position_id`, `relationanchor`, restored preview scale, dynamic/scripted localisation warnings, and partial update payloads
+- DDS/TGA custom editor preview limits, progress feedback, and decode/encode payload metrics around `src/ddsviewprovider.ts` and `src/util/image/previewlimits.ts`
 - Parser, formatter, validation, and indexing services
 - Localisation files and key usage across `i18n` and `l10n`
 - `package.json` contributions, activation events, commands, views, custom editors, scripts, and packaging metadata
@@ -97,6 +101,9 @@ Recommended local environment:
 - Run focused unit tests after `npm run compile-tests` with `npx mocha out/test/unit/<test-file>.test.js`; use multiple emitted test files when the behavior crosses fixtures or preview boundaries.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
 - Preview dependency refresh fixes: inspect both the dependency producer and `PreviewDependencyTracker`, then run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/previewmanager.test.js` and provider-specific coverage like `out/test/unit/focustree-focusicongfx.test.js`.
+- Preview watcher, selected mod-root, retained-panel diagnostics, or payload-metric changes: run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/previewmanager.test.js out/test/unit/focustree-contentbuilder.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`. For watcher lifetime changes, include coverage that broad dependency watchers are absent before preview open and disposed after preview close.
+- Focus Tree relation, drag, or position-edit changes: keep the webview-selected prerequisite and the written `relative_position_id` visually/source-text consistent; run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/focustree-relationanchor.test.js out/test/unit/focustree-positionedit.test.js out/test/unit/previewscale.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`. Add `npm run build:dev` and `npm run test-ui` when bundled webview behavior is involved.
+- DDS/TGA custom editor preview-limit or metrics changes: run `npm run compile-tests` plus `npx mocha out/test/unit/image-preview-limits.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`.
 - Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run build:dev` and `npm run test-ui` when feasible. Reload or restart the Extension Development Host after changing bundled webview/static preview assets before judging live behavior.
 - VS Code engine or API baseline changes: keep `package.json`, `package-lock.json`, and `@types/vscode` aligned; verify with `npm run compile-ts` and `npm ls @types/vscode`.
 - Packaging, contribution, or metadata changes: run `npm run build` and consider `npm run package`.
@@ -117,6 +124,7 @@ Keep task notes factual and concise.
 
 - Avoid unrelated formatting churn.
 - Avoid mass rewrites unless the task requires them.
+- When the user asks to remove a feature entirely, search and remove the full surface: `src`, `webviewsrc`, `scripts`, `test`, generated `static/*` artifacts, and stale guidance/task notes. After removing a webview build entry, run `npm run build:dev` and confirm the bundle is absent from build output and `static/*`.
 - Preserve existing public APIs and extension contribution contracts.
 - Keep localisation keys stable unless the change explicitly requires migration.
 - Keep fixtures minimal and representative.

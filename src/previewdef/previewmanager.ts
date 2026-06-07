@@ -36,6 +36,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private readonly previews: Record<string, PreviewBase>;
     private readonly documentUpdateScheduler: PreviewUpdateScheduler;
     private readonly dependencyUpdateScheduler: PreviewUpdateScheduler;
+    private previewDependencyWatcher: vscode.Disposable | undefined;
     private modRootWatchers: vscode.Disposable[] = [];
     private modRootWatcherGeneration = 0;
 
@@ -57,19 +58,17 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
-        disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildModRootWatchers(); }));
+        disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildActiveDependencyWatchers(); }));
         disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
-                void this.rebuildModRootWatchers();
+                void this.rebuildActiveDependencyWatchers();
             }
         }));
-        disposables.push(this.createPreviewDependencyWatcher(previewDependencyWatcherGlob));
-        void this.rebuildModRootWatchers();
         disposables.push(this.previewContextService.register());
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
         disposables.push(new vscode.Disposable(() => this.documentUpdateScheduler.dispose()));
         disposables.push(new vscode.Disposable(() => this.dependencyUpdateScheduler.dispose()));
-        disposables.push(new vscode.Disposable(() => this.disposeModRootWatchers()));
+        disposables.push(new vscode.Disposable(() => this.disposePreviewDependencyWatchers()));
 
         return vscode.Disposable.from(...disposables);
     }
@@ -223,6 +222,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         const previewItem = previewProvider.createPreview(uri, panel);
         debug('preview.create', { uri: key, provider: previewProvider.type, deserialized: !!panel });
         this.previewSessionStore.bind(key, previewItem);
+        this.ensurePreviewDependencyWatchers();
+        previewItem.onDispose(() => this.disposePreviewDependencyWatchersIfIdle());
         return previewItem;
     }
 
@@ -282,6 +283,23 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         );
     }
 
+    private ensurePreviewDependencyWatchers(): void {
+        if (this.previewDependencyWatcher) {
+            return;
+        }
+
+        this.previewDependencyWatcher = this.createPreviewDependencyWatcher(previewDependencyWatcherGlob);
+        void this.rebuildModRootWatchers();
+    }
+
+    private async rebuildActiveDependencyWatchers(): Promise<void> {
+        if (!this.previewDependencyWatcher) {
+            return;
+        }
+
+        await this.rebuildModRootWatchers();
+    }
+
     private async rebuildModRootWatchers(): Promise<void> {
         this.disposeModRootWatchers(false);
         const generation = ++this.modRootWatcherGeneration;
@@ -313,6 +331,20 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         }
         this.modRootWatchers.forEach(watcher => watcher.dispose());
         this.modRootWatchers = [];
+    }
+
+    private disposePreviewDependencyWatchersIfIdle(): void {
+        if (Object.keys(this.previews).length > 0) {
+            return;
+        }
+
+        this.disposePreviewDependencyWatchers();
+    }
+
+    private disposePreviewDependencyWatchers(): void {
+        this.previewDependencyWatcher?.dispose();
+        this.previewDependencyWatcher = undefined;
+        this.disposeModRootWatchers();
     }
 }
 
