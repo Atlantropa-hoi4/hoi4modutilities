@@ -221,12 +221,11 @@ export function buildFocusLinkTextChanges(
     const child = childResult.focus!;
     const lineEnding = detectLineEnding(content);
     const changes: FocusPositionTextChange[] = [];
-    const hasExistingRelativePositionLink = child.currentRelativePositionId === parentFocusId;
     const matchingPrerequisiteField = findMatchingPrerequisiteField(child, normalizedParentFocusIds);
     const hasExactPrerequisiteGroup = !!matchingPrerequisiteField
         && areFocusIdSetsEqual(matchingPrerequisiteField.focusIds, normalizedParentFocusIds);
 
-    if (hasExactPrerequisiteGroup && hasExistingRelativePositionLink) {
+    if (hasExactPrerequisiteGroup) {
         if (targetLocalX !== undefined && targetLocalY !== undefined) {
             ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
             ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
@@ -235,7 +234,9 @@ export function buildFocusLinkTextChanges(
             range: expandRangeToWholeLines(content, matchingPrerequisiteField.range),
             text: '',
         });
-        if (child.relativePositionId) {
+        if (child.relativePositionId
+            && child.currentRelativePositionId
+            && (child.currentRelativePositionId === parentFocusId || normalizedParentFocusIds.includes(child.currentRelativePositionId))) {
             changes.push({
                 range: expandRangeToWholeLines(content, child.relativePositionId.nodeRange),
                 text: '',

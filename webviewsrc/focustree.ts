@@ -1651,11 +1651,13 @@ function updatePrerequisiteGroupsAfterLinkApply(
     const matchingGroup = matchingGroupIndex !== -1 ? nextPrerequisiteGroups[matchingGroupIndex] : undefined;
     const hasExactGroup = !!matchingGroup && areFocusIdArraysEqual(matchingGroup, parentFocusIds);
 
-    if (hasExactGroup && currentRelativePositionId === anchorParentFocusId) {
+    if (hasExactGroup) {
         nextPrerequisiteGroups.splice(matchingGroupIndex, 1);
         return {
             prerequisiteGroups: nextPrerequisiteGroups,
-            relativePositionId: undefined,
+            relativePositionId: currentRelativePositionId && (currentRelativePositionId === anchorParentFocusId || parentFocusIds.includes(currentRelativePositionId))
+                ? undefined
+                : currentRelativePositionId,
         };
     }
 

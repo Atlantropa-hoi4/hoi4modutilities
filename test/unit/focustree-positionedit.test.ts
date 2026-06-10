@@ -295,6 +295,60 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /id = CHILD[\s\S]*?x = 11[\s\S]*?y = 13/);
     });
 
+    it('toggles an exact prerequisite off even when it has no relative_position_id link', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = CHILD
+        prerequisite = { focus = ROOT }
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 11, 13);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /prerequisite = \{ focus = ROOT \}/);
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 11[\s\S]*?y = 13/);
+    });
+
+    it('preserves an unrelated relative_position_id when toggling an exact prerequisite off', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = ANCHOR
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = CHILD
+        prerequisite = { focus = ROOT }
+        relative_position_id = ANCHOR
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 11, 13);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /prerequisite = \{ focus = ROOT \}/);
+        assert.match(updated, /relative_position_id = ANCHOR/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 11[\s\S]*?y = 13/);
+    });
+
     it('writes multi-selected parent links into a single prerequisite block while keeping one anchor relative_position_id', () => {
         const content = `focus_tree = {
     focus = {
