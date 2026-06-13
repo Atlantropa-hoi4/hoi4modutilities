@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import Module = require('module');
 import type { Point } from '../../src/previewdef/worldmap/definitions';
+import type { BMP } from '../../src/util/image/bmp/bmpparser';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -25,7 +26,10 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     return originalLoad.call(this, request, parent, isMain);
 };
 
-const { concatEdgesForTest } = require('../../src/previewdef/worldmap/loader/provincebmp') as typeof import('../../src/previewdef/worldmap/loader/provincebmp');
+const {
+    concatEdgesForTest,
+    getProvinceColorsByPositionForTest,
+} = require('../../src/previewdef/worldmap/loader/provincebmp') as typeof import('../../src/previewdef/worldmap/loader/provincebmp');
 
 function point(x: number, y: number): Point {
     return { x, y };
@@ -43,6 +47,20 @@ describe('world map province bmp edge helpers', () => {
         ]);
 
         assert.deepStrictEqual(result, [[point(0, 0), point(2, 0)]]);
+    });
+
+    it('stores province colors in a typed array', () => {
+        const width = 256;
+        const height = 256;
+        const colorByPosition = getProvinceColorsByPositionForTest({
+            width,
+            height,
+            bytesPerRow: width * 3,
+            data: new Uint8Array(width * height * 3),
+        } as BMP);
+
+        assert.ok(colorByPosition instanceof Uint32Array);
+        assert.strictEqual(colorByPosition.length, width * height);
     });
 
     it('keeps disconnected edge segments as separate paths', () => {

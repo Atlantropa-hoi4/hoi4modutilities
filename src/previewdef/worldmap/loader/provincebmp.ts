@@ -95,6 +95,10 @@ function getProvincesByPosition(provinceMapImage: BMP): { colorByPosition: Uint3
     };
 }
 
+export function getProvinceColorsByPositionForTest(provinceMapImage: BMP): Uint32Array {
+    return getProvincesByPosition(provinceMapImage).colorByPosition;
+}
+
 type ProvinceZoneDef = { coverZones: Zone[] } & Region;
 function fillProvinceZones<T extends ColorContainer>(
     provincesWithoutCoverZones: (T & Partial<ProvinceZoneDef>)[],
