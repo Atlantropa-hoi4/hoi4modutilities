@@ -127,7 +127,7 @@ async function fillFocusItems(
         applyFocusFileToIndex(
             focusIndex,
             focusFile,
-            extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile))),
+            extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile), { keepTokens: false })),
         );
 
         if (estimatedSize) {

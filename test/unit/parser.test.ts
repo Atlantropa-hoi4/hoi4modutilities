@@ -155,4 +155,26 @@ describe('parser fixtures', () => {
         assert.strictEqual((silverLayer.value as any[])[0].name, 'silver');
         assert.match(nodeToString(bronzeLayer), /^\{ bronze = \{/);
     });
+
+    it('can omit positional tokens for index-only parsing', () => {
+        const node = parseHoi4File([
+            'focus_tree = {',
+            '    id = sample_tree',
+            '    focus = { id = sample_focus }',
+            '}',
+        ].join('\n'), '', { keepTokens: false });
+        const [tree] = node.value as any[];
+        const [idNode, focusNode] = tree.value as any[];
+        const [focusIdNode] = focusNode.value as any[];
+
+        assert.strictEqual(tree.name, 'focus_tree');
+        assert.strictEqual(tree.nameToken, null);
+        assert.strictEqual(tree.operatorToken, null);
+        assert.strictEqual(tree.valueStartToken, null);
+        assert.strictEqual(tree.valueEndToken, null);
+        assert.strictEqual(idNode.nameToken, null);
+        assert.strictEqual(idNode.valueStartToken, null);
+        assert.strictEqual(focusIdNode.nameToken, null);
+        assert.strictEqual(focusIdNode.valueStartToken, null);
+    });
 });

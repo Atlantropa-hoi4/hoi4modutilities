@@ -31,6 +31,10 @@ export interface Token<T extends string = string> {
     type: T;
 }
 
+export interface ParseOptions {
+    keepTokens?: boolean;
+}
+
 function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T, [string, number]>, errorMessagePrefix: string = ''): Tokenizer<T> {
     const types = Object.keys(tokenRegexStrings);
     const typeEntries = Object.entries<[string, number]>(tokenRegexStrings);
@@ -114,9 +118,10 @@ const tokenRegexStrings: Record<HOITokenType, [string, number]> = {
     eof: ['$', 1000],
 };
 
-export function parseHoi4File(input: string, errorMessagePrefix: string = ''): Node {
+export function parseHoi4File(input: string, errorMessagePrefix: string = '', options: ParseOptions = {}): Node {
+    const keepTokens = options.keepTokens !== false;
     const tokens = tokenizer(input, tokenRegexStrings, errorMessagePrefix);
-    const value = parseBlockContent(tokens);
+    const value = parseBlockContent(tokens, keepTokens);
 
     if (tokens.peek().type !== 'eof') {
         tokens.throw("File content can't be completely parsed");
@@ -135,10 +140,10 @@ export function parseHoi4File(input: string, errorMessagePrefix: string = ''): N
     };
 }
 
-function parseNode(tokens: Tokenizer<HOITokenType>): Node {
+function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
     const name = tokens.next();
     if (name.value === '{') {
-        const value = parseBlockContent(tokens);
+        const value = parseBlockContent(tokens, keepTokens);
         const right = tokens.next();
         if (right.value !== '}') {
             tokens.throw("Expect a '}'", true);
@@ -149,8 +154,8 @@ function parseNode(tokens: Tokenizer<HOITokenType>): Node {
             operator: null,
             operatorToken: null,
             value,
-            valueStartToken: name,
-            valueEndToken: right,
+            valueStartToken: keepTokens ? name : null,
+            valueEndToken: keepTokens ? right : null,
             valueAttachment: null,
             valueAttachmentToken: null,
         };
@@ -173,7 +178,7 @@ function parseNode(tokens: Tokenizer<HOITokenType>): Node {
         }
         return {
             name: name.value,
-            nameToken: name,
+            nameToken: keepTokens ? name : null,
             operator: null,
             operatorToken: null,
             value: null,
@@ -196,14 +201,14 @@ function parseNode(tokens: Tokenizer<HOITokenType>): Node {
 
     let valueAttachment: SymbolNode | null = null;
     let valueAttachmentToken: Token | null = null;
-    let [value, valueStartToken, valueEndToken] = parseNodeValue(tokens);
+    let [value, valueStartToken, valueEndToken] = parseNodeValue(tokens, keepTokens);
 
     if (value !== null && typeof value === 'object' && 'name' in value) {
         const nextToken = tokens.peek();
         if (nextToken.value === '{') {
             valueAttachment = value;
             valueAttachmentToken = valueStartToken;
-            [value, valueStartToken, valueEndToken] = parseNodeValue(tokens);
+            [value, valueStartToken, valueEndToken] = parseNodeValue(tokens, keepTokens);
         }
     }
 
@@ -215,18 +220,18 @@ function parseNode(tokens: Tokenizer<HOITokenType>): Node {
 
     return {
         name: name.value,
-        nameToken: name,
+        nameToken: keepTokens ? name : null,
         operator: operator.value,
-        operatorToken: operator,
+        operatorToken: keepTokens ? operator : null,
         value,
-        valueStartToken,
-        valueEndToken,
+        valueStartToken: keepTokens ? valueStartToken : null,
+        valueEndToken: keepTokens ? valueEndToken : null,
         valueAttachment,
-        valueAttachmentToken,
+        valueAttachmentToken: keepTokens ? valueAttachmentToken : null,
     };
 }
 
-function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOITokenType>, Token<HOITokenType> ] {
+function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [ NodeValue, Token<HOITokenType>, Token<HOITokenType> ] {
     const nextToken = tokens.next();
     switch (nextToken.type) {
         case 'string':
@@ -251,7 +256,7 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>): [ NodeValue, Token<HOI
             ];
         case 'operator':
             if (nextToken.value === '{') {
-                const result = parseBlockContent(tokens);
+                const result = parseBlockContent(tokens, keepTokens);
                 const right = tokens.next();
                 if (right.value !== '}') {
                     tokens.throw("Expect a '}'", true);
@@ -278,7 +283,7 @@ function parseNumberToken(value: string): number {
     return parseFloat(value);
 }
 
-function parseBlockContent(tokens: Tokenizer<HOITokenType>): Node[] {
+function parseBlockContent(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node[] {
     const nodes: Node[] = [];
 
     while (true) {
@@ -287,7 +292,7 @@ function parseBlockContent(tokens: Tokenizer<HOITokenType>): Node[] {
             break;
         }
 
-        nodes.push(parseNode(tokens));
+        nodes.push(parseNode(tokens, keepTokens));
     }
 
     return nodes;
