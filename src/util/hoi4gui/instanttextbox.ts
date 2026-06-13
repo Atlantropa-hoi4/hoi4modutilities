@@ -6,6 +6,7 @@ import { getLocalisedTextQuick } from "../localisationIndex";
 import { isLocalisationIndexEnabled } from "../featureflags";
 
 export interface RenderInstantTextBoxOptions extends RenderCommonOptions {
+    rawText?: boolean;
 }
 
 export async function renderInstantTextBox(textbox: HOIPartial<InstantTextBoxType>, parentInfo: ParentInfo, options: RenderInstantTextBoxOptions): Promise<string> {
@@ -41,6 +42,6 @@ export async function renderInstantTextBox(textbox: HOIPartial<InstantTextBoxTyp
         `)}
         ${options.enableNavigator ? 'navigator navigator-highlight' : ''}
     ">
-        ${htmlEscape(isLocalisationIndexEnabled() ? (await getLocalisedTextQuick(textbox.text) ?? ' ') : (textbox.text ?? ''))}
+        ${htmlEscape(options.rawText ? (textbox.text ?? '') : (isLocalisationIndexEnabled() ? (await getLocalisedTextQuick(textbox.text) ?? ' ') : (textbox.text ?? '')))}
     </div>`;
 }

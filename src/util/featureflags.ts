@@ -27,3 +27,7 @@ export function isGfxIndexEnabled(): boolean {
 export function isLocalisationIndexEnabled(): boolean {
     return !hasFeatureFlag('!localisationIndex');
 }
+
+export function isTechnologyShowIdEnabled(): boolean {
+    return hasFeatureFlag('technologyShowId');
+}

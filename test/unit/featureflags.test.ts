@@ -29,6 +29,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     isGfxIndexEnabled,
     isLocalisationIndexEnabled,
+    isTechnologyShowIdEnabled,
 } = require('../../src/util/featureflags') as typeof import('../../src/util/featureflags');
 
 nodeModule._load = originalLoad;
@@ -49,5 +50,13 @@ describe('feature flag helpers', () => {
 
         assert.strictEqual(isGfxIndexEnabled(), false);
         assert.strictEqual(isLocalisationIndexEnabled(), false);
+    });
+
+    it('enables raw technology IDs only when requested', () => {
+        assert.strictEqual(isTechnologyShowIdEnabled(), false);
+
+        configuredFeatureFlags = ['technologyShowId'];
+
+        assert.strictEqual(isTechnologyShowIdEnabled(), true);
     });
 });

@@ -18,7 +18,7 @@ import { flatMap, sumBy, min, flatten, chain, uniq } from 'lodash';
 import { StyleTable } from '../../util/styletable';
 import { RenderNodeCommonOptions } from '../../util/hoi4gui/nodecommon';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
-import { isLocalisationIndexEnabled } from "../../util/featureflags";
+import { isLocalisationIndexEnabled, isTechnologyShowIdEnabled } from "../../util/featureflags";
 
 const techTreeViewName = 'countrytechtreeview';
 const doctrineTreeViewName = 'countrydoctrineview';
@@ -360,7 +360,10 @@ async function renderTechnology(
                 if (childname === 'bonus') {
                     return '';
                 } else if (childname === 'name') {
-                    return await renderInstantTextBox({ ...text, text: technology.id }, parentInfo, commonOptions);
+                    return await renderInstantTextBox({ ...text, text: technology.id }, parentInfo, {
+                        ...commonOptions,
+                        rawText: isTechnologyShowIdEnabled(),
+                    });
                 }
             }
 
