@@ -49,6 +49,7 @@ dlcZipCache = new PromiseCache({
     factory: getDlcZip,
     expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(key)),
     life: 15 * 1000,
+    maxSize: 8,
 });
 
 export async function clearDlcZipCache() {

@@ -6,21 +6,28 @@ export interface CacheOptions<V> {
     life: number;
     nonExpireLife?: number;
     name?: string;
+    maxSize?: number;
+    maxBytes?: number;
+    weigher?(value: V): number;
 }
 
-export interface PromiseCacheOptions<V> extends CacheOptions<Promise<V>> {
+export interface PromiseCacheOptions<V> extends Omit<CacheOptions<Promise<V>>, 'weigher'> {
     expireWhenChange?(key: string, cachedValue: Promise<V>): Promise<any> | any;
+    weigher?(value: V): number;
 }
 
 interface CacheEntry<V> {
     value: V;
     expiryToken: any;
     lastAccess: number;
+    accessSeq: number;
+    weight: number;
 }
 
 export class Cache<V> {
     protected _cache: Record<string, CacheEntry<V>> = {};
     private _intervalToken: NodeJS.Timeout | null = null;
+    private _accessCounter = 0;
     
     constructor(protected readonly options: CacheOptions<V>) {
         if (options.life > 0) {
@@ -45,6 +52,7 @@ export class Cache<V> {
                 (expireToken = this.options.expireWhenChange!(key, cacheEntry.value)) === cacheEntry.expiryToken
             )) {
             cacheEntry.lastAccess = now;
+            cacheEntry.accessSeq = this.nextAccessSeq();
             incrementPerfCounter('cache.hit', { cache: cacheName });
             return cacheEntry.value;
         }
@@ -53,11 +61,14 @@ export class Cache<V> {
         const value = this.options.factory(key);
         const newEntry = {
             lastAccess: now,
+            accessSeq: this.nextAccessSeq(),
             expiryToken: expireToken ?? this.options.expireWhenChange!(key, value),
-            value
+            value,
+            weight: this.options.weigher ? (this.options.weigher(value) ?? 0) : 0,
         };
 
         this._cache[key] = newEntry;
+        this.enforceLimits();
         return newEntry.value;
     }
 
@@ -86,12 +97,51 @@ export class Cache<V> {
             }
         }
     }
+
+    protected nextAccessSeq(): number {
+        return ++this._accessCounter;
+    }
+
+    protected enforceLimits(): void {
+        const { maxBytes, maxSize } = this.options;
+        if (maxBytes === undefined && maxSize === undefined) {
+            return;
+        }
+
+        const keys = Object.keys(this._cache);
+        let count = keys.length;
+        let totalBytes = maxBytes === undefined
+            ? 0
+            : keys.reduce((sum, key) => sum + this._cache[key].weight, 0);
+
+        const overLimit = () =>
+            (maxSize !== undefined && count > maxSize) ||
+            (maxBytes !== undefined && totalBytes > maxBytes);
+
+        if (!overLimit()) {
+            return;
+        }
+
+        keys.sort((a, b) => this._cache[a].accessSeq - this._cache[b].accessSeq);
+        for (const key of keys) {
+            if (!overLimit()) {
+                break;
+            }
+
+            totalBytes -= this._cache[key].weight;
+            delete this._cache[key];
+            count--;
+        }
+    }
 }
 
 export class PromiseCache<V> extends Cache<Promise<V>> {
+    private readonly promiseWeigher?: (value: V) => number;
+
     constructor(options: PromiseCacheOptions<V>) {
+        const { weigher, ...rest } = options;
         super({
-            ...options,
+            ...rest,
             factory: (key) => {
                 return options.factory(key).then(
                     value => {
@@ -106,6 +156,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
                     });
             }
         });
+        this.promiseWeigher = weigher;
     }
 
     public async get(key: string = ''): Promise<V> {
@@ -118,6 +169,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
                 await (expireToken = Promise.resolve(this.options.expireWhenChange!(key, cacheEntry.value))) === await cacheEntry.expiryToken)
             ) {
             cacheEntry.lastAccess = now;
+            cacheEntry.accessSeq = this.nextAccessSeq();
             incrementPerfCounter('cache.hit', { cache: cacheName });
             return await cacheEntry.value;
         }
@@ -126,11 +178,24 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
         const value = this.options.factory(key);
         const newEntry = {
             lastAccess: now,
+            accessSeq: this.nextAccessSeq(),
             expiryToken: expireToken ?? Promise.resolve(this.options.expireWhenChange!(key, value)),
-            value
+            value,
+            weight: 0,
         };
 
         this._cache[key] = newEntry;
+        if (this.promiseWeigher && this.options.maxBytes !== undefined) {
+            value.then(resolved => {
+                if (this._cache[key] === newEntry) {
+                    newEntry.weight = resolved === null || resolved === undefined
+                        ? 0
+                        : (this.promiseWeigher!(resolved) ?? 0);
+                    this.enforceLimits();
+                }
+            }, () => undefined);
+        }
+        this.enforceLimits();
         return await newEntry.value;
     }
 }

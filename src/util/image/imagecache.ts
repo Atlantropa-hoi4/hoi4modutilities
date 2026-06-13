@@ -20,21 +20,25 @@ const imageCache = new PromiseCache({
     name: 'image',
     expireWhenChange: hoiFileExpiryToken,
     factory: getImage,
-    life: 10 * 60 * 1000
+    life: 10 * 60 * 1000,
+    maxBytes: 128 * 1024 * 1024,
+    weigher: image => image ? image.pngBuffer.length : 0,
 });
 
 const spriteCache = new PromiseCache({
     name: 'sprite',
     expireWhenChange: spriteCacheExpiryToken,
     factory: getSpriteByKey,
-    life: 10 * 60 * 1000
+    life: 10 * 60 * 1000,
+    maxSize: 128,
 });
 
 const gfxMapCache = new PromiseCache({
     name: 'gfxMap',
     expireWhenChange: hoiFileExpiryToken,
     factory: loadGfxMap,
-    life: 10 * 60 * 1000
+    life: 10 * 60 * 1000,
+    maxSize: 64,
 });
 
 export function getImageByPath(relativePath: string): Promise<Image | undefined> {
