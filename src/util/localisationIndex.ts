@@ -287,7 +287,7 @@ async function fillLocalisationItems(localisationFile: string, localisationIndex
     }
 }
 
-function preprocessYamlContent(fileContent: string): string {
+export function preprocessYamlContent(fileContent: string): string {
     const lines = fileContent.split(/\r?\n/);
 
     // Filter out any lines that start with #, regardless of leading spaces
@@ -301,11 +301,11 @@ function preprocessYamlContent(fileContent: string): string {
         return ' ' + line
             .replace(/\n/g, 'YAMLParsingLFReplacement')
             .replace(
-                /^\s*([^:]+):\s*\d*\s*"((?:[^"#\\]|\\.)*)".*?(?=#|$)/,
+                /^\s*([^:]+?)\s*:\s*\d*\s*"((?:[^"\\]|\\.)*)"(?:\s*#.*)?$/,
                 (match, p1, p2) => {
                     // Replace unescaped quotes with escaped ones
                     const escapedContent = p2.replace(/(?<!\\)"/g, '\\"');
-                    return `${p1}: "${escapedContent}"`;
+                    return `${p1.trim()}: "${escapedContent}"`;
                 }
             )
             .replace(/:(\d+)(?=[^"]*")/, ':')

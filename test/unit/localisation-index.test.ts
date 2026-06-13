@@ -24,6 +24,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
+    preprocessYamlContent,
     rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
 } = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
@@ -145,5 +146,17 @@ describe('localisation index helpers', () => {
                 KEY_C: 'C',
             },
         });
+    });
+
+    it('keeps hash characters inside quoted localisation values', () => {
+        const processed = preprocessYamlContent([
+            'l_english:',
+            ' TEST_HASH:0 "Keep # inside the value" # trailing comment',
+        ].join('\n'));
+
+        assert.strictEqual(processed, [
+            'l_english:',
+            ' TEST_HASH: "Keep # inside the value"',
+        ].join('\n'));
     });
 });
