@@ -46,8 +46,11 @@ Treat these as requiring extra care and targeted verification:
 - Preview watcher orchestration in `src/previewdef/previewmanager.ts`, especially lazy dependency watcher lifetime, mod-root watcher rebuild generations, selected-mod-root watchers, stale async rebuild results, and retained preview panel diagnostics
 - Focus Tree edit and live-preview paths across `webviewsrc/focustree.ts` and `src/previewdef/focustree/*`, especially `relative_position_id`, `relationanchor`, restored preview scale, dynamic/scripted localisation warnings, and partial update payloads
 - DDS/TGA custom editor preview limits, progress feedback, and decode/encode payload metrics around `src/ddsviewprovider.ts` and `src/util/image/previewlimits.ts`
+- Heavy preview caches and file/image loader memory bounds across `src/util/cache.ts`, `src/util/fileloader.ts`, and `src/util/image/imagecache.ts`
+- World Map province bitmap memory/performance paths in `src/previewdef/worldmap/loader/provincebmp.ts`, especially typed-array color storage and edge compaction
 - Parser, formatter, validation, and indexing services
 - Localisation files and key usage across `i18n` and `l10n`
+- Preview feature flags and GUI text rendering hooks across `src/util/featureflags.ts`, `src/previewdef/technology/contentbuilder.ts`, and `src/util/hoi4gui/instanttextbox.ts`
 - `package.json` contributions, activation events, commands, views, custom editors, scripts, and packaging metadata
 - Cross-boundary contracts between `src` and `webviewsrc`
 
@@ -92,6 +95,7 @@ Recommended local environment:
 - Clean generated build/test output: `npm run clean`
 - Clean only `dist` and `static`: `npm run clean:build`
 - Clean only `out`: `npm run clean:out`
+- Clean VS Code integration test downloads: `npm run clean:test-ui`
 
 ## Command Selection
 
@@ -100,10 +104,15 @@ Recommended local environment:
 - For targeted test debugging, `npm run compile-tests` is the narrow compile step before running emitted tests from `out/test`.
 - Run focused unit tests after `npm run compile-tests` with `npx mocha out/test/unit/<test-file>.test.js`; use multiple emitted test files when the behavior crosses fixtures or preview boundaries.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
+- Parser token/position handling changes: run `npm run compile-tests` plus `npx mocha out/test/unit/parser.test.js`; include index consumers such as `out/test/unit/localisation-index.test.js` or Focus Tree/index tests when the parser change is for index-only loading.
+- Localisation index parsing or fallback changes: run `npm run compile-tests` plus `npx mocha out/test/unit/localisation-index.test.js`; include Focus/Event preview tests when visible preview text can change.
+- Feature flag changes: run `npm run compile-tests` plus `npx mocha out/test/unit/featureflags.test.js`; add provider-specific tests when a flag changes preview rendering.
 - Preview dependency refresh fixes: inspect both the dependency producer and `PreviewDependencyTracker`, then run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/previewmanager.test.js` and provider-specific coverage like `out/test/unit/focustree-focusicongfx.test.js`.
 - Preview watcher, selected mod-root, retained-panel diagnostics, or payload-metric changes: run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/previewmanager.test.js out/test/unit/focustree-contentbuilder.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`. For watcher lifetime changes, include coverage that broad dependency watchers are absent before preview open and disposed after preview close.
 - Focus Tree relation, drag, or position-edit changes: keep the webview-selected prerequisite and the written `relative_position_id` visually/source-text consistent; run `npm run compile-tests` plus focused emitted tests such as `npx mocha out/test/unit/focustree-relationanchor.test.js out/test/unit/focustree-positionedit.test.js out/test/unit/previewscale.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`. Add `npm run build:dev` and `npm run test-ui` when bundled webview behavior is involved.
 - DDS/TGA custom editor preview-limit or metrics changes: run `npm run compile-tests` plus `npx mocha out/test/unit/image-preview-limits.test.js`, then `npm run compile-ts`, `npm run lint`, and `git diff --check`.
+- Heavy cache, loader memory-bound, or image-cache changes: run `npm run compile-tests` plus `npx mocha out/test/unit/cache-metrics.test.js`; add provider-specific preview tests when cache eviction can change rendered content.
+- World Map province bitmap loading or edge construction changes: run `npm run compile-tests` plus `npx mocha out/test/unit/worldmap-provincebmp.test.js`; add broader World Map tests when loader payload shape or preview behavior changes.
 - Webview, preview, activation, or custom editor changes: run targeted tests plus `npm run build:dev` and `npm run test-ui` when feasible. Reload or restart the Extension Development Host after changing bundled webview/static preview assets before judging live behavior.
 - VS Code engine or API baseline changes: keep `package.json`, `package-lock.json`, and `@types/vscode` aligned; verify with `npm run compile-ts` and `npm ls @types/vscode`.
 - Packaging, contribution, or metadata changes: run `npm run build` and consider `npm run package`.

@@ -12,9 +12,11 @@ import { error } from '../debug';
 import { DDS } from './dds';
 import { UserError } from '../common';
 import { getGfxContainerFile } from '../gfxindex';
-import { toArrayBuffer } from '../common';
+import { createConcurrencyLimiter, toArrayBuffer } from '../common';
 import { incrementPerfCounter, measureAsync } from '../perf';
 export { Sprite, Image };
+
+const runImageDecode = createConcurrencyLimiter(3);
 
 const imageCache = new PromiseCache({
     name: 'image',
@@ -126,7 +128,7 @@ async function getSpriteByGfxNameImpl(name: string, gfxFilePath: string): Promis
 }
 
 async function getImage(relativePath: string): Promise<Image | undefined> {
-    return measureAsync('image.decode', { extension: getExtension(relativePath) }, async () => {
+    return runImageDecode(() => measureAsync('image.decode', { extension: getExtension(relativePath) }, async () => {
         let readFileResult: [Buffer, vscode.Uri] | undefined = undefined;
         try {
             readFileResult = await readFileFromModOrHOI4(relativePath);
@@ -176,7 +178,7 @@ async function getImage(relativePath: string): Promise<Image | undefined> {
             error(e);
             return undefined;
         }
-    });
+    }));
 }
 
 async function loadGfxMap(path: string): Promise<Record<string, (SpriteType | CorneredTileSpriteType)>> {

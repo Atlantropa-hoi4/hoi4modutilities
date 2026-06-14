@@ -126,6 +126,34 @@ export async function mapWithConcurrency<T, R>(
     return results;
 }
 
+export function createConcurrencyLimiter(concurrency: number): <T>(task: () => Promise<T>) => Promise<T> {
+    if (concurrency <= 0) {
+        throw new Error('concurrency must be greater than 0');
+    }
+
+    let activeCount = 0;
+    const queuedTasks: Array<() => void> = [];
+
+    return async function runWithConcurrencyLimit<T>(task: () => Promise<T>): Promise<T> {
+        if (activeCount >= concurrency) {
+            await new Promise<void>(resolve => queuedTasks.push(resolve));
+        } else {
+            activeCount += 1;
+        }
+
+        try {
+            return await task();
+        } finally {
+            const nextTask = queuedTasks.shift();
+            if (nextTask) {
+                nextTask();
+            } else {
+                activeCount -= 1;
+            }
+        }
+    };
+}
+
 export function toArrayBuffer(buffer: Uint8Array): ArrayBuffer {
     return Uint8Array.from(buffer).buffer;
 }

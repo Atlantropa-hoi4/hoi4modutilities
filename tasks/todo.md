@@ -534,3 +534,10 @@ Focus Tree pdxscript lint refresh 2026-05-13:
 - [x] Align focus relation lint with current HOI4 national-focus semantics for external prerequisite and mutually exclusive references.
 - [x] Report invalid `focus_tree.shared_focus` references that no longer resolve to shared/joint focus definitions.
 - [x] Reverify with focused Focus Tree lint/schema tests plus TypeScript and lint checks.
+
+Image decode concurrency guard 2026-06-14:
+- [x] Recheck the approved performance-audit proposal around image cache peak memory.
+- [x] Add a small reusable async concurrency limiter and apply it to heavy image decode work.
+- [x] Cover queued limiter behavior with focused unit tests.
+
+Review note: image decoding now runs through a three-slot limiter before DDS/TGA/PNG decode and PNG encode work, reducing peak memory risk when many distinct preview images are requested at once while preserving existing cache expiry and byte-cap behavior.
