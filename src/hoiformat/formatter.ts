@@ -451,7 +451,7 @@ function formatLine(parts: LineParts, depth: number, profile: Hoi4FormatterProfi
     const tokens = tokenizeCode(trimmedCode);
     const leadingCloseBraces = countLeadingCloseBraces(tokens);
     const lineDepth = Math.max(0, depth - leadingCloseBraces);
-    const code = formatTokens(tokens, profile, trimmedCode);
+    const code = formatTokens(tokens, profile);
     const line = '\t'.repeat(lineDepth) + code + (comment === null ? '' : ` ${comment}`);
 
     return {
@@ -547,9 +547,9 @@ function countToken(tokens: FormatToken[], value: string): number {
     return tokens.filter(token => token.value === value).length;
 }
 
-function formatTokens(tokens: FormatToken[], profile: Hoi4FormatterProfile, originalCode: string): string {
+function formatTokens(tokens: FormatToken[], profile: Hoi4FormatterProfile): string {
     if (profile === 'gui') {
-        const guiVector = tryFormatGuiVectorLine(tokens, originalCode);
+        const guiVector = tryFormatGuiVectorLine(tokens);
         if (guiVector !== undefined) {
             return guiVector;
         }
@@ -558,7 +558,7 @@ function formatTokens(tokens: FormatToken[], profile: Hoi4FormatterProfile, orig
     return formatTokensGeneric(tokens);
 }
 
-function tryFormatGuiVectorLine(tokens: FormatToken[], originalCode: string): string | undefined {
+function tryFormatGuiVectorLine(tokens: FormatToken[]): string | undefined {
     if (tokens.length < 5 || tokens[1]?.value !== '=' || tokens[2]?.value !== '{' || tokens[tokens.length - 1]?.value !== '}') {
         return undefined;
     }
@@ -574,13 +574,7 @@ function tryFormatGuiVectorLine(tokens: FormatToken[], originalCode: string): st
         return undefined;
     }
 
-    const openIndex = originalCode.indexOf('{');
-    const closeIndex = originalCode.lastIndexOf('}');
-    if (openIndex === -1 || closeIndex <= openIndex) {
-        return undefined;
-    }
-
-    const inner = originalCode.slice(openIndex + 1, closeIndex).trim().replace(/\s+/g, ' ');
+    const inner = formatTokensGeneric(tokens.slice(3, -1));
     return `${key} = {${inner === '' ? '' : ` ${inner} `}}`;
 }
 

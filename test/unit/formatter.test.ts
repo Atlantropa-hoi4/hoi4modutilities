@@ -305,11 +305,11 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), input);
     });
 
-    it('formats GUI structure while preserving coordinate inline spacing style', () => {
+    it('formats GUI structure while normalizing coordinate inline assignment spacing', () => {
         const input = [
             'guiTypes={',
             '\tcontainerWindowType={',
-            '\t\tposition = {x=150 y=100}',
+            '\t\tposition = { x=80 y=250}',
             '\t\ticonType =',
             '\t\t{',
             '\t\t\tname ="stability_bg"',
@@ -322,11 +322,11 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(formatHoi4Text(input, { profile: 'gui' }), [
             'guiTypes = {',
             '\tcontainerWindowType = {',
-            '\t\tposition = { x=150 y=100 }',
+            '\t\tposition = { x = 80 y = 250 }',
             '\t\ticonType =',
             '\t\t{',
             '\t\t\tname = "stability_bg"',
-            '\t\t\tsize = { x=290 y=310 }',
+            '\t\t\tsize = { x = 290 y = 310 }',
             '\t\t}',
             '\t}',
             '}',
