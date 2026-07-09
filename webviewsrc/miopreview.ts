@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, runSafely, enableZoom } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
@@ -261,7 +261,7 @@ function traitToGridItem(
     };
 }
 
-window.addEventListener('load', tryRun(async function() {
+window.addEventListener('load', runSafely(async function() {
     // Mio selection
     const mioSelect = document.getElementById('mios') as HTMLSelectElement | null;
     if (mioSelect) {
@@ -279,13 +279,13 @@ window.addEventListener('load', tryRun(async function() {
         conditions = new DivDropdown(conditionsElement, true);
         
         conditions.selectedValues$.next(selectedExprs.map(conditionItemToExprKey));
-        conditions.selectedValues$.subscribe(async (selection) => {
+        conditions.selectedValues$.subscribe(runSafely(async (selection) => {
             selectedExprs = selection.map(exprKeyToConditionItem);
 
             setState({ selectedExprs });
             
             await buildContent();
-        });
+        }));
     }
 
     // Zoom

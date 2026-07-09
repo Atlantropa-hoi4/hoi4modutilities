@@ -23,7 +23,7 @@ export function registerModFile(): vscode.Disposable {
     disposables.push(new vscode.Disposable(() => { modFileStatusContainer.current = null; }));
 
     // Initial status bar
-    checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
+    void checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
     return vscode.Disposable.from(...disposables);
 }
 
@@ -47,7 +47,7 @@ export function updateSelectedModFileStatus(modFile: vscode.Uri | undefined, err
 
 function onChangeWorkspaceConfiguration(e: vscode.ConfigurationChangeEvent): void {
     if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
-        checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
+        void checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
     }
 }
 
@@ -123,12 +123,12 @@ async function selectModFile(): Promise<void> {
         }
 
         if (modPath === modFileInspect?.globalValue) {
-            conf.update('modFile', undefined, vscode.ConfigurationTarget.Workspace);
+            await conf.update('modFile', undefined, vscode.ConfigurationTarget.Workspace);
         } else {
-            conf.update('modFile', modPath, vscode.ConfigurationTarget.Workspace);
+            await conf.update('modFile', modPath, vscode.ConfigurationTarget.Workspace);
         }
 
-        checkAndUpdateModFileStatus(modPath ? fileOrUriStringToUri(modPath): undefined);
+        void checkAndUpdateModFileStatus(modPath ? fileOrUriStringToUri(modPath): undefined);
     }
 }
 

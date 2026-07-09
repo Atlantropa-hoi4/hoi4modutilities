@@ -52,7 +52,7 @@ dlcZipCache = new PromiseCache({
     maxSize: 8,
 });
 
-export async function clearDlcZipCache() {
+export function clearDlcZipCache(): void {
     dlcPathsCache.clear();
     dlcZipPathsCache.clear();
     dlcZipCache?.clear();

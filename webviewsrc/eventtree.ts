@@ -1,11 +1,11 @@
-import { tryRun, enableZoom } from "./util/common";
+import { runSafely, enableZoom } from "./util/common";
 import { vscode } from "./util/vscode";
 
 const searchMatchClass = 'event-preview-search-match';
 const searchCurrentClass = 'event-preview-search-current';
 const hoverPictureViewportPadding = 12;
 
-window.addEventListener('load', tryRun(async function() {
+window.addEventListener('load', runSafely(async function() {
     const contentElement = document.getElementById('eventtreecontent') as HTMLDivElement;
     enableZoom(contentElement, 0, 0);
 

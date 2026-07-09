@@ -20,8 +20,7 @@ export async function renderGuiFile(loader: GuiFileLoader, uri: vscode.Uri, webv
     try {
         const session = new LoaderSession(false);
         const loadResult = await loader.load(session);
-        const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
-        debug('Loader session gui', loadedLoaders);
+        debug('Loader session gui', session.getLoadedLoaderNames());
 
         const guiFiles = loadResult.result.guiFiles;
         const containerWindows = chain(guiFiles).flatMap(g => g.data.guitypes).flatMap(gt => [...gt.containerwindowtype, ...gt.windowtype]).value();

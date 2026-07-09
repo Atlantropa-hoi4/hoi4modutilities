@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { localize } from '../util/i18n';
 import { Commands, WebviewType, ConfigurationKey } from '../constants';
-import { arrayToMap } from '../util/common';
-import { debug } from '../util/debug';
+import { debug, error } from '../util/debug';
 import { contextContainer } from '../context';
 import { basename, getDocumentByUri } from '../util/vsccommon';
 import { sendEvent } from '../util/telemetry';
@@ -28,7 +27,6 @@ interface PreviewManagerOptions {
 }
 
 export class PreviewManager implements vscode.WebviewPanelSerializer {
-    private readonly previewProvidersMap: Record<string, PreviewDescriptor>;
     private readonly previewProviderResolver: PreviewProviderResolver;
     private readonly dependencyTracker = new PreviewDependencyTracker();
     private readonly previewContextService: PreviewContextService;
@@ -41,15 +39,14 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private modRootWatcherGeneration = 0;
 
     constructor(
-        private readonly options: PreviewManagerOptions,
+        options: PreviewManagerOptions,
     ) {
-        this.previewProvidersMap = arrayToMap(options.previewProviders, 'type');
         this.previewProviderResolver = new PreviewProviderResolver(options.previewProviders);
         this.previewContextService = new PreviewContextService(this.previewProviderResolver);
         this.previewSessionStore = new PreviewSessionStore(this.dependencyTracker);
         this.previews = this.previewSessionStore.items;
-        this.documentUpdateScheduler = options.documentUpdateScheduler ?? new UpdateScheduler<string>(key => key);
-        this.dependencyUpdateScheduler = options.dependencyUpdateScheduler ?? new UpdateScheduler<string>(key => key);
+        this.documentUpdateScheduler = options.documentUpdateScheduler ?? new UpdateScheduler<string>(key => key, error);
+        this.dependencyUpdateScheduler = options.dependencyUpdateScheduler ?? new UpdateScheduler<string>(key => key, error);
     }
 
     public register(): vscode.Disposable {
@@ -189,8 +186,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
             };
         }
 
-        this.previews[key] = this.createPreviewItem(previewProvider, uri, panel, key);
-        await this.previews[key].initializePanelContent(document);
+        const preview = this.createPreviewItem(previewProvider, uri, panel, key);
+        await preview.initializePanelContent(document);
     }
 
     private async resolveRequestedDocument(requestUri?: vscode.Uri): Promise<vscode.TextDocument | undefined> {
@@ -221,8 +218,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private createPreviewItem(previewProvider: StandardPreviewDescriptor, uri: vscode.Uri, panel: vscode.WebviewPanel, key: string): PreviewBase {
         const previewItem = previewProvider.createPreview(uri, panel);
         debug('preview.create', { uri: key, provider: previewProvider.type, deserialized: !!panel });
-        this.previewSessionStore.bind(key, previewItem);
         this.ensurePreviewDependencyWatchers();
+        this.previewSessionStore.add(key, previewItem);
         previewItem.onDispose(() => this.disposePreviewDependencyWatchersIfIdle());
         return previewItem;
     }

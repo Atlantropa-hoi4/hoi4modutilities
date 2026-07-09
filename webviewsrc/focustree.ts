@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom, setPreviewPanDisabled, startPreviewPan } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, setPreviewPanDisabled, startPreviewPan } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference } from "lodash";
 import { renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
@@ -2497,7 +2497,7 @@ function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<
                 checkbox.checked = !!focusCheckState[focus.id];
                 const checkboxItem = new Checkbox(checkbox);
                 checkedFocuses[focus.id] = checkboxItem;
-                checkbox.addEventListener('change', async () => {
+                checkbox.addEventListener('change', runSafely(async () => {
                     if (checkbox.checked) {
                         for (const exclusiveFocus of focus.exclusive) {
                             const exclusiveCheckbox = checkedFocuses[exclusiveFocus];
@@ -2525,7 +2525,7 @@ function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<
                     }
 
                     retriggerSearch();
-                });
+                }));
             } else {
                 checkbox.parentElement?.remove();
             }
@@ -2832,7 +2832,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
     retriggerSearch();
 });
 
-window.addEventListener('load', tryRun(async function() {
+window.addEventListener('load', runSafely(async function() {
     postFocusTreeWebviewTiming({ stage: 'load' });
     window.addEventListener('message', event => {
         const message = event.data as {
@@ -3038,18 +3038,18 @@ window.addEventListener('load', tryRun(async function() {
         const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
         if (focusesElement) {
             refreshFocusTreeSelectorOptions();
-            focusesElement.addEventListener('change', async () => {
+            focusesElement.addEventListener('change', runSafely(async () => {
                 setSelectedFocusTreeByIndex(parseInt(focusesElement.value, 10));
                 updateSelectedFocusTree(true);
                 await rebuildContentSafely();
-            });
+            }));
         }
 
         const inlayWindowsElement = document.getElementById('inlay-windows') as HTMLDivElement | null;
         if (inlayWindowsElement) {
             inlayWindows = new DivDropdown(inlayWindowsElement);
             let previousSelection = inlayWindows.selectedValues$.value[0];
-            inlayWindows.selectedValues$.subscribe(async selection => {
+            inlayWindows.selectedValues$.subscribe(runSafely(async selection => {
                 const focusTree = getCurrentFocusTree();
                 const nextSelection = selection[0];
                 if (suppressInlayWindowSelectionChange) {
@@ -3063,7 +3063,7 @@ window.addEventListener('load', tryRun(async function() {
                 previousSelection = nextSelection;
                 setSelectedInlayWindowId(focusTree, nextSelection);
                 await rebuildContentSafely();
-            });
+            }));
         }
 
         if (!useConditionInFocus) {
@@ -3133,7 +3133,7 @@ window.addEventListener('load', tryRun(async function() {
             const conditionPresetsElement = document.getElementById('condition-presets') as HTMLDivElement | null;
             if (conditionPresetsElement) {
                 conditionPresetsDropdown = new DivDropdown(conditionPresetsElement);
-                conditionPresetsDropdown.selectedValues$.subscribe(async selection => {
+                conditionPresetsDropdown.selectedValues$.subscribe(runSafely(async selection => {
                     if (suppressConditionPresetSelectionChange) {
                         return;
                     }
@@ -3163,7 +3163,7 @@ window.addEventListener('load', tryRun(async function() {
                     }
                     refreshConditionPresetUi(focusTree);
                     await rebuildContentSafely();
-                });
+                }));
             }
 
             const saveConditionPresetButton = document.getElementById('save-condition-preset') as HTMLButtonElement | null;
@@ -3182,7 +3182,7 @@ window.addEventListener('load', tryRun(async function() {
             });
 
             const deleteConditionPresetButton = document.getElementById('delete-condition-preset') as HTMLButtonElement | null;
-            deleteConditionPresetButton?.addEventListener('click', async () => {
+            deleteConditionPresetButton?.addEventListener('click', runSafely(async () => {
                 const focusTree = getCurrentFocusTree();
                 const selectedPreset = focusTree ? getSelectedConditionPreset(focusTree) : undefined;
                 if (!focusTree || !selectedPreset) {
@@ -3195,12 +3195,12 @@ window.addEventListener('load', tryRun(async function() {
                 );
                 refreshConditionPresetUi(focusTree);
                 await rebuildContentSafely();
-            });
+            }));
 
             const conditionsElement = document.getElementById('conditions') as HTMLDivElement | null;
             if (conditionsElement) {
                 conditions = new DivDropdown(conditionsElement, true);
-                conditions.selectedValues$.subscribe(async (selection) => {
+                conditions.selectedValues$.subscribe(runSafely(async (selection) => {
                     if (suppressConditionSelectionChange) {
                         return;
                     }
@@ -3214,7 +3214,7 @@ window.addEventListener('load', tryRun(async function() {
                     refreshConditionPresetUi(focusTree);
 
                     await rebuildContentSafely();
-                });
+                }));
             }
         }
 
@@ -3223,10 +3223,10 @@ window.addEventListener('load', tryRun(async function() {
         setPreviewPanDisabled(focusPositionEditMode);
 
         const focusPositionEditButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
-        focusPositionEditButton?.addEventListener('click', async () => {
+        focusPositionEditButton?.addEventListener('click', runSafely(async () => {
             setFocusPositionEditMode(!focusPositionEditMode);
             await rebuildContentSafely();
-        });
+        }));
 
         const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
         if (showWarnings) {

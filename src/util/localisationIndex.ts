@@ -253,9 +253,10 @@ async function fillLocalisationItems(localisationFile: string, localisationIndex
     mod?: boolean,
     hoi4?: boolean
 }, estimatedSize?: [number]): Promise<void> {
-    const [fileBuffer] = await readFileFromModOrHOI4(localisationFile, options);
-    const processedContent = preprocessYamlContent(fileBuffer.toString());
+    let processedContent = '';
     try {
+        const [fileBuffer] = await readFileFromModOrHOI4(localisationFile, options);
+        processedContent = preprocessYamlContent(fileBuffer.toString());
         const localisations = parseLocalisationFile(processedContent);
         for (const langKey in localisations) {
             if (!localisationIndex[langKey]) {

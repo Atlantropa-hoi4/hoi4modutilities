@@ -50,7 +50,7 @@ export class WorldMap {
             }
 
             if (this.worldMapDependencies.some(d => matchPathEnd(uri.toString(), d.split('/')))) {
-                this.sendProvinceMapSummaryToWebview(false);
+                void this.sendProvinceMapSummaryToWebview(false);
             }
         },
         uri => uri.toString(),

@@ -36,7 +36,7 @@ async function selectHoiFolder(): Promise<void> {
 
     if (isFileScheme(uri)) {
         const conf = getConfiguration();
-        conf.update('installPath', uri.fsPath, vscode.ConfigurationTarget.Global);
+        await conf.update('installPath', uri.fsPath, vscode.ConfigurationTarget.Global);
     }
 }
 

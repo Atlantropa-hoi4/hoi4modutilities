@@ -113,17 +113,17 @@ async function fillFocusItems(
     options: { mod?: boolean; hoi4?: boolean },
     estimatedSize?: [number],
 ): Promise<void> {
-    const [fileBuffer, uri] = await readFileFromModOrHOI4(focusFile, options);
-    const fileContent = fileBuffer.toString();
-
-    if (!fileContent.includes('focus_tree')
-        && !fileContent.includes('shared_focus')
-        && !fileContent.includes('joint_focus')) {
-        removeFocusFileFromIndex(focusIndex, focusFile);
-        return;
-    }
-
     try {
+        const [fileBuffer] = await readFileFromModOrHOI4(focusFile, options);
+        const fileContent = fileBuffer.toString();
+
+        if (!fileContent.includes('focus_tree')
+            && !fileContent.includes('shared_focus')
+            && !fileContent.includes('joint_focus')) {
+            removeFocusFileFromIndex(focusIndex, focusFile);
+            return;
+        }
+
         applyFocusFileToIndex(
             focusIndex,
             focusFile,
@@ -235,7 +235,7 @@ function addWorkspaceFocusIndex(file: vscode.Uri) {
     if (wsFolder) {
         const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
         if (relative && relative.startsWith('common/national_focus/')) {
-            fillFocusItems(relative, workspaceFocusIndex, { hoi4: false });
+            void fillFocusItems(relative, workspaceFocusIndex, { hoi4: false });
         }
     }
 }

@@ -174,8 +174,7 @@ export async function buildFocusTreeRenderBaseState(
     const loadResult = await loader.load(session);
     session.throwIfCancelled();
     const loadDurationMs = Date.now() - loadStart;
-    const loadedLoaders = Array.from((session as any).loadedLoader).map<string>(v => (v as any).toString());
-    debug('Loader session focus tree', loadedLoaders);
+    debug('Loader session focus tree', session.getLoadedLoaderNames());
 
     const focusTrees = loadResult.result.focusTrees;
     const xGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.x, defaultXGridSize);

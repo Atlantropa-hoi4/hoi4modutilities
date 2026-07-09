@@ -67,7 +67,7 @@ export class CountriesLoader extends Loader<Country[]> {
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<Country[]>> {
-        this.fireOnProgressEvent(localize('worldmap.progress.loadingcountries', 'Loading countries...'));
+        await this.fireOnProgressEvent(localize('worldmap.progress.loadingcountries', 'Loading countries...'));
 
         const tagsResult = await this.countryTagsLoader.load(session);
         const countryTags = tagsResult.result;
@@ -216,7 +216,7 @@ async function loadCountry(tag: string, countryFile: string): Promise<Country | 
     }
 }
 
-async function applyColorFromColorTxt(countries: Country[], colorsFile: HOIPartial<ColorsFile>): Promise<void> {
+function applyColorFromColorTxt(countries: Country[], colorsFile: HOIPartial<ColorsFile>): void {
     for (const country of countries) {
         const colorIncolors = colorsFile._map[country.tag];
         if (colorIncolors?._value.color) {

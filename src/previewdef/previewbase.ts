@@ -212,7 +212,7 @@ export abstract class PreviewBase {
             return;
         }
 
-        this.onDocumentChange(document);
+        void this.onDocumentChange(document);
     }
 
     protected abstract getContent(document: vscode.TextDocument): Promise<string>;

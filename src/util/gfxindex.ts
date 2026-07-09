@@ -276,7 +276,7 @@ function addWorkspaceGfxIndex(file: vscode.Uri) {
     if (wsFolder) {
         const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
         if (relative && relative.startsWith('interface/')) {
-            fillGfxItems(relative, workspaceGfxIndex, { hoi4: false });
+            void fillGfxItems(relative, workspaceGfxIndex, { hoi4: false });
         }
     }
 }

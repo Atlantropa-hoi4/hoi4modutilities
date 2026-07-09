@@ -541,3 +541,14 @@ Image decode concurrency guard 2026-06-14:
 - [x] Cover queued limiter behavior with focused unit tests.
 
 Review note: image decoding now runs through a three-slot limiter before DDS/TGA/PNG decode and PNG encode work, reducing peak memory risk when many distinct preview images are requested at once while preserving existing cache expiry and byte-cap behavior.
+
+Codebase review and reliability refactor 2026-07-10:
+- [x] Establish a clean TypeScript, lint, and full unit-test baseline before editing.
+- [x] Audit shared preview, loader, scheduler, and lifecycle boundaries for high-confidence refactor candidates.
+- [x] Encapsulate loader-session state and remove preview-side private-field access.
+- [x] Prevent stale preview lifecycle events from mutating replacement sessions.
+- [x] Contain synchronous and asynchronous failures from delayed update jobs.
+- [x] Normalize host and webview async callback boundaries found by stricter Promise checks.
+- [x] Reverify focused coverage, TypeScript checks, lint, build, full unit tests, UI smoke tests, and whitespace.
+
+Review note: Loader session state now has an explicit child-sharing API and key-safe loader cache, preview replacement lifecycle events cannot delete or reindex the current preview, delayed update failures are routed through the extension error reporter, and async host/webview callbacks no longer leak rejected promises. Added 10 focused regression tests. Reverified with strict floating/misused Promise ESLint checks, `npm test` (321 unit tests), `npm run test-ui` (15 Extension Host smoke tests), and `git diff --check`.

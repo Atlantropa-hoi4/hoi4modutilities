@@ -12,20 +12,24 @@ export class PreviewSessionStore {
         return this.items[key];
     }
 
-    public set(key: string, preview: PreviewBase): void {
+    public add(key: string, preview: PreviewBase): void {
+        const previousPreview = this.items[key];
+        if (previousPreview && previousPreview !== preview) {
+            this.dependencyTracker.remove(previousPreview);
+        }
         this.items[key] = preview;
-    }
 
-    public bind(key: string, preview: PreviewBase): void {
         preview.onDispose(() => {
-            const currentPreview = this.items[key];
-            if (currentPreview) {
-                this.dependencyTracker.remove(currentPreview);
+            this.dependencyTracker.remove(preview);
+            if (this.items[key] === preview) {
                 delete this.items[key];
             }
         });
 
         preview.onDependencyChanged((newDependencies) => {
+            if (this.items[key] !== preview) {
+                return;
+            }
             this.dependencyTracker.remove(preview);
             this.dependencyTracker.add(preview, newDependencies);
         });

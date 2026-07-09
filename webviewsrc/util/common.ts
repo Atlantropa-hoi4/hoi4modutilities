@@ -92,21 +92,35 @@ export function tryRun<T extends (...args: any[]) => any>(func: T): (...args: Pa
         try {
             const result = func.apply(this, args);
             if (result instanceof Promise) {
-                return result.catch(e => {
-                    console.error(e);
-                    sendException(forceError(e));
-                }) as ReturnType<T>;
+                return result.catch(reportRunError) as ReturnType<T>;
             }
 
             return result;
 
         } catch (e) {
-            console.error(e);
-            sendException(forceError(e));
+            reportRunError(e);
         }
 
         return undefined;
     };
+}
+
+export function runSafely<T extends (...args: any[]) => unknown>(func: T): (...args: Parameters<T>) => void {
+    return function(this: any, ...args): void {
+        try {
+            const result = func.apply(this, args);
+            if (result instanceof Promise) {
+                void result.catch(reportRunError);
+            }
+        } catch (e) {
+            reportRunError(e);
+        }
+    };
+}
+
+function reportRunError(error: unknown): void {
+    console.error(error);
+    sendException(forceError(error));
 }
 
 let shouldDisableZoom = false;

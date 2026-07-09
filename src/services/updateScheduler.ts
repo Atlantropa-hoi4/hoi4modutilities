@@ -6,12 +6,13 @@ export class UpdateScheduler<TKey> {
 
     constructor(
         private readonly serialize: (key: TKey) => string,
+        private readonly onError: (error: unknown) => void = reportedError => console.error(reportedError),
     ) {}
 
     public schedule(key: TKey, delayMs: number, action: ScheduledAction): void {
         const timerKey = this.serialize(key);
         const existingTimer = this.timers.get(timerKey);
-        if (existingTimer) {
+        if (existingTimer !== undefined) {
             clearTimeout(existingTimer);
         }
 
@@ -20,7 +21,11 @@ export class UpdateScheduler<TKey> {
             this.timers.delete(timerKey);
             const scheduledAction = this.jobs.get(timerKey);
             this.jobs.delete(timerKey);
-            void scheduledAction?.();
+            if (scheduledAction) {
+                void Promise.resolve()
+                    .then(scheduledAction)
+                    .catch(this.onError);
+            }
         }, Math.max(0, delayMs));
         this.timers.set(timerKey, timer);
     }
@@ -28,7 +33,7 @@ export class UpdateScheduler<TKey> {
     public cancel(key: TKey): void {
         const timerKey = this.serialize(key);
         const existingTimer = this.timers.get(timerKey);
-        if (existingTimer) {
+        if (existingTimer !== undefined) {
             clearTimeout(existingTimer);
         }
         this.timers.delete(timerKey);

@@ -104,6 +104,7 @@ Recommended local environment:
 - For targeted test debugging, `npm run compile-tests` is the narrow compile step before running emitted tests from `out/test`.
 - Run focused unit tests after `npm run compile-tests` with `npx mocha out/test/unit/<test-file>.test.js`; use multiple emitted test files when the behavior crosses fixtures or preview boundaries.
 - Parser, formatter, localisation, indexing, or service changes: run targeted/unit tests and relevant fixture-backed tests.
+- Formatter profile or spacing changes: run `npm run compile-tests` plus `npx mocha out/test/unit/formatter.test.js`; include GUI coordinate/vector cases when touching `.gui`/`.gfx` formatting.
 - Parser token/position handling changes: run `npm run compile-tests` plus `npx mocha out/test/unit/parser.test.js`; include index consumers such as `out/test/unit/localisation-index.test.js` or Focus Tree/index tests when the parser change is for index-only loading.
 - Localisation index parsing or fallback changes: run `npm run compile-tests` plus `npx mocha out/test/unit/localisation-index.test.js`; include Focus/Event preview tests when visible preview text can change.
 - Feature flag changes: run `npm run compile-tests` plus `npx mocha out/test/unit/featureflags.test.js`; add provider-specific tests when a flag changes preview rendering.

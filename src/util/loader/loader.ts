@@ -1,68 +1,12 @@
 import * as vscode from 'vscode';
-import * as path from 'path';;
+import * as path from 'path';
 import { hoiFileExpiryToken, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from '../fileloader';
 import { error } from '../debug';
-import { UserError } from '../common';
 import { Dependency, getDependenciesFromText } from '../dependency';
 import { sendEvent } from '../telemetry';
+import { LoaderSession } from './loadersession';
 export { Dependency } from '../dependency';
-
-export class LoaderSession {
-    private loadedLoader: Set<Loader<unknown, unknown>> = new Set();
-    private shouldLoaderReload: Map<Loader<unknown, unknown>, boolean | 'checking'> = new Map();
-    private cachedLoader: Record<string, Loader<unknown, unknown>> = {};
-    public loadingLoader: Loader<unknown, unknown>[] = [];
-
-    constructor(public force: boolean, private cancelled?: () => boolean) {
-    }
-
-    public isLoaded(loader: Loader<unknown, unknown>): boolean {
-        return this.loadedLoader.has(loader);
-    }
-
-    public setLoaded(loader: Loader<unknown, unknown>) {
-        this.loadedLoader.add(loader);
-    }
-
-    public checkingShouldReload(loader: Loader<unknown, unknown>) {
-        this.shouldLoaderReload.set(loader, 'checking');
-    }
-
-    public setShouldReload(loader: Loader<unknown, unknown>) {
-        this.shouldLoaderReload.set(loader, true);
-    }
-
-    public clearShouldReload(loader: Loader<unknown, unknown>) {
-        this.shouldLoaderReload.delete(loader);
-    }
-
-    public shouldReload(loader: Loader<unknown, unknown>): boolean | 'checking' {
-        return this.shouldLoaderReload.get(loader) ?? false;
-    }
-
-    public createOrGetCachedLoader<R extends Loader<unknown, unknown>>(file: string, loaderType: { new (file: string): R }): R {
-        const cachedLoader = this.cachedLoader[file];
-        if (cachedLoader instanceof loaderType) {
-            return cachedLoader;
-        } else {
-            const loader = this.cachedLoader[file] = new loaderType(file);
-            return loader;
-        }
-    }
-
-    public forChild(): LoaderSession {
-        const clone = { ...this };
-        clone.loadingLoader = [ ...this.loadingLoader ];
-        Object.setPrototypeOf(clone, Object.getPrototypeOf(this));
-        return clone;
-    }
-
-    public throwIfCancelled(): void {
-        if (this.cancelled?.call(this)) {
-            throw new UserError('Load session cancelled.');
-        }
-    }
-}
+export { LoaderSession } from './loadersession';
 
 export type LoadResult<T, E={}> = { result: T, dependencies: string[] } & E;
 export type LoadResultOD<T, E={}> = Omit<LoadResult<T, E>, 'dependencies'> & Partial<Pick<LoadResult<T, E>, 'dependencies'>> & E;
@@ -89,7 +33,7 @@ export abstract class Loader<T, E = {}> {
         if (this.cachedValue === undefined || (!session.isLoaded(this) && (session.force || await this.shouldReload(session)))) {
             const loadStartTime = Date.now();
 
-            session.loadingLoader.push(this);
+            session.beginLoading(this);
             try {
                 session.throwIfCancelled();
                 this.beforeLoadImpl(session);
@@ -102,9 +46,7 @@ export abstract class Loader<T, E = {}> {
                 session.setLoaded(this);
             } finally {
                 this.loadingPromise = undefined;
-                if (session.loadingLoader.pop() !== this) {
-                    throw new Error('loadingLoader corrupted.');
-                }
+                session.endLoading(this);
             }
 
             const timeElapsed = Date.now() - loadStartTime;
@@ -178,7 +120,7 @@ export abstract class FileLoader<T, E={}> extends Loader<T, E> {
     }
 
     protected beforeLoadImpl(session: LoaderSession): void {
-        checkLoaderSessionLoadingFile(session, this.file);
+        session.throwIfLoadingFile(this.file);
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
@@ -273,7 +215,7 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
     }
 
     protected beforeLoadImpl(session: LoaderSession): void {
-        checkLoaderSessionLoadingFile(session, this.file);
+        session.throwIfLoadingFile(this.file);
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
@@ -392,14 +334,4 @@ class LoaderDependencies {
 
 export function mergeInLoadResult<K extends string, T extends { [k in K]: any[] }>(loadResults: T[], key: K): T[K] {
     return loadResults.reduce<T[K]>((p, c) => (p as any).concat(c[key]), [] as unknown as T[K]);
-}
-
-function checkLoaderSessionLoadingFile(session: LoaderSession, file: string) {
-    const length = session.loadingLoader.length - 1;
-    for (let i = 0; i < length; i++) {
-        const loader = session.loadingLoader[i];
-        if ('file' in loader && (loader as any).file === file) {
-            throw new UserError('Circular dependency when loading file. Loading loaders: ' + session.loadingLoader);
-        }
-    }
 }
