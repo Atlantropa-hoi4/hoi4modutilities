@@ -52,3 +52,14 @@ export function applyFocusFileToIndex(index: FocusIndexState, focusFile: string,
 export function findFileByFocusKeyInIndex(index: FocusIndexState, key: string): string | undefined {
     return index.byId[key]?.[0];
 }
+
+export function findFileByFocusKeyInLayeredIndexes(indexes: readonly FocusIndexState[], key: string): string | undefined {
+    for (const index of indexes) {
+        const file = findFileByFocusKeyInIndex(index, key);
+        if (file !== undefined) {
+            return file;
+        }
+    }
+
+    return undefined;
+}

@@ -165,6 +165,43 @@ describe('world map webview loader batching', () => {
         assert.deepStrictEqual(loader.worldMap.conditionExprs, conditionExprs);
         assert.deepStrictEqual(loader.worldMap.bookmarks, bookmarks);
     });
+
+    it('accepts progress and errors from a new generation before receiving its summary', () => {
+        const postedMessages: WorldMapMessage[] = [];
+        const windowTarget = new EventTarget();
+
+        (global as any).acquireVsCodeApi = () => ({
+            postMessage: (message: WorldMapMessage) => postedMessages.push(message),
+            getState: () => ({}),
+            setState: () => undefined,
+        });
+        (global as any).window = windowTarget;
+
+        const { Loader } = require('../../webviewsrc/worldmap/loader') as typeof import('../../webviewsrc/worldmap/loader');
+        const loader = new Loader();
+
+        dispatchWindowMessage(windowTarget, {
+            command: 'progress',
+            loadGeneration: 1,
+            data: 'Loading default.map...',
+        });
+        assert.strictEqual(loader.progressText, 'Loading default.map...');
+
+        dispatchWindowMessage(windowTarget, {
+            command: 'progress',
+            loadGeneration: 0,
+            data: 'Stale progress',
+        });
+        assert.strictEqual(loader.progressText, 'Loading default.map...');
+
+        dispatchWindowMessage(windowTarget, {
+            command: 'error',
+            loadGeneration: 1,
+            data: 'Failed to load world map',
+        });
+        assert.strictEqual(loader.progressText, 'Failed to load world map');
+        assert.strictEqual(loader.loading$.value, false);
+    });
 });
 
 function emptyWorldMapSummary(): any {

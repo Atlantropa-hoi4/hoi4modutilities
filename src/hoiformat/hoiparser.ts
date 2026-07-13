@@ -145,7 +145,7 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
     if (name.value === '{') {
         const value = parseBlockContent(tokens, keepTokens);
         const right = tokens.next();
-        if (right.value !== '}') {
+        if (right.value !== '}' && right.type !== 'eof') {
             tokens.throw("Expect a '}'", true);
         }
         return {

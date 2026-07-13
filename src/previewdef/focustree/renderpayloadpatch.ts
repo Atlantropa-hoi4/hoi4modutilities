@@ -24,6 +24,7 @@ export interface FocusTreeRenderCache {
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
     deferredAssetLoad: boolean;
+    localisationIndexReady: boolean;
     treePatchSignatures: Record<string, string>;
     treeStructureSignatures: Record<string, string>;
     focusRenderSignatures: Record<string, string>;
@@ -81,6 +82,7 @@ export function createFocusTreeRenderCache(
         hasFocusSelector: payload.hasFocusSelector,
         hasWarningsButton: payload.hasWarningsButton,
         deferredAssetLoad: payload.deferredAssetLoad,
+        localisationIndexReady: payload.localisationIndexReady,
         ...metadata,
     };
 }
@@ -179,6 +181,7 @@ export async function createFocusTreeRenderUpdate(
         hasFocusSelector: nextBaseState.hasFocusSelector,
         hasWarningsButton: nextBaseState.hasWarningsButton,
         deferredAssetLoad: nextBaseState.deferredAssetLoad,
+        localisationIndexReady: nextBaseState.localisationIndexReady,
         ...nextMetadata,
     };
     recordFocusTreePayloadSize('partial', nextBaseState.deferredAssetLoad, {
@@ -253,6 +256,7 @@ function shouldUseFullRender(
         || previous.hasFocusSelector !== nextBaseState.hasFocusSelector
         || previous.hasWarningsButton !== nextBaseState.hasWarningsButton
         || previous.deferredAssetLoad !== nextBaseState.deferredAssetLoad
+        || previous.localisationIndexReady !== nextBaseState.localisationIndexReady
         || previous.xGridSize !== nextBaseState.xGridSize
         || previous.yGridSize !== nextBaseState.yGridSize
         || previous.focusPositionActiveFile !== nextBaseState.focusPositionActiveFile

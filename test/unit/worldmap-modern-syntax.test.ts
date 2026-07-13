@@ -39,6 +39,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const { parseStateFileContentForTest } = require('../../src/previewdef/worldmap/loader/states') as typeof import('../../src/previewdef/worldmap/loader/states');
 const { parseStrategicRegionFileContentForTest } = require('../../src/previewdef/worldmap/loader/strategicregion') as typeof import('../../src/previewdef/worldmap/loader/strategicregion');
 const { parseBookmarkFileContentForTest } = require('../../src/previewdef/worldmap/loader/bookmarks') as typeof import('../../src/previewdef/worldmap/loader/bookmarks');
+const { inferDefaultMapFromConventionalFilesForTest } = require('../../src/previewdef/worldmap/loader/provincemap') as typeof import('../../src/previewdef/worldmap/loader/provincemap');
 
 nodeModule._load = originalLoad;
 
@@ -241,5 +242,37 @@ strategic_region = {
         assert.strictEqual(strategicRegion.weatherPeriods[0].values.no_phenomenon, 0.8);
         assert.deepStrictEqual(strategicRegion.weatherPeriods[0].values.rain_light, [0.1, 0.2]);
         assert.deepStrictEqual(strategicRegion.weatherPeriods[1].between, [31, 60]);
+    });
+});
+
+describe('world map default.map fallback', () => {
+    const conventionalFiles = new Set([
+        'map/definition.csv',
+        'map/provinces.bmp',
+        'map/adjacencies.csv',
+        'map/continent.txt',
+        'map/rivers.bmp',
+    ]);
+
+    it('infers conventional names when all required map files exist', async () => {
+        const result = await inferDefaultMapFromConventionalFilesForTest(
+            async file => conventionalFiles.has(file) ? file : undefined,
+        );
+
+        assert.deepStrictEqual(result, {
+            definitions: 'definition.csv',
+            provinces: 'provinces.bmp',
+            adjacencies: 'adjacencies.csv',
+            continent: 'continent.txt',
+            rivers: 'rivers.bmp',
+        });
+    });
+
+    it('keeps the missing default.map error path when a conventional file is absent', async () => {
+        const result = await inferDefaultMapFromConventionalFilesForTest(
+            async file => file === 'map/rivers.bmp' || file === 'map/default.map' || !conventionalFiles.has(file) ? undefined : file,
+        );
+
+        assert.strictEqual(result, undefined);
     });
 });

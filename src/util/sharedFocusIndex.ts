@@ -11,6 +11,7 @@ import {
     applyFocusFileToIndex,
     createEmptyFocusIndexState,
     findFileByFocusKeyInIndex,
+    findFileByFocusKeyInLayeredIndexes,
     FocusIndexState,
     removeFocusFileFromIndex,
 } from "./sharedFocusIndexState";
@@ -20,11 +21,13 @@ export {
     applyFocusFileToIndex,
     createEmptyFocusIndexState,
     findFileByFocusKeyInIndex,
+    findFileByFocusKeyInLayeredIndexes,
     FocusIndexState,
     removeFocusFileFromIndex,
 };
 
 const globalFocusIndex: FocusIndexState = createEmptyFocusIndexState();
+const dlcFocusIndex: FocusIndexState = createEmptyFocusIndexState();
 let workspaceFocusIndex: FocusIndexState = createEmptyFocusIndexState();
 const sharedFocusIndexBuildConcurrency = 8;
 const sharedFocusIndexService = new IndexService<FocusIndexState>({
@@ -36,6 +39,12 @@ const sharedFocusIndexService = new IndexService<FocusIndexState>({
             }
             for (const key of Object.keys(globalFocusIndex.byId)) {
                 delete globalFocusIndex.byId[key];
+            }
+            for (const key of Object.keys(dlcFocusIndex.byFile)) {
+                delete dlcFocusIndex.byFile[key];
+            }
+            for (const key of Object.keys(dlcFocusIndex.byId)) {
+                delete dlcFocusIndex.byId[key];
             }
         },
         statusMessage: 'Building Shared Focus index...',
@@ -67,10 +76,18 @@ export function registerSharedFocusIndex(): vscode.Disposable {
 }
 
 async function buildGlobalFocusIndex(estimatedSize: [number]): Promise<void> {
-    const options = { mod: false, hoi4: true, dlc: true, recursively: true };
-    const focusFiles = await listFilesFromModOrHOI4('common/national_focus', options);
-    await mapWithConcurrency(focusFiles, sharedFocusIndexBuildConcurrency, f =>
-        fillFocusItems('common/national_focus/' + f, globalFocusIndex, options, estimatedSize));
+    const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
+    const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
+    const [baseFocusFiles, dlcFocusFiles] = await Promise.all([
+        listFilesFromModOrHOI4('common/national_focus', baseOptions),
+        listFilesFromModOrHOI4('common/national_focus', dlcOptions),
+    ]);
+    await Promise.all([
+        mapWithConcurrency(baseFocusFiles, sharedFocusIndexBuildConcurrency, f =>
+            fillFocusItems('common/national_focus/' + f, globalFocusIndex, baseOptions, estimatedSize)),
+        mapWithConcurrency(dlcFocusFiles, sharedFocusIndexBuildConcurrency, f =>
+            fillFocusItems('common/national_focus/' + f, dlcFocusIndex, dlcOptions, estimatedSize)),
+    ]);
 }
 
 async function buildWorkspaceFocusIndex(estimatedSize: [number]): Promise<void> {
@@ -148,7 +165,7 @@ async function fillFocusItems(
 // Function to find the file name containing the specified focus key
 export async function findFileByFocusKey(key: string): Promise<string | undefined> {
     await Promise.all([ensureGlobalFocusIndex(), ensureWorkspaceFocusIndex()]);
-    return findFileByFocusKeyInIndex(workspaceFocusIndex, key) ?? findFileByFocusKeyInIndex(globalFocusIndex, key);
+    return findFileByFocusKeyInLayeredIndexes([workspaceFocusIndex, dlcFocusIndex, globalFocusIndex], key);
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {

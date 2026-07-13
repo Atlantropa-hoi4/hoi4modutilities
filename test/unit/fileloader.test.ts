@@ -89,6 +89,7 @@ const {
     clearDlcZipCache,
     getModRootCandidatePaths,
     isPathCoveredByReplacePath,
+    listFilesInDlcZipEntries,
     listFilesFromModOrHOI4,
     readFileFromModOrHOI4,
 } = require('../../src/util/fileloader') as typeof import('../../src/util/fileloader');
@@ -198,6 +199,22 @@ describe('fileloader mod root helpers', () => {
 
         assert.deepStrictEqual(withDlc, ['dlc-only.txt', 'shared.txt', 'base-only.txt']);
         assert.deepStrictEqual(withoutDlc, ['shared.txt', 'base-only.txt']);
+    });
+
+    it('lists recursive DLC ZIP files without requiring explicit directory entries', () => {
+        const entries = [
+            { entryName: 'interface/root.gfx', isDirectory: false },
+            { entryName: 'interface/sub/nested.gfx', isDirectory: false },
+            { entryName: 'interface/sub/deeper/second.gfx', isDirectory: false },
+            { entryName: 'common/ignored.txt', isDirectory: false },
+        ] as any;
+
+        assert.deepStrictEqual(listFilesInDlcZipEntries(entries, 'interface'), ['root.gfx']);
+        assert.deepStrictEqual(listFilesInDlcZipEntries(entries, 'interface', true), [
+            'root.gfx',
+            'sub/nested.gfx',
+            'sub/deeper/second.gfx',
+        ]);
     });
 
     it('releases file read slots after queued reads complete', async () => {

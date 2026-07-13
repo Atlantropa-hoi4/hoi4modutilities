@@ -8,7 +8,8 @@ import { DivDropdown } from "../util/dropdown";
 import { BehaviorSubject, combineLatest, fromEvent } from 'rxjs';
 import { Renderer } from './renderer';
 import { sendEvent } from '../util/telemetry';
-import { ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../../src/hoiformat/condition";
+import { ConditionItem, stringValueToConditionItem } from "../../src/hoiformat/condition";
+import { buildWorldMapConditionOptions } from "./conditionoptions";
 
 export type ViewMode = 'province' | 'state' | 'strategicregion' | 'warnings';
 export type ColorSet = 'provinceid' | 'provincetype' | 'terrain' | 'owner' | 'controller' | 'stateid' | 'manpower' |
@@ -75,20 +76,11 @@ export class TopBar extends Subscriber {
     }
 
     private setupConditions = (worldMap: FEWorldMap) => {
-        const bookmarkNames = new Map<string, string[]>();
-        for (const bookmark of worldMap.bookmarks ?? []) {
-            const key = `${bookmark.date.year}.${bookmark.date.month}.${bookmark.date.day}.${bookmark.date.hour}`;
-            const names = bookmarkNames.get(key) ?? [];
-            bookmarkNames.set(key, [...names, bookmark.name]);
+        const options = buildWorldMapConditionOptions(worldMap);
+        if (!options) {
+            return;
         }
 
-        const options = (worldMap.conditionExprs ?? []).map(option => {
-            const names = option.scopeName === '' ? bookmarkNames.get(option.nodeContent) : undefined;
-            return {
-                value: conditionItemToStringValue(option),
-                text: names ? `${names.join(' / ')} (${option.nodeContent})` : conditionToString(option),
-            };
-        });
         const optionValues = new Set(options.map(option => option.value));
         const selectedConditions = this.conditions.selectedValues$.value.filter(value => optionValues.has(value));
         this.conditions.setupOptions(options);

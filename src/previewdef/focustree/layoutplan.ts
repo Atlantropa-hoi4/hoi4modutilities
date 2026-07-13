@@ -74,7 +74,7 @@ export function resolveFocusTreeLayoutPlan(
 
     const fallbackExprs = [{ scopeName: '', nodeContent: `has_focus_tree = ${focusTree.id}` }, ...checkedExprs];
     return {
-        layoutPlan: getCachedFocusTreeLayoutPlan(focusTree, fallbackExprs, hideDisallowedFocuses),
+        layoutPlan: getCachedFocusTreeLayoutPlan(focusTree, fallbackExprs, false),
         renderExprs: fallbackExprs,
         clearedSelectedExprs: true,
     };

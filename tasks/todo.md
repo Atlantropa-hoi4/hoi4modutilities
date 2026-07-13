@@ -568,3 +568,29 @@ Upstream v0.14.0 integration 2026-07-14:
 - [x] Run the repository release verification pipeline and review the resolved merge diff/status.
 
 Review note: Integrated upstream v0.14.0 across the fork's TypeScript 6, esbuild, cached-loader, and snapshot-based preview architecture without replacing fork-specific APIs or generated-source workflow. `npm run verify` passed with 335 unit tests, 15 Extension Host smoke tests, production builds, lint, and a packaged `hoi4modutilities-0.14.0.vsix`; final whitespace and upstream-coverage reviews found no remaining omissions.
+
+Focus Tree ID/Name and drag regression 2026-07-14:
+- [x] Reproduce the blank Focus canvas with a persisted condition preset and inspect the installed v0.14.0 webview.
+- [x] Clear condition visibility filtering when the selected condition combination hides every focus.
+- [x] Force a full Focus HTML refresh when the localisation index transitions to ready after asset hydration.
+- [x] Reverify focused Focus layout/payload tests, TypeScript checks, lint, webview build, UI smoke, and whitespace.
+
+Review note: Fixed the blank-tree fallback so clearing an over-restrictive condition preset renders all focuses, and made localisation-index readiness invalidate the cached Focus HTML so ID/Name switching reflects loaded names after deferred hydration. Focused tests passed (81 + 15), all 337 unit tests passed, and `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui`, and `git diff --check` succeeded.
+
+World Map zero-progress regression 2026-07-14:
+- [x] Trace the Faith-in-Steel preview failure through the VS Code renderer log and mod map layout.
+- [x] Infer the conventional map manifest only when `default.map` is unavailable and every required map asset exists.
+- [x] Accept progress and error messages for a newer load generation before its map summary arrives.
+- [x] Reverify focused World Map tests, TypeScript checks, lint, webview build, UI smoke, packaging, and whitespace.
+
+Review note: Faith-in-Steel omits `map/default.map` while providing all five conventional map assets under a replaced `map` path. The World Map loader now infers only that complete conventional manifest, and the webview adopts newer progress/error generations before the summary so load failures cannot remain at 0%. Focused World Map tests passed (13), all 340 unit tests passed, and `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui` (15 passing), `npm run package`, and `git diff --check` succeeded.
+
+Upstream v0.14.0 merged-feature deep audit 2026-07-14:
+- [x] Recheck every v0.14.0 feature surface against the merge diff and current HOI4 1.18 data.
+- [x] Repair recursive DLC ZIP discovery and deterministic workspace/DLC/base index precedence.
+- [x] Repair Technology conditional-branch propagation, hidden XOR links, and stale folder condition state.
+- [x] Preserve World Map scenario conditions across forced-refresh placeholder maps.
+- [x] Extend partial parser recovery through nested anonymous blocks at EOF.
+- [x] Add focused regression coverage and run the complete release verification pipeline.
+
+Review note: The deep audit found and fixed five additional regression classes beyond the earlier Focus Tree and World Map failures: nested Technology branch/XOR visibility, refresh-time World Map scenario loss, nested anonymous-block EOF recovery, recursive DLC ZIP omissions, and nondeterministic DLC/base localisation and shared-focus precedence. Focus conditional/alternate/overlay art, forced small Technology layouts, ID/name toggles, right-button panning, owner/controller colors, and feature-flag serialization were also rechecked without further defects. `npm run verify` passed with 349 unit tests, 15 Extension Host smoke tests, production bundles, lint, and a packaged `hoi4modutilities-0.14.0.vsix`.

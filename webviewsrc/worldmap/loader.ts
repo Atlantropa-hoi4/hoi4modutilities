@@ -1,4 +1,4 @@
-import { WorldMapMessage, Province, WorldMapData, RequestMapItemMessage, State, Country, Point } from "./definitions";
+import { WorldMapMessage, Province, WorldMapData, RequestMapItemMessage, State, Country, Point, ErrorMessage, ProgressMessage } from "./definitions";
 import { copyArray } from "../util/common";
 import { inBBox } from "./graphutils";
 import { Subscriber } from "../util/event";
@@ -193,14 +193,14 @@ export class Loader extends Subscriber {
                     }
                     break;
                 case 'progress':
-                    if (!this.isCurrentLoadMessage(message)) {
+                    if (!this.acceptLoadStatusMessage(message)) {
                         break;
                     }
                     this.progressText = message.data;
                     this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
                     break;
                 case 'error':
-                    if (!this.isCurrentLoadMessage(message)) {
+                    if (!this.acceptLoadStatusMessage(message)) {
                         break;
                     }
                     this.progressText = message.data;
@@ -303,6 +303,20 @@ export class Loader extends Subscriber {
         return !('loadGeneration' in message)
             || message.loadGeneration === undefined
             || message.loadGeneration === this.loadGeneration;
+    }
+
+    private acceptLoadStatusMessage(message: ProgressMessage | ErrorMessage): boolean {
+        const loadGeneration = message.loadGeneration;
+        if (loadGeneration === undefined) {
+            return true;
+        }
+
+        if (loadGeneration < this.loadGeneration) {
+            return false;
+        }
+
+        this.loadGeneration = loadGeneration;
+        return true;
     }
 }
 

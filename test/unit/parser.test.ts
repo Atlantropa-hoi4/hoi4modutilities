@@ -200,4 +200,19 @@ describe('parser fixtures', () => {
         assert.deepStrictEqual((focusTree.value as any[]).map(child => child.name), ['id']);
         assert.strictEqual(focusTree.valueEndToken.type, 'eof');
     });
+
+    it('keeps nested anonymous block results when every open block reaches EOF', () => {
+        const node = parseHoi4File([
+            'outer = {',
+            '    {',
+            '        inner = yes',
+        ].join('\n'));
+        const [outer] = node.value as any[];
+        const [anonymous] = outer.value as any[];
+
+        assert.strictEqual(anonymous.name, null);
+        assert.deepStrictEqual((anonymous.value as any[]).map(child => child.name), ['inner']);
+        assert.strictEqual(anonymous.valueEndToken.type, 'eof');
+        assert.strictEqual(outer.valueEndToken.type, 'eof');
+    });
 });

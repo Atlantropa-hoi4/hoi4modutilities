@@ -3,6 +3,7 @@ import {
     applyFocusFileToIndex,
     createEmptyFocusIndexState,
     findFileByFocusKeyInIndex,
+    findFileByFocusKeyInLayeredIndexes,
     removeFocusFileFromIndex,
 } from '../../src/util/sharedFocusIndexState';
 
@@ -37,5 +38,27 @@ describe('shared focus index helpers', () => {
 
         assert.strictEqual(findFileByFocusKeyInIndex(index, 'FOCUS_SHARED'), 'common/national_focus/b.txt');
         assert.strictEqual(index.byFile['common/national_focus/a.txt'], undefined);
+    });
+
+    it('resolves workspace, DLC, and base-game indexes in layer order', () => {
+        const workspaceIndex = createEmptyFocusIndexState();
+        const dlcIndex = createEmptyFocusIndexState();
+        const baseIndex = createEmptyFocusIndexState();
+        applyFocusFileToIndex(baseIndex, 'common/national_focus/base.txt', ['BASE_ONLY', 'SHARED']);
+        applyFocusFileToIndex(dlcIndex, 'common/national_focus/dlc.txt', ['DLC_ONLY', 'SHARED']);
+        applyFocusFileToIndex(workspaceIndex, 'common/national_focus/mod.txt', ['SHARED']);
+
+        assert.strictEqual(
+            findFileByFocusKeyInLayeredIndexes([workspaceIndex, dlcIndex, baseIndex], 'SHARED'),
+            'common/national_focus/mod.txt',
+        );
+        assert.strictEqual(
+            findFileByFocusKeyInLayeredIndexes([workspaceIndex, dlcIndex, baseIndex], 'DLC_ONLY'),
+            'common/national_focus/dlc.txt',
+        );
+        assert.strictEqual(
+            findFileByFocusKeyInLayeredIndexes([workspaceIndex, dlcIndex, baseIndex], 'BASE_ONLY'),
+            'common/national_focus/base.txt',
+        );
     });
 });

@@ -30,6 +30,7 @@ import {
     resolveFocusLocalizationTextByIdIfReady,
 } from './focusrender';
 import { sortFocusWarnings } from './focuslint';
+import { isLocalisationIndexReady } from '../../util/localisationIndex';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
@@ -55,6 +56,7 @@ export interface FocusTreeRenderPayload {
     hasFocusSelector: boolean;
     hasWarningsButton: boolean;
     deferredAssetLoad: boolean;
+    localisationIndexReady: boolean;
 }
 
 export interface FocusTreeRenderBaseState {
@@ -76,6 +78,7 @@ export interface FocusTreeRenderBaseState {
     hasWarningsButton: boolean;
     loadDurationMs: number;
     deferredAssetLoad: boolean;
+    localisationIndexReady: boolean;
 }
 
 export interface FocusTreeRenderPayloadBuildMetrics {
@@ -218,6 +221,7 @@ export async function buildFocusTreeRenderBaseState(
         hasWarningsButton: !focusTrees.every(ft => ft.warnings.length === 0),
         loadDurationMs,
         deferredAssetLoad: !!loadResult.result.deferredAssetLoad,
+        localisationIndexReady: isLocalisationIndexReady(),
     };
 }
 
@@ -298,6 +302,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             hasFocusSelector: baseState.hasFocusSelector,
             hasWarningsButton: hasFocusTreeWarnings(baseState.focusTrees),
             deferredAssetLoad: baseState.deferredAssetLoad,
+            localisationIndexReady: baseState.localisationIndexReady,
         },
         metrics: {
             loadDurationMs: baseState.loadDurationMs,
@@ -468,6 +473,7 @@ function createEmptyFocusTreeRenderPayload(
         hasFocusSelector: false,
         hasWarningsButton: false,
         deferredAssetLoad: false,
+        localisationIndexReady: isLocalisationIndexReady(),
     };
 }
 

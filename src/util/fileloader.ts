@@ -57,6 +57,38 @@ interface ListFilesOptions extends FileLoaderOptions {
     recursively?: boolean;
 }
 
+type DlcZipEntry = Pick<AdmZip.IZipEntry, 'entryName' | 'isDirectory'>;
+
+export function listFilesInDlcZipEntries(
+    entries: readonly DlcZipEntry[],
+    relativePath: string,
+    recursively: boolean = false,
+): string[] {
+    const normalizedFolder = relativePath.replace(/\\+/g, '/').replace(/^\/+|\/+$/g, '');
+    const folderPrefix = normalizedFolder ? normalizedFolder + '/' : '';
+    const result: string[] = [];
+
+    for (const entry of entries) {
+        if (entry.isDirectory) {
+            continue;
+        }
+
+        const entryName = entry.entryName.replace(/\\+/g, '/').replace(/^\/+/, '');
+        if (!entryName.startsWith(folderPrefix)) {
+            continue;
+        }
+
+        const relativeEntryName = entryName.slice(folderPrefix.length);
+        if (!relativeEntryName || (!recursively && relativeEntryName.includes('/'))) {
+            continue;
+        }
+
+        result.push(recursively ? relativeEntryName : relativeEntryName.split('/').pop()!);
+    }
+
+    return result;
+}
+
 function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
     const uri = vscode.Uri.parse(dlcZipPath);
     if (uri.scheme === Hoi4FsSchema) {
@@ -346,14 +378,7 @@ export async function listFilesFromModOrHOI4(
             if (dlcs !== null && dlcZipCache !== null) {
                 for (const dlc of dlcs) {
                     const dlcZip = await dlcZipCache.get(dlc.toString());
-                    const folderEntry = dlcZip.getEntry(relativePath);
-                    if (folderEntry && folderEntry.isDirectory) {
-                        for (const entry of dlcZip.getEntries()) {
-                            if (isSamePath(path.dirname(entry.entryName.replace(/^[\\/]/, '')), relativePath) && !entry.isDirectory) {
-                                result.push(path.basename(entry.name));
-                            }
-                        }
-                    }
+                    result.push(...listFilesInDlcZipEntries(dlcZip.getEntries(), relativePath, options?.recursively));
                 }
             }
 

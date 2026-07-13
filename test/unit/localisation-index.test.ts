@@ -24,6 +24,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
+    mergeLocalisationIndexes,
     preprocessYamlContent,
     rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
@@ -144,6 +145,29 @@ describe('localisation index helpers', () => {
             },
             l_korean: {
                 KEY_C: 'C',
+            },
+        });
+    });
+
+    it('applies DLC localisation after base-game localisation regardless of file name', () => {
+        const baseIndex = {
+            l_english: {
+                SHARED_KEY: 'Base value',
+                BASE_ONLY: 'Base only',
+            },
+        };
+        const dlcIndex = {
+            l_english: {
+                SHARED_KEY: 'DLC value',
+                DLC_ONLY: 'DLC only',
+            },
+        };
+
+        assert.deepStrictEqual(mergeLocalisationIndexes([baseIndex, dlcIndex]), {
+            l_english: {
+                SHARED_KEY: 'DLC value',
+                BASE_ONLY: 'Base only',
+                DLC_ONLY: 'DLC only',
             },
         });
     });

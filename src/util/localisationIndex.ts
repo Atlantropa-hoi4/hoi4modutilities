@@ -187,11 +187,27 @@ function resolveLocalisedTextFromAvailableWorkspaceLanguage(
 }
 
 async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<void> {
-    const options = { mod: false, hoi4: true, dlc: true, recursively: true };
-    const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
-        .filter(isLocalisationIndexFilePath);
-    await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, f =>
-        fillLocalisationItems('localisation/' + f, globalLocalisationIndex, options, estimatedSize));
+    const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
+    const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
+    const [baseFiles, dlcFiles] = await Promise.all([
+        listFilesFromModOrHOI4('localisation', baseOptions),
+        listFilesFromModOrHOI4('localisation', dlcOptions),
+    ]);
+    const loadFileIndexes = (files: string[], options: typeof baseOptions) => mapWithConcurrency(
+        files.filter(isLocalisationIndexFilePath),
+        localisationIndexBuildConcurrency,
+        async f => {
+            const fileIndex: LocalisationData = {};
+            await fillLocalisationItems('localisation/' + f, fileIndex, options, estimatedSize);
+            return fileIndex;
+        },
+    );
+    const [baseFileIndexes, dlcFileIndexes] = await Promise.all([
+        loadFileIndexes(baseFiles, baseOptions),
+        loadFileIndexes(dlcFiles, dlcOptions),
+    ]);
+    const rebuilt = mergeLocalisationIndexes([...baseFileIndexes, ...dlcFileIndexes]);
+    Object.assign(globalLocalisationIndex, rebuilt);
 }
 
 async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise<void> {
@@ -443,8 +459,12 @@ function getWorkspaceLocalisationIndexRelativePath(file: vscode.Uri): string | u
 }
 
 export function rebuildLocalisationIndexFromFileIndexes(fileIndexes: Record<string, LocalisationData>): LocalisationData {
+    return mergeLocalisationIndexes(Object.values(fileIndexes));
+}
+
+export function mergeLocalisationIndexes(indexes: readonly LocalisationData[]): LocalisationData {
     const result: LocalisationData = {};
-    for (const fileIndex of Object.values(fileIndexes)) {
+    for (const fileIndex of indexes) {
         for (const [langKey, entries] of Object.entries(fileIndex)) {
             result[langKey] = result[langKey] ?? {};
             Object.assign(result[langKey], entries);

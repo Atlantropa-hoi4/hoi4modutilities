@@ -139,4 +139,22 @@ describe('focustree layout plan cache', () => {
         assert.deepStrictEqual(result.renderExprs, [{ scopeName: '', nodeContent: 'has_focus_tree = focus_tree_beta' }]);
         assert.deepStrictEqual(result.layoutPlan.focusGridBoxItems.map(item => item.id), ['FOCUS_GATE']);
     });
+
+    it('shows the full tree when clearing a condition still leaves every allow branch disallowed', () => {
+        const focusTree = createFallbackTree() as any;
+        focusTree.focuses.FOCUS_GATE.allowBranch = {
+            scopeName: '',
+            nodeContent: 'required_condition = yes',
+        };
+
+        const result = resolveFocusTreeLayoutPlan(
+            focusTree,
+            [],
+            [{ scopeName: '', nodeContent: 'unrelated_condition = yes' }],
+            true,
+        );
+
+        assert.strictEqual(result.clearedSelectedExprs, true);
+        assert.deepStrictEqual(result.layoutPlan.focusGridBoxItems.map(item => item.id), ['FOCUS_GATE']);
+    });
 });

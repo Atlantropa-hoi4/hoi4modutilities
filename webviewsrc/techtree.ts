@@ -1,11 +1,12 @@
-import { chain, flatMap, flatten, min, sumBy } from "lodash";
+import { chain, flatMap, min, sumBy } from "lodash";
 import { RenderedTechnologyFolder, RenderedTechnologyFolderGridBox, Technology, TechnologyTree } from "../src/previewdef/technology/schema";
 import { RenderCommonOptions } from "../src/util/hoi4gui/common";
 import { GridBoxConnection, GridBoxItem, renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
 import { setState, getState, scrollToState, tryRun, subscribeRefreshButton, subscribeNavigators, arrayToMap, enableZoom, subscribePreviewLabelToggle, refreshPreviewLabelMode } from "./util/common";
 import { StyleTable } from "../src/util/styletable";
-import { applyCondition, ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
+import { ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
 import { DivDropdown } from "./util/dropdown";
+import { findTechnologyXorGroups, getAllowedTechnologies, TechnologyXorGroups } from "./technology/conditionfilter";
 
 const renderedTechFolders: Record<string, RenderedTechnologyFolder> = (window as any).renderedTechFolders;
 const technologyTrees: TechnologyTree[] = (window as any).technologyTrees;
@@ -54,20 +55,12 @@ async function renderTechnologyTreeGridBox(
     const techMap = arrayToMap(tree.technologies, 'id');
     const technologiesInFolder = tree.technologies.filter(t => folder in t.folders);
 
-    const allowBranchOptionsValue: Record<string, boolean> = {};
-    const exprs = selectedExprs;
-    technologiesInFolder.forEach(tech => {
-        if (tech.allowBranch) {
-            allowBranchOptionsValue[tech.id] = applyCondition(tech.allowBranch, exprs);
-        }
-    });
-
-    calculateTechAllowed(technologiesInFolder, allowBranchOptionsValue);
-    const allowedTechnologies = technologiesInFolder.filter(t => allowBranchOptionsValue[t.id] !== false);
+    const allowedTechnologies = getAllowedTechnologies(technologiesInFolder, selectedExprs);
+    const allowedTechnologyIds = new Set(allowedTechnologies.map(technology => technology.id));
 
     const technologyXorJoints = allowedTechnologies
-        .map<{ tech: Technology, nonXors: Technology[], xorGroups: Technology[][] } | undefined>(tech => findXorGroups(techMap, tech, folder))
-        .filter((t): t is { tech: Technology, nonXors: Technology[], xorGroups: Technology[][] } => t !== undefined && t.xorGroups.length > 0);
+        .map(tech => findTechnologyXorGroups(techMap, tech, folder, allowedTechnologyIds))
+        .filter((item): item is TechnologyXorGroups => item !== undefined && item.xorGroups.length > 0);
     const technologyXorJointsMap: Record<string, {nonXors: Technology[], xorGroups: Technology[][]}> = {};
 
     technologyXorJoints.forEach(({ tech, nonXors, xorGroups }) => technologyXorJointsMap[tech.id] = { nonXors, xorGroups });
@@ -81,7 +74,10 @@ async function renderTechnologyTreeGridBox(
             leadsToTechs = nonXors;
             connections.push(...xorGroups.map<GridBoxConnection>((_, i) => ({ target: xorJointKey + t.id + i, style: "1px solid #88aaff", targetType: "child" })));
         } else {
-            leadsToTechs = t.leadsToTechs.map(t => techMap[t]).filter(t => t !== undefined);
+            leadsToTechs = t.leadsToTechs
+                .map(technologyId => techMap[technologyId])
+                .filter((technology): technology is Technology =>
+                    technology !== undefined && allowedTechnologyIds.has(technology.id));
         }
 
         connections.push(...leadsToTechs.map<GridBoxConnection>(c => {
@@ -151,63 +147,6 @@ async function renderTechnologyTreeGridBox(
     async (_, _1) => gridbox.background);
 }
 
-function calculateTechAllowed(technologies: Technology[], allowBranchOptionsValue: Record<string, boolean>) {
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const technology of technologies) {
-            if (allowBranchOptionsValue[technology.id] !== false) {
-                continue;
-            }
-
-            for (const leadsToTechId of technology.leadsToTechs) {
-                const leadsToTech = technologies.find(t => t.id === leadsToTechId);
-                if (!leadsToTech) {
-                    continue;
-                }
-
-                if (!(leadsToTech.id in allowBranchOptionsValue) &&
-                    technologies.filter(t => t.leadsToTechs.includes(leadsToTech.id)).every(t => allowBranchOptionsValue[t.id] === false)) {
-                    allowBranchOptionsValue[leadsToTech.id] = false;
-                    changed = true;
-                }
-            }
-        }
-    }
-}
-
-function findXorGroups(treeMap: Record<string, Technology>, technology: Technology, folder: string): { tech: Technology, nonXors: Technology[], xorGroups: Technology[][] } | undefined {
-    const techChildren = technology.leadsToTechs
-        .map(techName => treeMap[techName])
-        .filter((tech): tech is Technology => tech !== undefined && folder in tech.folders);
-    const xorGroupMap: Record<string, Technology[]> = {};
-
-    for (const techChild of techChildren) {
-        const techChildXors = techChild.xor
-            .map(techName => treeMap[techName])
-            .filter((techChildXor): techChildXor is Technology =>
-                techChildXor !== undefined
-                && folder in techChildXor.folders
-                && techChildXor !== techChild
-                && techChildXor.xor.includes(techChild.id));
-        if (techChildXors.length === 0) {
-            continue;
-        }
-
-        const groups = techChildXors.map(tech => xorGroupMap[tech.id]).filter((v, i, a) => v !== undefined && i === a.indexOf(v));
-        const bigGroup = flatten(groups).concat([ techChild ]);
-        bigGroup.forEach(tech => xorGroupMap[tech.id] = bigGroup);
-    }
-
-    const xorGroups = Object.values(xorGroupMap).filter((v, i, a) => i === a.indexOf(v));
-    if (xorGroups.length === 0) {
-        return undefined;
-    }
-
-    const nonXors = techChildren.filter(tech => !xorGroups.some(group => group.includes(tech)));
-    return { tech: technology, nonXors, xorGroups };
-}
-
 async function folderChange(folder: string, clearCondition: boolean) {
     if (!(folder in renderedTechFolders)) {
         return;
@@ -217,6 +156,8 @@ async function folderChange(folder: string, clearCondition: boolean) {
     setState({ folder: folder });
 
     const conditionExprs = chain(technologyTrees).filter(t => t.folder === folder).flatMap(t => t.conditionExprs).uniqBy(e => e.scopeName + '!' + e.nodeContent).value();
+    const conditionOptions = conditionExprs.map(option => ({ value: conditionItemToStringValue(option), text: conditionToString(option) }));
+    const conditionOptionValues = new Set(conditionOptions.map(option => option.value));
 
     const conditionContainerElement = document.getElementById('condition-container') as HTMLDivElement | null;
     if (conditionContainerElement) {
@@ -224,8 +165,10 @@ async function folderChange(folder: string, clearCondition: boolean) {
     }
 
     if (conditions) {
-        conditions.setupOptions(conditionExprs.map(option => ({ value: conditionItemToStringValue(option), text: conditionToString(option) })));
-        conditions.selectedValues$.next(clearCondition ? [] : selectedExprs.map(conditionItemToStringValue));
+        conditions.setupOptions(conditionOptions);
+        conditions.selectedValues$.next(clearCondition
+            ? []
+            : selectedExprs.map(conditionItemToStringValue).filter(value => conditionOptionValues.has(value)));
     }
 
     await buildContent();

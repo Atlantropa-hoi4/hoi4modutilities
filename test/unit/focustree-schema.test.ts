@@ -295,6 +295,7 @@ describe('focus tree schema fixtures', () => {
                         }
                         icon = {
                             GFX_focus_map = { has_country_flag = custom_icon }
+                            GFX_focus_map_fallback = yes
                         }
                         alternate_icon = GFX_focus_alternate
                         overlay = GFX_focus_overlay
@@ -312,6 +313,7 @@ describe('focus tree schema fixtures', () => {
             'GFX_focus_primary',
             'GFX_focus_conditional',
             'GFX_focus_map',
+            'GFX_focus_map_fallback',
         ]);
         assert.deepStrictEqual(tree.conditionExprs.map(condition => condition.nodeContent), [
             'has_war = yes',
@@ -321,6 +323,7 @@ describe('focus tree schema fixtures', () => {
         assert.notStrictEqual(focus.icon[0].condition, true);
         assert.notStrictEqual(focus.icon[2].condition, true);
         assert.notStrictEqual(focus.icon[3].condition, true);
+        assert.strictEqual(focus.icon[4].condition, true);
         assert.strictEqual(focus.overlay, 'GFX_focus_overlay');
     });
 });

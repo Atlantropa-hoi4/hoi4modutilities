@@ -1,7 +1,7 @@
 import { ProvinceMap, Province, ProvinceEdge, WorldMapWarning, ProvinceDefinition, ProvinceBmp, ProvinceEdgeAdjacency, ProgressReporter, Terrain } from "../definitions";
 import { FileLoader, mergeInLoadResult, LoadResult, sortItems } from "./common";
 import { SchemaDef } from "../../../hoiformat/schema";
-import { readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
+import { getFilePathFromModOrHOI4, readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
 import { TerrainDefinitionLoader } from "./terrain";
 import { arrayToMap, UserError } from "../../../util/common";
 import { localize } from "../../../util/i18n";
@@ -26,6 +26,14 @@ const defaultMapSchema: SchemaDef<DefaultMap> = {
     adjacencies: 'string',
     continent: 'string',
     rivers: 'string',
+};
+
+const conventionalDefaultMap: Readonly<DefaultMap> = {
+    definitions: 'definition.csv',
+    provinces: 'provinces.bmp',
+    adjacencies: 'adjacencies.csv',
+    continent: 'continent.txt',
+    rivers: 'rivers.bmp',
 };
 
 export class DefaultMapLoader extends FileLoader<ProvinceMap> {
@@ -157,6 +165,11 @@ export class DefaultMapLoader extends FileLoader<ProvinceMap> {
 async function loadDefaultMap(progressReporter: ProgressReporter): Promise<DefaultMap> {
     await progressReporter(localize('worldmap.progress.loadingdefaultmap', 'Loading default.map...'));
 
+    const inferredDefaultMap = await inferDefaultMapFromConventionalFiles();
+    if (inferredDefaultMap) {
+        return inferredDefaultMap;
+    }
+
     const defaultMap = await readFileFromModOrHOI4AsJson<DefaultMap>('map/default.map', defaultMapSchema);
     (['definitions', 'provinces', 'adjacencies', 'continent'] as (keyof DefaultMap)[]).forEach(field => {
         if (!defaultMap[field]) {
@@ -165,6 +178,28 @@ async function loadDefaultMap(progressReporter: ProgressReporter): Promise<Defau
     });
 
     return defaultMap as DefaultMap;
+}
+
+export async function inferDefaultMapFromConventionalFilesForTest(
+    resolveFile: (relativePath: string) => Promise<unknown | undefined>,
+): Promise<DefaultMap | undefined> {
+    return inferDefaultMapFromConventionalFiles(resolveFile);
+}
+
+async function inferDefaultMapFromConventionalFiles(
+    resolveFile: (relativePath: string) => Promise<unknown | undefined> = getFilePathFromModOrHOI4,
+): Promise<DefaultMap | undefined> {
+    if (await resolveFile('map/default.map')) {
+        return undefined;
+    }
+
+    const conventionalFiles = Object.values(conventionalDefaultMap).map(file => `map/${file}`);
+    const resolvedFiles = await Promise.all(conventionalFiles.map(resolveFile));
+    if (resolvedFiles.some(file => file === undefined)) {
+        return undefined;
+    }
+
+    return { ...conventionalDefaultMap };
 }
 
 function sortProvinces(provinces: Province[], badProvinceId: number, relatedFiles: string[], warnings: WorldMapWarning[]): { sortedProvinces: (Province | undefined)[], badProvinceId: number } {

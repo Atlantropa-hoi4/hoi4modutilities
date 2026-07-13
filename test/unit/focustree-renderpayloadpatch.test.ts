@@ -46,6 +46,49 @@ describe('focus tree render payload patching', () => {
         },
     });
 
+    it('uses a full update when the localisation index becomes ready', async () => {
+        const focusTree = createTree('tree_a', 'FOCUS_A');
+        const previous = createFocusTreeRenderCache({
+            focusTrees: [focusTree],
+            renderedFocus: { FOCUS_A: '<div>FOCUS_A</div>' },
+            renderedInlayWindows: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '.a {}',
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: false,
+            localisationIndexReady: false,
+            styleNonce: 'nonce',
+            focusToolbarHeight: 68,
+        } as any);
+
+        const result = await createFocusTreeRenderUpdate(previous, {
+            focusTrees: [focusTree],
+            focusById: focusTree.focuses,
+            allFocuses: Object.values(focusTree.focuses),
+            allInlays: [],
+            gfxFiles: [],
+            gridBox: previous.gridBox,
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: false,
+            localisationIndexReady: true,
+        } as any);
+
+        assert.strictEqual(result.kind, 'full');
+    });
+
     it('emits a slot-based partial update when tree order is stable and one tree changed', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [
