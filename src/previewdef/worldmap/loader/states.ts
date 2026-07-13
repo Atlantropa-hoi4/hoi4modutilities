@@ -1,5 +1,5 @@
-import { State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory, Resource, StateDatedHistory } from "../definitions";
-import { convertNodeToJson, Enum, SchemaDef, CustomMap, DetailValue } from "../../../hoiformat/schema";
+import { Bookmark, BookmarkDate, State, Province, WorldMapWarning, WorldMapWarningSource, Region, StateCategory, StateDatedHistory, WithCondition } from "../definitions";
+import { convertNodeToJson, Enum, SchemaDef, CustomMap, DetailValue, HOIPartial } from "../../../hoiformat/schema";
 import { readFileFromModOrHOI4, readFileFromModOrHOI4AsJson } from "../../../util/fileloader";
 import { error } from "../../../util/debug";
 import { LoadResult, FolderLoader, FileLoader, mergeInLoadResult, sortItems, mergeRegion, convertColor, LoadResultOD } from "./common";
@@ -8,8 +8,12 @@ import { arrayToMap, UserError } from "../../../util/common";
 import { DefaultMapLoader } from "./provincemap";
 import { localize } from "../../../util/i18n";
 import { LoaderSession } from "../../../util/loader/loader";
-import { flatMap } from "lodash";
+import { flatMap, isEqual, uniqBy } from "lodash";
 import { ResourceDefinitionLoader } from "./resource";
+import { bookmarkDateToString, BookmarksLoader, compareBookmarkDate, parseBookmarkDate } from "./bookmarks";
+import { ConditionComplexExpr, ConditionItem, extractConditionalExprs, simplifyCondition } from "../../../hoiformat/condition";
+import { EffectComplexExpr, EffectItem, extractEffectValue } from "../../../hoiformat/effect";
+import { Scope } from "../../../hoiformat/scope";
 
 interface StateFile {
     state: StateDefinition[];
@@ -93,18 +97,19 @@ const stateCategoryFileSchema: SchemaDef<StateCategoryFile> = {
 type StateNoBoundingBox = Omit<State, keyof Region>;
 
 type StateLoaderResult = { states: State[], badStatesCount: number };
-export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundingBox[]> {
+export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundingBox[], [() => BookmarksLoader]> {
     private categoriesLoader: StateCategoriesLoader;
 
-    constructor(private defaultMapLoader: DefaultMapLoader, private resourcesLoader: ResourceDefinitionLoader) {
-        super('history/states', StateLoader);
+    constructor(private defaultMapLoader: DefaultMapLoader, private resourcesLoader: ResourceDefinitionLoader, private bookmarksLoader: BookmarksLoader) {
+        super('history/states', StateLoader, () => this.bookmarksLoader);
         this.categoriesLoader = new StateCategoriesLoader();
         this.categoriesLoader.onProgress(e => this.onProgressEmitter.fire(e));
     }
 
     public async shouldReloadImpl(session: LoaderSession): Promise<boolean> {
         return await super.shouldReloadImpl(session) || await this.defaultMapLoader.shouldReload(session)
-            || await this.categoriesLoader.shouldReload(session) || await this.resourcesLoader.shouldReload(session);
+            || await this.categoriesLoader.shouldReload(session) || await this.resourcesLoader.shouldReload(session)
+            || await this.bookmarksLoader.shouldReload(session);
     }
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<StateLoaderResult>> {
@@ -120,6 +125,10 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
         await this.fireOnProgressEvent(localize('worldmap.progress.mapprovincestostates', 'Mapping provinces to states...'));
 
         const warnings = mergeInLoadResult([stateCategories, ...fileResults], 'warnings');
+        const conditionExprs = uniqBy(
+            flatMap(fileResults, result => result.conditionExprs ?? []),
+            condition => `${condition.scopeName}\0${condition.nodeContent}`,
+        );
         const { provinces, width, height } = provinceMap.result;
 
         const states = flatMap(fileResults, c => c.result);
@@ -162,6 +171,7 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
             },
             dependencies: [this.folder + '/*', ...stateCategories.dependencies],
             warnings,
+            conditionExprs,
         };
     }
 
@@ -171,11 +181,18 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
 }
 
 class StateLoader extends FileLoader<StateNoBoundingBox[]> {
-    protected async loadFromFile(): Promise<LoadResultOD<StateNoBoundingBox[]>> {
+    constructor(file: string, private bookmarkLoaderGetter: () => BookmarksLoader) {
+        super(file);
+    }
+
+    protected async loadFromFile(session: LoaderSession): Promise<LoadResultOD<StateNoBoundingBox[]>> {
+        const bookmarks = await this.bookmarkLoaderGetter().load(session);
+        const conditionExprs: ConditionItem[] = [];
         const warnings: WorldMapWarning[] = [];
         return {
-            result: await loadState(this.file, warnings),
+            result: await loadState(this.file, warnings, bookmarks.result.bookmarks, conditionExprs),
             warnings,
+            conditionExprs,
         };
     }
 
@@ -236,22 +253,33 @@ class StateCategoryLoader extends FileLoader<StateCategory[]> {
     }
 }
 
-async function loadState(stateFile: string, globalWarnings: WorldMapWarning[]): Promise<StateNoBoundingBox[]> {
+async function loadState(stateFile: string, globalWarnings: WorldMapWarning[], bookmarks: Bookmark[], conditionExprs: ConditionItem[]): Promise<StateNoBoundingBox[]> {
     try {
         const [buffer, realPath] = await readFileFromModOrHOI4(stateFile);
         const root = parseHoi4File(buffer.toString(), localize('infile', 'In file {0}:\n', realPath));
-        return parseStateRoot(stateFile, root, globalWarnings);
+        return parseStateRoot(stateFile, root, globalWarnings, bookmarks, conditionExprs);
     } catch (e) {
         error(e);
         return [];
     }
 }
 
-export function parseStateFileContentForTest(content: string, stateFile = 'test_state.txt'): any[] {
-    return parseStateRoot(stateFile, parseHoi4File(content), []);
+export function parseStateFileContentForTest(
+    content: string,
+    stateFile = 'test_state.txt',
+    bookmarks: Bookmark[] = [],
+    conditionExprs: ConditionItem[] = [],
+): any[] {
+    return parseStateRoot(stateFile, parseHoi4File(content), [], bookmarks, conditionExprs);
 }
 
-function parseStateRoot(stateFile: string, root: Node, globalWarnings: WorldMapWarning[]): StateNoBoundingBox[] {
+function parseStateRoot(
+    stateFile: string,
+    root: Node,
+    globalWarnings: WorldMapWarning[],
+    bookmarks: Bookmark[],
+    conditionExprs: ConditionItem[],
+): StateNoBoundingBox[] {
     const data = convertNodeToJson<StateFile>(root, stateFileSchema);
     const stateNodes = getNamedChildren(root, 'state');
     const result: StateNoBoundingBox[] = [];
@@ -264,11 +292,9 @@ function parseStateRoot(stateFile: string, root: Node, globalWarnings: WorldMapW
         const name = state.name ? state.name : (warnings.push(localize('worldmap.warnings.statenoname', "The state doesn't have name field.")), '');
         const manpower = state.manpower ?? 0;
         const category = state.state_category ? state.state_category : (warnings.push(localize('worldmap.warnings.statenocategory', "The state doesn't have category field.")), '');
-        const owner = state.history?.owner;
-        const controller = state.history?.controller;
+        const { owner, controller, cores } = loadStateHistory(id, state.history, historyNode, bookmarks, conditionExprs);
         const provinces = state.provinces._values.map(v => parseInt(v));
         const provinceTokens = collectProvinceTokens(stateNode);
-        const cores = state.history?.add_core_of.map(v => v).filter((v, i, a): v is string => v !== undefined && i === a.indexOf(v)) ?? [];
         const impassable = state.impassable ?? false;
         const demilitarized = state.history?.set_demilitarized_zone;
         const localSupplies = state.local_supplies ?? 0;
@@ -408,6 +434,188 @@ function parseDatedHistory(historyNode: Node | undefined): StateDatedHistory[] {
                 provinceBuildings,
             };
         });
+}
+
+function loadStateHistory(
+    stateId: number,
+    history: HOIPartial<StateHistory> | undefined,
+    historyNode: Node | undefined,
+    bookmarks: Bookmark[],
+    conditionExprs: ConditionItem[],
+): Pick<State, 'owner' | 'controller' | 'cores'> {
+    const owner: WithCondition<string>[] = history?.owner ? [{ value: history.owner, condition: true }] : [];
+    const controller: WithCondition<string>[] = history?.controller ? [{ value: history.controller, condition: true }] : [];
+    const cores: WithCondition<string>[] = uniqBy(
+        history?.add_core_of
+            .filter((value): value is string => value !== undefined)
+            .map(value => ({ value, condition: true as ConditionComplexExpr })) ?? [],
+        item => item.value,
+    );
+
+    if (bookmarks.length === 0) {
+        return { owner, controller, cores };
+    }
+
+    const scope: Scope = { scopeName: `State ${stateId}`, scopeType: 'state' };
+    const dateHistoryEffects: { date: BookmarkDate; effects: { effect: EffectItem; condition: ConditionComplexExpr }[] }[] = [];
+    for (const node of getNodeChildren(historyNode)) {
+        if (!node.name || !dateNodeNameRegex.test(node.name)) {
+            continue;
+        }
+
+        const date = parseBookmarkDate(node.name);
+        if (!date) {
+            continue;
+        }
+
+        dateHistoryEffects.push({
+            date,
+            effects: findHistoryItems(extractEffectValue(node.value, scope).effect),
+        });
+    }
+    dateHistoryEffects.sort((left, right) => compareBookmarkDate(left.date, right.date));
+
+    if (dateHistoryEffects.every(entry => entry.effects.length === 0)) {
+        return { owner, controller, cores };
+    }
+
+    const sortedBookmarks = [...bookmarks].sort((left, right) => compareBookmarkDate(left.date, right.date));
+    const bookmarkConditions = sortedBookmarks.map<ConditionItem>(bookmark => ({
+        scopeName: '',
+        nodeContent: bookmarkDateToString(bookmark.date),
+    }));
+
+    let bookmarkCondition: ConditionComplexExpr = true;
+    for (let bookmarkIndex = 0, historyIndex = 0;
+        bookmarkIndex < sortedBookmarks.length && historyIndex < dateHistoryEffects.length;) {
+        const bookmark = sortedBookmarks[bookmarkIndex];
+        const historyEntry = dateHistoryEffects[historyIndex];
+        if (compareBookmarkDate(historyEntry.date, bookmark.date) >= 0) {
+            bookmarkIndex++;
+            bookmarkCondition = simplifyCondition({
+                type: 'or',
+                items: bookmarkConditions.slice(bookmarkIndex),
+            });
+            continue;
+        }
+
+        for (const { effect, condition } of historyEntry.effects) {
+            extractFromHistoryEffect(
+                stateId,
+                scope,
+                effect,
+                condition,
+                bookmarkCondition,
+                owner,
+                controller,
+                cores,
+                conditionExprs,
+            );
+        }
+        historyIndex++;
+    }
+
+    owner.reverse();
+    controller.reverse();
+    return { owner, controller, cores };
+}
+
+const historyItemTypes = [
+    'owner', 'transfer_state_to', 'transfer_state',
+    'controller', 'set_state_controller', 'set_state_controller_to',
+    'add_core_of', 'remove_core_of',
+];
+
+function findHistoryItems(
+    effect: EffectComplexExpr,
+    conditions: ConditionComplexExpr[] = [],
+    result: { effect: EffectItem; condition: ConditionComplexExpr }[] = [],
+): { effect: EffectItem; condition: ConditionComplexExpr }[] {
+    if (effect === null) {
+        return result;
+    }
+
+    if ('nodeContent' in effect) {
+        if (effect.node.name && historyItemTypes.includes(effect.node.name.toLowerCase())) {
+            result.push({
+                effect,
+                condition: simplifyCondition({ type: 'and', items: conditions }),
+            });
+        }
+    } else if ('condition' in effect) {
+        effect.items.forEach(item => findHistoryItems(item, [...conditions, effect.condition], result));
+    } else {
+        effect.items.forEach(item => findHistoryItems(item.effect, conditions, result));
+    }
+
+    return result;
+}
+
+function extractFromHistoryEffect(
+    stateId: number,
+    scope: Scope,
+    effect: EffectItem,
+    condition: ConditionComplexExpr,
+    bookmarkCondition: ConditionComplexExpr,
+    owner: WithCondition<string>[],
+    controller: WithCondition<string>[],
+    cores: WithCondition<string>[],
+    conditionExprs: ConditionItem[],
+): void {
+    const nodeName = effect.node.name?.toLowerCase();
+    const value = convertNodeToJson<string>(effect.node, 'string');
+    if (!nodeName || !value) {
+        return;
+    }
+
+    const combinedCondition = simplifyCondition({ type: 'and', items: [condition, bookmarkCondition] });
+    const referencesCurrentState = parseInt(value) === stateId ||
+        (value.toLowerCase() === 'prev' && effect.scopeStack.length > 1 && isEqual(effect.scopeStack[effect.scopeStack.length - 2], scope)) ||
+        value.toLowerCase() === 'root';
+
+    if ((nodeName === 'owner' || nodeName === 'transfer_state_to') && effect.scopeName === scope.scopeName) {
+        extractConditionalExprs(combinedCondition, conditionExprs);
+        owner.push({ value, condition: combinedCondition });
+        return;
+    }
+
+    if (nodeName === 'transfer_state' && referencesCurrentState) {
+        extractConditionalExprs(combinedCondition, conditionExprs);
+        owner.push({ value: effect.scopeName, condition: combinedCondition });
+        return;
+    }
+
+    if ((nodeName === 'controller' || nodeName === 'set_state_controller_to') && effect.scopeName === scope.scopeName) {
+        extractConditionalExprs(combinedCondition, conditionExprs);
+        controller.push({ value, condition: combinedCondition });
+        return;
+    }
+
+    if (nodeName === 'set_state_controller' && referencesCurrentState) {
+        extractConditionalExprs(combinedCondition, conditionExprs);
+        controller.push({ value: effect.scopeName, condition: combinedCondition });
+        return;
+    }
+
+    if (effect.scopeName !== scope.scopeName || (nodeName !== 'add_core_of' && nodeName !== 'remove_core_of')) {
+        return;
+    }
+
+    let core = cores.find(item => item.value === value);
+    if (nodeName === 'add_core_of') {
+        if (!core) {
+            core = { value, condition: false };
+            cores.push(core);
+        }
+        core.condition = simplifyCondition({ type: 'or', items: [core.condition, combinedCondition] });
+        extractConditionalExprs(core.condition, conditionExprs);
+    } else if (core) {
+        core.condition = simplifyCondition({
+            type: 'and',
+            items: [core.condition, { type: 'ornot', items: [combinedCondition] }],
+        });
+        extractConditionalExprs(core.condition, conditionExprs);
+    }
 }
 
 function sortStates(states: StateNoBoundingBox[], warnings: WorldMapWarning[]): { sortedStates: StateNoBoundingBox[], badStateId: number } {

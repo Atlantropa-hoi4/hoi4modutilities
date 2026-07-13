@@ -158,8 +158,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ? []
             : focusTrees
                 .flatMap(ft => Object.values(ft.focuses))
-                .flatMap(focus => focus.icon)
-                .map(icon => icon.icon)
+                .flatMap(focus => [
+                    ...focus.icon.map(icon => icon.icon),
+                    focus.overlay,
+                ])
                 .filter((icon): icon is string => icon !== undefined);
         const uniqueInlayFiles = Array.from(new Set([
             ...loadedInlayFiles,

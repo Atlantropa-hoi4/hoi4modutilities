@@ -177,4 +177,27 @@ describe('parser fixtures', () => {
         assert.strictEqual(focusIdNode.nameToken, null);
         assert.strictEqual(focusIdNode.valueStartToken, null);
     });
+
+    it('keeps partial parse results when a file has a redundant closing brace', () => {
+        const node = parseHoi4File([
+            'first = yes',
+            '}',
+            'ignored = no',
+        ].join('\n'));
+        const children = node.value as any[];
+
+        assert.deepStrictEqual(children.map(child => child.name), ['first']);
+    });
+
+    it('accepts EOF as the closing boundary of an unfinished block', () => {
+        const node = parseHoi4File([
+            'focus_tree = {',
+            '    id = partial_tree',
+        ].join('\n'));
+        const [focusTree] = node.value as any[];
+
+        assert.strictEqual(focusTree.name, 'focus_tree');
+        assert.deepStrictEqual((focusTree.value as any[]).map(child => child.name), ['id']);
+        assert.strictEqual(focusTree.valueEndToken.type, 'eof');
+    });
 });

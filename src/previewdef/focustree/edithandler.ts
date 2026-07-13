@@ -48,6 +48,11 @@ export class FocusTreeEditCommandHandler {
             return true;
         }
 
+        if ('documentVersion' in msg && document.version !== msg.documentVersion) {
+            await this.session.refreshDocument(document, { source: 'document' });
+            return true;
+        }
+
         switch (msg.command) {
             case 'applyFocusPositionEdit':
                 return this.applyFocusPositionEdit(document, msg);

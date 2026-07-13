@@ -39,7 +39,7 @@ describe('focustree focus render', () => {
         assert.strictEqual(result, undefined);
     });
 
-    it('renders the localization line beneath the focus id', () => {
+    it('renders switchable ID and localized-name metadata', () => {
         const html = renderFocusHtmlTemplate(
             {
                 id: 'FOCUS_ID',
@@ -58,7 +58,29 @@ describe('focustree focus render', () => {
 
         assert.match(html, /FOCUS_ID/);
         assert.match(html, /Localized focus title/);
-        assert.match(html, /focus-localization-line/);
+        assert.match(html, /data-preview-label-id="FOCUS_ID"/);
+        assert.match(html, /data-preview-label-name="Localized focus title"/);
+        assert.match(html, /data-preview-title-name="Localized focus title/);
+    });
+
+    it('renders a focus overlay layer when configured', () => {
+        const html = renderFocusHtmlTemplate(
+            {
+                id: 'FOCUS_ID',
+                overlay: 'GFX_focus_overlay',
+                token: undefined,
+                file: 'common/national_focus/test.txt',
+                layout: undefined,
+                isInCurrentFile: true,
+            } as any,
+            new StyleTable(),
+            'common/national_focus/test.txt',
+            96,
+            130,
+        );
+
+        assert.match(html, /focus-overlay-common/);
+        assert.match(html, /focus-overlay-GFX_focus_overlay/);
     });
 
     it('resolves actual focus localization text for multiple focuses', async () => {

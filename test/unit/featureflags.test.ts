@@ -29,7 +29,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     isGfxIndexEnabled,
     isLocalisationIndexEnabled,
+    isRightButtonDragEnabled,
     isTechnologyShowIdEnabled,
+    featureFlagsAsScript,
 } = require('../../src/util/featureflags') as typeof import('../../src/util/featureflags');
 
 nodeModule._load = originalLoad;
@@ -58,5 +60,17 @@ describe('feature flag helpers', () => {
         configuredFeatureFlags = ['technologyShowId'];
 
         assert.strictEqual(isTechnologyShowIdEnabled(), true);
+    });
+
+    it('serializes resolved webview feature flags while preserving local technology ID settings', () => {
+        configuredFeatureFlags = ['technologyShowId', '!rightButtonDrag'];
+
+        assert.strictEqual(isRightButtonDragEnabled(), false);
+        const script = featureFlagsAsScript();
+        const state = JSON.parse(script.slice('window.__featureflags = '.length, -1));
+
+        assert.strictEqual(state.localisationIndex, true);
+        assert.strictEqual(state.rightButtonDrag, false);
+        assert.strictEqual(state.technologyShowId, true);
     });
 });

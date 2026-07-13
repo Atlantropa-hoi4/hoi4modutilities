@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, setPreviewPanDisabled, startPreviewPan } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, refreshPreviewLabelMode, setPreviewPanDisabled, startPreviewPan, subscribePreviewLabelToggle } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference } from "lodash";
 import { renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
@@ -1795,7 +1795,9 @@ function setupFocusTemplateCreateHandler() {
 
 function setupBlankCanvasPanFallback() {
     document.addEventListener('mousedown', event => {
-        if (event.button !== 0 || event.defaultPrevented || event.shiftKey) {
+        const rightButtonDrag = (window as any).__featureflags?.rightButtonDrag ?? false;
+        const panButton = rightButtonDrag ? 2 : 0;
+        if (event.button !== panButton || event.defaultPrevented || event.shiftKey) {
             return;
         }
 
@@ -1806,6 +1808,15 @@ function setupBlankCanvasPanFallback() {
         event.preventDefault();
         event.stopPropagation();
         startPreviewPan(event.pageX, event.pageY, true);
+    }, true);
+
+    document.addEventListener('contextmenu', event => {
+        if (!((window as any).__featureflags?.rightButtonDrag ?? false) || !getBlankCanvasPanTarget(event)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
     }, true);
 }
 
@@ -2476,7 +2487,7 @@ function renderCurrentFocusHtml(
 
     const iconClass = getFocusIconClassName(focus, context?.exprs ?? currentRenderedExprs);
     return template
-        .replace('{{position}}', `${position.x}, ${position.y}`)
+        .split('{{position}}').join(`${position.x}, ${position.y}`)
         .replace('{{iconClass}}', iconClass);
 }
 
@@ -2801,6 +2812,7 @@ function applyIncrementalCurrentTreeUpdate(
     }
 
     updateFocusPositionEditUi();
+    refreshPreviewLabelMode();
     retriggerSearch();
     return true;
 }
@@ -2825,6 +2837,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
     if (!applied) {
         return;
     }
+    refreshPreviewLabelMode();
     if (options?.restoreScroll) {
         scrollToState();
     }
@@ -2834,6 +2847,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
 
 window.addEventListener('load', runSafely(async function() {
     postFocusTreeWebviewTiming({ stage: 'load' });
+    subscribePreviewLabelToggle('id');
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;

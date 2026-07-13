@@ -1,5 +1,7 @@
 import * as assert from 'assert';
 import Module = require('module');
+import { applyCondition, ConditionItem } from '../../src/hoiformat/condition';
+import { Bookmark, WithCondition } from '../../src/previewdef/worldmap/definitions';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -36,6 +38,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const { parseStateFileContentForTest } = require('../../src/previewdef/worldmap/loader/states') as typeof import('../../src/previewdef/worldmap/loader/states');
 const { parseStrategicRegionFileContentForTest } = require('../../src/previewdef/worldmap/loader/strategicregion') as typeof import('../../src/previewdef/worldmap/loader/strategicregion');
+const { parseBookmarkFileContentForTest } = require('../../src/previewdef/worldmap/loader/bookmarks') as typeof import('../../src/previewdef/worldmap/loader/bookmarks');
 
 nodeModule._load = originalLoad;
 
@@ -90,7 +93,9 @@ state = {
         assert.deepStrictEqual(state.buildings, { infrastructure: 4, arms_factory: 2 });
         assert.deepStrictEqual(state.provinceBuildings[10], { supply_node: 1, naval_base: 3 });
         assert.strictEqual(state.demilitarized, true);
-        assert.strictEqual(state.controller, 'TAG');
+        assert.deepStrictEqual(state.owner, [{ value: 'TAG', condition: true }]);
+        assert.deepStrictEqual(state.controller, [{ value: 'TAG', condition: true }]);
+        assert.deepStrictEqual(state.cores, [{ value: 'TAG', condition: true }]);
         assert.strictEqual(state.datedHistory.length, 1);
         assert.strictEqual(state.datedHistory[0].date, '1939.1.1');
         assert.strictEqual(state.datedHistory[0].owner, 'OTH');
@@ -102,6 +107,75 @@ state = {
         assert.strictEqual(content.slice(state.provinceTokens[10].start, state.provinceTokens[10].end), '10');
         assert.strictEqual(content.slice(state.provinceTokens[11].start, state.provinceTokens[11].end), '11');
         assert.strictEqual(state.provinceTokens[10].start, content.indexOf('10 11'));
+    });
+
+    it('parses bookmarks and resolves conditional state history for each scenario date', () => {
+        const bookmarks = parseBookmarkFileContentForTest(`
+bookmarks = {
+    bookmark = { name = "BLITZKRIEG" date = 1939.1.1 }
+    bookmark = { name = "GATHERING_STORM" date = 1936.1.1 }
+    bookmark = { name = "LATE_GAME" date = 1941.1.1 }
+}`);
+        const conditionExprs: ConditionItem[] = [];
+        const states = parseStateFileContentForTest(`
+state = {
+    id = 3
+    name = "STATE_HISTORY_TEST"
+    manpower = 1
+    state_category = town
+    history = {
+        owner = GER
+        controller = GER
+        add_core_of = GER
+        1937.1.1 = {
+            owner = FRA
+            add_core_of = FRA
+        }
+        1939.1.1 = {
+            owner = ENG
+            controller = ITA
+            remove_core_of = GER
+        }
+        1940.1.1 = {
+            if = {
+                limit = { has_global_flag = alternate_path }
+                controller = USA
+            }
+        }
+    }
+    provinces = { 30 }
+}`, 'state_history_test.txt', bookmarks, conditionExprs);
+
+        assert.strictEqual(bookmarks.length, 3);
+        assert.strictEqual(bookmarks[0].name, 'BLITZKRIEG');
+        const state = states[0];
+        const scenario = (date: string, extra: ConditionItem[] = []): ConditionItem[] => [
+            { scopeName: '', nodeContent: date },
+            ...extra,
+        ];
+        const solve = <T>(items: WithCondition<T>[], selected: ConditionItem[]): T | undefined =>
+            items.find(item => applyCondition(item.condition, selected))?.value;
+        const solveSet = <T>(items: WithCondition<T>[], selected: ConditionItem[]): T[] =>
+            items.filter(item => applyCondition(item.condition, selected)).map(item => item.value);
+
+        const gatheringStorm = scenario('1936.1.1.0');
+        assert.strictEqual(solve(state.owner, gatheringStorm), 'GER');
+        assert.strictEqual(solve(state.controller, gatheringStorm), 'GER');
+        assert.deepStrictEqual(solveSet(state.cores, gatheringStorm), ['GER']);
+
+        const blitzkrieg = scenario('1939.1.1.0');
+        assert.strictEqual(solve(state.owner, blitzkrieg), 'FRA');
+        assert.strictEqual(solve(state.controller, blitzkrieg), 'GER');
+        assert.deepStrictEqual(solveSet(state.cores, blitzkrieg), ['GER', 'FRA']);
+
+        const lateGame = scenario('1941.1.1.0');
+        assert.strictEqual(solve(state.owner, lateGame), 'ENG');
+        assert.strictEqual(solve(state.controller, lateGame), 'ITA');
+        assert.deepStrictEqual(solveSet(state.cores, lateGame), ['FRA']);
+        assert.strictEqual(solve(state.controller, scenario('1941.1.1.0', [
+            { scopeName: '', nodeContent: 'has_global_flag = alternate_path' },
+        ])), 'USA');
+        assert.ok(conditionExprs.some(item => item.nodeContent === 'has_global_flag = alternate_path'));
     });
 
     it('preserves province token positions with multiline province lists and comments', () => {

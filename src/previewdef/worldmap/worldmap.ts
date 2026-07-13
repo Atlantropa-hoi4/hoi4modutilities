@@ -50,6 +50,7 @@ export class WorldMap {
             }
 
             if (this.worldMapDependencies.some(d => matchPathEnd(uri.toString(), d.split('/')))) {
+                this.worldMapLoader.shallowForceReload();
                 void this.sendProvinceMapSummaryToWebview(false);
             }
         },
@@ -349,6 +350,30 @@ export class WorldMap {
         }
         if (!resourcesEqual) {
             changeMessages.push({ command: 'resources', data: JSON.stringify(worldMap.resources), start: 0, end: 0 });
+        }
+
+        const riversEqual = areEqualWithinBudget(cachedWorldMap.rivers, worldMap.rivers, comparisonBudget);
+        if (riversEqual === undefined) {
+            return false;
+        }
+        if (!riversEqual) {
+            changeMessages.push({ command: 'rivers', data: JSON.stringify(worldMap.rivers), start: 0, end: 0 });
+        }
+
+        const conditionExprsEqual = areEqualWithinBudget(cachedWorldMap.conditionExprs, worldMap.conditionExprs, comparisonBudget);
+        if (conditionExprsEqual === undefined) {
+            return false;
+        }
+        if (!conditionExprsEqual) {
+            changeMessages.push({ command: 'conditionexprs', data: JSON.stringify(worldMap.conditionExprs), start: 0, end: 0 });
+        }
+
+        const bookmarksEqual = areEqualWithinBudget(cachedWorldMap.bookmarks, worldMap.bookmarks, comparisonBudget);
+        if (bookmarksEqual === undefined) {
+            return false;
+        }
+        if (!bookmarksEqual) {
+            changeMessages.push({ command: 'bookmarks', data: JSON.stringify(worldMap.bookmarks), start: 0, end: 0 });
         }
 
         if (!this.fillMessageForItem(changeMessages, worldMap.provinces, cachedWorldMap.provinces, 'provinces', worldMap.badProvincesCount, worldMap.provincesCount, comparisonBudget)) {

@@ -11,7 +11,7 @@ import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { isUseConditionInFocusEnabled } from '../../util/featureflags';
+import { featureFlagsAsScript, isLocalisationIndexEnabled, isUseConditionInFocusEnabled } from '../../util/featureflags';
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
@@ -133,6 +133,7 @@ export function renderFocusTreeHtmlFromPayload(
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
     const scripts = buildFocusTreeBootstrapScripts(payload);
     scripts.push(i18nTableAsScript());
+    scripts.push(featureFlagsAsScript());
     return html(
         webview,
         renderFocusTreeBody(payload),
@@ -623,6 +624,13 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
             />
         </div>`;
 
+    const previewLabelMode = isLocalisationIndexEnabled() ? `
+        <div class="preview-label-mode ${toolbarGroupStyle()}">
+            <span class="${toolbarLabelStyle()}">${localize('preview.labelmode', 'Label: ')}</span>
+            <button type="button" data-preview-label-mode-value="id" aria-pressed="true">${localize('preview.labelmode.id', 'ID')}</button>
+            <button type="button" data-preview-label-mode-value="name" aria-pressed="false">${localize('preview.labelmode.name', 'Name')}</button>
+        </div>` : '';
+
     const editToggle = `
         <div class="${styleTable.style('toolbarIconGroup', () => `display:flex; align-items:center;`) }">
             <button
@@ -691,6 +699,7 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
         <div class="toolbar ${styleTable.style('toolbarAlign', () => `display:flex; flex-direction:column; align-items:stretch; gap:4px;`) }">
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; gap:10px;`) }">
                 ${focuses}
+                ${previewLabelMode}
                 ${searchbox}
                 ${editToggle}
             </div>
@@ -901,6 +910,18 @@ async function prepareFocusIconStyles(
         `);
     }));
 
+    const uniqueOverlayNames = Array.from(new Set(
+        focuses.map(focus => focus.overlay).filter((overlayName): overlayName is string => !!overlayName),
+    ));
+    await Promise.all(uniqueOverlayNames.map(async overlayName => {
+        const gfxFile = focusIconAssetResolution.gfxFileByIconName[overlayName];
+        const overlaySprite = gfxFile
+            ? await getSpriteByGfxNameFromResolvedFiles(overlayName, [gfxFile])
+            : undefined;
+        styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () =>
+            overlaySprite ? `background-image: url(${overlaySprite.image.uri});` : '');
+    }));
+
     debug('Focus tree icon diagnostics', {
         resolvedFromResolvedFilesCount: iconDiagnostics.resolvedFromResolvedFilesCount,
         defaultFallbackCount: iconDiagnostics.defaultFallbackCount,
@@ -933,6 +954,12 @@ function prepareDeferredFocusIconStyles(
             height: ${focusPlaceholderSize}px;
             background: grey;
         `);
+    });
+
+    Array.from(new Set(
+        focuses.map(focus => focus.overlay).filter((overlayName): overlayName is string => !!overlayName),
+    )).forEach(overlayName => {
+        styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () => '');
     });
 
     styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `

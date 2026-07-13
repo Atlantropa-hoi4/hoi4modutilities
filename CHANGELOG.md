@@ -4,7 +4,25 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.7] - 2026/04/30 - Latest
+## [0.14.0] - 2026/07/14 - Latest
+
+### Added
+* Add bookmark/scenario and condition selection to World Map Preview for owner, controller, and core history.
+* Add owner and controller country color sets to World Map Preview.
+* Add condition selection, zooming, and `force_use_small_tech_layout` support to Technology Tree Preview.
+* Add conditional-map, alternate, and overlay artwork support to Focus Tree Preview.
+* Add ID/name label toggles to Focus Tree and Technology Tree previews.
+
+### Changed
+* Expose supported feature flags as selectable values in VS Code settings while retaining the fork-specific `technologyShowId` option.
+* Resolve preview files in workspace or selected-mod-root, DLC, then base-game order.
+* Use right-button preview panning by default, with `!rightButtonDrag` available for the previous left-button behavior.
+* Keep partial parser results for files with a redundant closing brace or an unfinished block at EOF.
+
+### Fixed
+* Ignore stale Focus Tree drag edits after the source document changes and refresh from the latest document instead.
+
+## [0.13.7] - 2026/04/30
 
 ### Added
 * Add a native HOI4 document formatter for supported script, GUI, and GFX files, including full-document, range, and on-type indentation support.

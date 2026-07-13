@@ -5,7 +5,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 ## What It Covers
 
 - Focus tree preview and editing helpers
-- World map preview
+- World map preview with bookmark/scenario and condition-aware country history
 - Event tree preview
 - Technology tree preview
 - MIO preview
@@ -45,7 +45,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 | `hoi4ModUtilities.loadDlcContents` | `boolean` | Loads DLC image content for previews. Uses more memory. |
 | `hoi4ModUtilities.modFile` | `string` | Working `.mod` file used for `replace_path` resolution. |
 | `hoi4ModUtilities.previewLocalisation` | `string enum` | Preview language used by localisation-aware previews. |
-| `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced flows. GFX/localisation indexes are enabled without flags; use `!gfxIndex` or `!localisationIndex` to disable them. Use `technologyShowId` to show raw technology IDs in the technology tree preview. |
+| `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced flows. Choose supported values directly in VS Code settings. GFX/localisation indexes are enabled without flags; use `!gfxIndex` or `!localisationIndex` to disable them. Use `technologyShowId` to show raw technology IDs in the technology tree preview. |
 
 ## Development
 
@@ -101,8 +101,8 @@ npm run verify
 Push a semantic version tag that matches `package.json`:
 
 ```bash
-git tag v0.13.7
-git push origin v0.13.7
+git tag v0.14.0
+git push origin v0.14.0
 ```
 
 GitHub Actions rebuilds the extension on `windows-latest`, validates the tag, runs the verification pipeline, and publishes the generated `.vsix` plus checksum to the matching GitHub Release.

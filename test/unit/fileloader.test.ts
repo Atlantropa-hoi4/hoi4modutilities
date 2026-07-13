@@ -10,8 +10,10 @@ const mockDirectories = new Set<string>();
 const mockReadContents = new Map<string, string>();
 const mockReadCounts = new Map<string, number>();
 const mockModifiedTimes = new Map<string, number>();
+const mockDirectoryEntries = new Map<string, Array<[string, number]>>();
 let mockReadDelayMs = 0;
 let mockConfigurationModFile = '';
+let mockConfigurationLoadDlcContents = false;
 
 function normalizeMockPath(value: string): string {
     return path.normalize(value).toLowerCase();
@@ -47,7 +49,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 textDocuments: [],
                 getConfiguration: () => ({
                     installPath: '',
-                    loadDlcContents: false,
+                    loadDlcContents: mockConfigurationLoadDlcContents,
                     modFile: mockConfigurationModFile,
                     featureFlags: [],
                     previewLocalisation: 'English',
@@ -73,7 +75,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                         mockReadCounts.set(normalizedPath, (mockReadCounts.get(normalizedPath) ?? 0) + 1);
                         return Buffer.from(mockReadContents.get(normalizedPath) ?? uri.fsPath);
                     },
-                    readDirectory: async () => [],
+                    readDirectory: async (uri: { fsPath: string }) =>
+                        mockDirectoryEntries.get(normalizeMockPath(uri.fsPath)) ?? [],
                 },
             },
         };
@@ -83,8 +86,10 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const {
+    clearDlcZipCache,
     getModRootCandidatePaths,
     isPathCoveredByReplacePath,
+    listFilesFromModOrHOI4,
     readFileFromModOrHOI4,
 } = require('../../src/util/fileloader') as typeof import('../../src/util/fileloader');
 
@@ -96,8 +101,11 @@ describe('fileloader mod root helpers', () => {
         mockReadContents.clear();
         mockReadCounts.clear();
         mockModifiedTimes.clear();
+        mockDirectoryEntries.clear();
         mockReadDelayMs = 0;
         mockConfigurationModFile = '';
+        mockConfigurationLoadDlcContents = false;
+        clearDlcZipCache();
     });
 
     after(() => {
@@ -124,6 +132,72 @@ describe('fileloader mod root helpers', () => {
         assert.strictEqual(isPathCoveredByReplacePath('common/national_focus', 'common'), true);
         assert.strictEqual(isPathCoveredByReplacePath('common/national_focus/file.txt', 'common/national_focus'), true);
         assert.strictEqual(isPathCoveredByReplacePath('history/countries', 'common'), false);
+    });
+
+    it('prefers DLC files over base files and isolates dlc:false reads', async () => {
+        const relativePath = 'common/example.txt';
+        const installRoot = 'server.hoi4installpath:/';
+        const dlcRoot = path.join(installRoot, 'dlc');
+        const dlcFolderName = 'dlc001';
+        const dlcFolder = path.join(dlcRoot, dlcFolderName);
+        const dlcFile = path.join(dlcFolder, relativePath);
+        const baseFile = path.join(installRoot, relativePath);
+
+        mockConfigurationLoadDlcContents = true;
+        mockDirectories.add(normalizeMockPath(dlcRoot));
+        mockDirectories.add(normalizeMockPath(dlcFolder));
+        mockDirectoryEntries.set(normalizeMockPath(dlcRoot), [[dlcFolderName, 2]]);
+        mockDirectoryEntries.set(normalizeMockPath(dlcFolder), []);
+        mockFiles.add(normalizeMockPath(dlcFile));
+        mockFiles.add(normalizeMockPath(baseFile));
+        mockReadContents.set(normalizeMockPath(dlcFile), 'dlc');
+        mockReadContents.set(normalizeMockPath(baseFile), 'base');
+
+        const [withDlc, withoutDlc] = await Promise.all([
+            readFileFromModOrHOI4(relativePath, { mod: false }),
+            readFileFromModOrHOI4(relativePath, { mod: false, dlc: false }),
+        ]);
+
+        assert.strictEqual(withDlc[0].toString(), 'dlc');
+        assert.strictEqual(withDlc[1].fsPath, dlcFile);
+        assert.strictEqual(withoutDlc[0].toString(), 'base');
+        assert.strictEqual(withoutDlc[1].fsPath, baseFile);
+
+        const dlcOnly = await readFileFromModOrHOI4(relativePath, { mod: false, hoi4: false });
+        assert.strictEqual(dlcOnly[0].toString(), 'dlc');
+    });
+
+    it('lists DLC files before base files and isolates dlc:false lists', async () => {
+        const relativePath = 'common';
+        const installRoot = 'server.hoi4installpath:/';
+        const dlcRoot = path.join(installRoot, 'dlc');
+        const dlcFolderName = 'dlc001';
+        const dlcFolder = path.join(dlcRoot, dlcFolderName);
+        const dlcContentFolder = path.join(dlcFolder, relativePath);
+        const baseContentFolder = path.join(installRoot, relativePath);
+
+        mockConfigurationLoadDlcContents = true;
+        for (const directory of [dlcRoot, dlcFolder, dlcContentFolder, baseContentFolder]) {
+            mockDirectories.add(normalizeMockPath(directory));
+        }
+        mockDirectoryEntries.set(normalizeMockPath(dlcRoot), [[dlcFolderName, 2]]);
+        mockDirectoryEntries.set(normalizeMockPath(dlcFolder), []);
+        mockDirectoryEntries.set(normalizeMockPath(dlcContentFolder), [
+            ['dlc-only.txt', 1],
+            ['shared.txt', 1],
+        ]);
+        mockDirectoryEntries.set(normalizeMockPath(baseContentFolder), [
+            ['shared.txt', 1],
+            ['base-only.txt', 1],
+        ]);
+
+        const [withDlc, withoutDlc] = await Promise.all([
+            listFilesFromModOrHOI4(relativePath, { mod: false }),
+            listFilesFromModOrHOI4(relativePath, { mod: false, dlc: false }),
+        ]);
+
+        assert.deepStrictEqual(withDlc, ['dlc-only.txt', 'shared.txt', 'base-only.txt']);
+        assert.deepStrictEqual(withoutDlc, ['shared.txt', 'base-only.txt']);
     });
 
     it('releases file read slots after queued reads complete', async () => {

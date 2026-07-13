@@ -2,7 +2,7 @@ import * as path from 'path';
 import { ConditionItem, ConditionComplexExpr, extractConditionValue } from "../../hoiformat/condition";
 import { Node, Token } from "../../hoiformat/hoiparser";
 import { ContainerWindowType } from "../../hoiformat/gui";
-import { HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
+import { CustomMap, HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
 import { countryScope } from "../../hoiformat/scope";
 import { Warning } from "../../util/common";
 import { localize } from "../../util/i18n";
@@ -56,6 +56,7 @@ export interface Focus {
     file: string;
     isInCurrentFile: boolean;
     text?: string;
+    overlay?: string;
     layout?: FocusPositionMeta;
     lintWarningCount: number;
     lintInfoCount: number;
@@ -130,6 +131,7 @@ export interface FocusTreeDef {
 
 export interface FocusDef {
     id: string;
+    alternate_icon: string;
     icon: Raw[];
     available: Raw;
     available_if_capitulated: boolean;
@@ -144,12 +146,15 @@ export interface FocusDef {
     offset: OffsetDef[];
     _token: Token;
     text?: string;
+    overlay?: string;
 }
 
 interface FocusIconDef {
     trigger: Raw;
     value: string;
 }
+
+type FocusIconDefNew = CustomMap<Raw>;
 
 interface OffsetDef {
     x: number;
@@ -181,6 +186,7 @@ const focusOrORListSchema: SchemaDef<FocusOrORList> = {
 
 const focusSchema: SchemaDef<FocusDef> = {
     id: "string",
+    alternate_icon: "string",
     icon: {
         _innerType: 'raw',
         _type: 'array',
@@ -216,6 +222,7 @@ const focusSchema: SchemaDef<FocusDef> = {
         _type: 'array',
     },
     text: "string",
+    overlay: "string",
 };
 
 const focusTreeSchema: SchemaDef<FocusTreeDef> = {
@@ -255,6 +262,11 @@ const focusIconSchema: SchemaDef<FocusIconDef> = {
     value: "string",
 };
 
+const focusIconSchemaNew: SchemaDef<FocusIconDefNew> = {
+    _innerType: "raw",
+    _type: "map",
+};
+
 export function convertFocusFileNodeToJson(node: Node, constants: {}): HOIPartial<FocusFile> {
     return convertNodeToJson<FocusFile>(node, focusFileSchema, constants);
 }
@@ -285,19 +297,36 @@ export function getJointFocusTreeId(filePath: string): string {
     return fileName ? `${label} (${fileName})` : label;
 }
 
-export function parseFocusIcon(nodes: Node[], constants: {}): Focus['icon'] {
-    return nodes.map(n => parseSingleFocusIcon(n, constants)).filter((v): v is FocusIconWithCondition => v !== undefined);
+export function parseFocusIcon(nodes: Node[], constants: {}, conditionExprs: ConditionItem[]): Focus['icon'] {
+    return nodes.flatMap(n => parseSingleFocusIcon(n, constants, conditionExprs));
 }
 
-function parseSingleFocusIcon(node: Node, constants: {}): FocusIconWithCondition {
+function parseSingleFocusIcon(node: Node, constants: {}, conditionExprs: ConditionItem[]): FocusIconWithCondition[] {
     const stringResult = convertNodeToJson<string>(node, 'string', constants);
     if (stringResult) {
-        return { icon: stringResult, condition: true };
+        return [{ icon: stringResult, condition: true }];
     }
 
     const iconWithCondition = convertNodeToJson<FocusIconDef>(node, focusIconSchema, constants);
-    return {
-        icon: iconWithCondition.value,
-        condition: iconWithCondition.trigger ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, []).condition : true,
-    };
+    if (iconWithCondition.value) {
+        return [{
+            icon: iconWithCondition.value,
+            condition: iconWithCondition.trigger
+                ? extractConditionValue(iconWithCondition.trigger._raw.value, countryScope, conditionExprs).condition
+                : true,
+        }];
+    }
+
+    const iconMap = convertNodeToJson<FocusIconDefNew>(node, focusIconSchemaNew, constants);
+    return Object.entries(iconMap._map).flatMap(([icon, condition]) => {
+        const rawCondition = condition._value?._raw;
+        if (!icon || !rawCondition) {
+            return [];
+        }
+
+        return [{
+            icon,
+            condition: extractConditionValue(rawCondition.value, countryScope, conditionExprs).condition,
+        }];
+    });
 }

@@ -114,10 +114,16 @@ export function renderFocusHtmlTemplate(
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const sharedStyles = ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
+    const displayName = localizedText ?? focus.id;
     const textContent = `
-        <span class="${sharedStyles.codeLineClass}">${htmlTextEscape(focus.id)}</span>
-        ${localizedText ? `<span class="${sharedStyles.localizationLineClass}">${htmlTextEscape(localizedText)}</span>` : ''}
+        <span
+            class="${sharedStyles.codeLineClass}"
+            data-preview-label-id="${htmlAttributeEscape(focus.id)}"
+            data-preview-label-name="${htmlAttributeEscape(displayName)}"
+        >${htmlTextEscape(focus.id)}</span>
     `;
+    const idTitle = `${focus.id}\n({{position}})`;
+    const nameTitle = `${displayName}\n({{position}})`;
 
     return `<div
     class="
@@ -129,10 +135,14 @@ export function renderFocusHtmlTemplate(
     ${file === focus.file ? '' : `file="${htmlAttributeEscape(focus.file)}"`}
     data-focus-id="${htmlAttributeEscape(focus.id)}"
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${htmlAttributeEscape(focus.layout?.sourceFile ?? focus.file)}">
+    data-focus-source-file="${htmlAttributeEscape(focus.layout?.sourceFile ?? focus.file)}"
+    title="${htmlAttributeEscape(idTitle)}"
+    data-preview-title-id="${htmlAttributeEscape(idTitle)}"
+    data-preview-title-name="${htmlAttributeEscape(nameTitle)}">
         <div class="focus-checkbox ${sharedStyles.checkboxClass}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>
+        ${focus.overlay ? `<div class="${sharedStyles.overlayClass} ${styleTable.name('focus-overlay-' + normalizeForStyle(focus.overlay))}"></div>` : ''}
         <div
         class="${sharedStyles.iconSlotClass}">
             <div
@@ -155,6 +165,7 @@ export function ensureFocusTemplateStyles(
 ): {
     commonClass: string;
     checkboxClass: string;
+    overlayClass: string;
     iconSlotClass: string;
     iconImageClass: string;
     spanClass: string;
@@ -173,6 +184,16 @@ export function ensureFocusTemplateStyles(
         checkboxClass: styleTable.style('focus-checkbox', () => `
             position: absolute;
             top: 1px;
+            z-index: 3;
+        `) as string,
+        overlayClass: styleTable.style('focus-overlay-common', () => `
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: contain;
         `) as string,
         iconSlotClass: styleTable.style('focus-icon-slot', () => `
             position: absolute;
@@ -184,6 +205,7 @@ export function ensureFocusTemplateStyles(
             align-items: center;
             justify-content: center;
             pointer-events: none;
+            z-index: 1;
         `) as string,
         iconImageClass: styleTable.style('focus-icon-image', () => `
             display: block;
@@ -199,6 +221,8 @@ export function ensureFocusTemplateStyles(
             text-align: center;
             display: inline-block;
             line-height: 1.2;
+            position: relative;
+            z-index: 2;
         `) as string,
         codeLineClass: styleTable.style('focus-code-line', () => `
             display: block;

@@ -14,6 +14,7 @@ import { getSpriteByGfxNameFromResolvedFiles } from '../../util/image/imagecache
 import { LoaderSession } from '../../util/loader/loader';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { GuiFileLoader, GuiFileLoaderResult } from "./loader";
+import { featureFlagsAsScript } from '../../util/featureflags';
 
 export async function renderGuiFile(loader: GuiFileLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
@@ -38,6 +39,7 @@ export async function renderGuiFile(loader: GuiFileLoader, uri: vscode.Uri, webv
             baseContent,
             [
                 setPreviewFileUriScript,
+                { content: featureFlagsAsScript() },
                 { content: 'window.containerWindowToggles = ' + JSON.stringify(makeToggleContainerWindowToggleItems(containerWindows, styleTable)) + ';' },
                 'guipreview.js',
             ],
@@ -62,6 +64,7 @@ async function renderGuiContainerWindows(containerWindows: HOIPartial<ContainerW
     ${renderTopBar(containerWindows.map(cw => cw.name).filter((name): name is string => name !== undefined), styleTable)}
     <div
     id="dragger"
+    additionalDraggerHostId="mainContent"
     class="${styleTable.oneTimeStyle('dragger', () => `
         width: 100vw;
         height: 100vh;

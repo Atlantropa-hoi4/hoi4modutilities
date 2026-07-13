@@ -241,7 +241,16 @@ function getFocus(
     const available = hoiFocus.available
         ? extractConditionValue(hoiFocus.available._raw.value, countryScope, []).condition
         : undefined;
-    const icon = parseFocusIcon(hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw), constants);
+    const icon = parseFocusIcon(
+        hoiFocus.icon.filter((v): v is Raw => v !== undefined).map(v => v._raw),
+        constants,
+        conditionExprs,
+    );
+    if (hoiFocus.alternate_icon) {
+        const condition = { scopeName: '', nodeContent: 'Show alternate icon' };
+        extractConditionalExprs(condition, conditionExprs);
+        icon.unshift({ icon: hoiFocus.alternate_icon, condition });
+    }
     const hasAllowBranch = hoiFocus.allow_branch.length > 0;
     const allowBranchCondition = extractConditionValues(
         hoiFocus.allow_branch.filter((v): v is Raw => v !== undefined).map(v => v._raw.value),
@@ -280,6 +289,7 @@ function getFocus(
         file: filePath,
         isInCurrentFile: true,
         text: hoiFocus.text,
+        overlay: hoiFocus.overlay,
         lintWarningCount: 0,
         lintInfoCount: 0,
     };

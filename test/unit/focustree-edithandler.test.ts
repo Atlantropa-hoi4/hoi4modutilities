@@ -14,6 +14,7 @@ const postedMessages: any[] = [];
 const shownTextDocuments: any[] = [];
 const errorMessages: string[] = [];
 const reloadedDocuments: any[] = [];
+const refreshedDocuments: any[] = [];
 const appliedEdits: any[] = [];
 
 let currentDocument: MockDocument | undefined;
@@ -99,6 +100,7 @@ function resetHarness() {
     shownTextDocuments.length = 0;
     errorMessages.length = 0;
     reloadedDocuments.length = 0;
+    refreshedDocuments.length = 0;
     appliedEdits.length = 0;
     currentDocument = undefined;
     nextDocumentAfterApply = undefined;
@@ -116,6 +118,9 @@ function createHandler() {
             },
         } as any,
         session: {
+            refreshDocument: async (document: unknown) => {
+                refreshedDocuments.push(document);
+            },
             reconcileAfterLocalEdit: (document: unknown) => {
                 reconciledDocument = document;
                 return (document as MockDocument | undefined)?.version;
@@ -174,6 +179,24 @@ describe('focustree edit command handler', () => {
         assert.strictEqual(postedMessages[0].targetLocalX, 5);
         assert.strictEqual(postedMessages[0].targetLocalY, 7);
         assert.strictEqual(postedMessages[0].documentVersion, 21);
+        assert.deepStrictEqual(errorMessages, []);
+    });
+
+    it('ignores a stale position edit and refreshes the latest document', async () => {
+        currentDocument = makeDocument(21, 'newer source');
+        const handler = createHandler();
+
+        await handler.handleMessage({
+            command: 'applyFocusPositionEdit',
+            focusId: 'ROOT',
+            targetLocalX: 5,
+            targetLocalY: 7,
+            documentVersion: 20,
+        });
+
+        assert.deepStrictEqual(appliedEdits, []);
+        assert.deepStrictEqual(postedMessages, []);
+        assert.deepStrictEqual(refreshedDocuments, [currentDocument]);
         assert.deepStrictEqual(errorMessages, []);
     });
 

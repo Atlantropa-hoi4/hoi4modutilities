@@ -560,3 +560,11 @@ Selected mod-root resolution performance 2026-07-10:
 - [x] Reverify focused tests, TypeScript checks, lint, and whitespace.
 
 Review note: Selected mod-root resolution now reuses one in-flight/cached descriptor parse across concurrent file loads, then revalidates descriptor mtime and candidate-directory state after a short freshness window. Focused tests confirm both initial and expired 24-file bursts read the descriptor once and that descriptor path changes select the new root. Reverified with `npm run compile-tests`, focused fileloader/cache/preview-manager mocha coverage, `npm run compile-ts`, `npm run lint`, the full `npm run test:unit` suite (323 tests), and `git diff --check`.
+
+Upstream v0.14.0 integration 2026-07-14:
+- [x] Fetch `herbix/hoi4modutilities` and identify upstream-only changes through release commit `0fec2f44`.
+- [x] Integrate World Map scenarios/conditions, Focus and Technology preview updates, file priority, feature flags, parser tolerance, and release metadata while preserving fork-specific preview architecture.
+- [x] Add focused regression coverage for parser recovery, file/DLC precedence, Focus artwork and stale edits, Technology conditions/layout, and World Map bookmark history.
+- [x] Run the repository release verification pipeline and review the resolved merge diff/status.
+
+Review note: Integrated upstream v0.14.0 across the fork's TypeScript 6, esbuild, cached-loader, and snapshot-based preview architecture without replacing fork-specific APIs or generated-source workflow. `npm run verify` passed with 335 unit tests, 15 Extension Host smoke tests, production builds, lint, and a packaged `hoi4modutilities-0.14.0.vsix`; final whitespace and upstream-coverage reviews found no remaining omissions.

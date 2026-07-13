@@ -187,7 +187,7 @@ function resolveLocalisedTextFromAvailableWorkspaceLanguage(
 }
 
 async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<void> {
-    const options = { mod: false, hoi4: true, recursively: true };
+    const options = { mod: false, hoi4: true, dlc: true, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
     await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, f =>
@@ -195,7 +195,7 @@ async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<vo
 }
 
 async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise<void> {
-    const options = { mod: true, hoi4: false, recursively: true };
+    const options = { mod: true, hoi4: false, dlc: false, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
     const fileIndexes = await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, async f => {
@@ -251,7 +251,8 @@ export async function whenLocalisationIndexReady(options?: { showStatusBar?: boo
 
 async function fillLocalisationItems(localisationFile: string, localisationIndex: LocalisationData, options: {
     mod?: boolean,
-    hoi4?: boolean
+    hoi4?: boolean,
+    dlc?: boolean
 }, estimatedSize?: [number]): Promise<void> {
     let processedContent = '';
     try {
@@ -416,7 +417,7 @@ async function addWorkspaceLocalisationIndex(file: vscode.Uri): Promise<void> {
     const relative = getWorkspaceLocalisationIndexRelativePath(file);
     if (relative) {
         const fileIndex: LocalisationData = {};
-        await fillLocalisationItems(relative, fileIndex, { hoi4: false });
+        await fillLocalisationItems(relative, fileIndex, { mod: true, hoi4: false, dlc: false });
         workspaceLocalisationFileIndexes[relative] = fileIndex;
         workspaceLocalisationIndex = rebuildLocalisationIndexFromFileIndexes(workspaceLocalisationFileIndexes);
     }

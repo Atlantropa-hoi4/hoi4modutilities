@@ -124,7 +124,7 @@ export function parseHoi4File(input: string, errorMessagePrefix: string = '', op
     const value = parseBlockContent(tokens, keepTokens);
 
     if (tokens.peek().type !== 'eof') {
-        tokens.throw("File content can't be completely parsed");
+        console.warn("File content can't be completely parsed");
     }
 
     return {
@@ -258,7 +258,7 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [
             if (nextToken.value === '{') {
                 const result = parseBlockContent(tokens, keepTokens);
                 const right = tokens.next();
-                if (right.value !== '}') {
+                if (right.value !== '}' && right.type !== 'eof') {
                     tokens.throw("Expect a '}'", true);
                 }
                 return [

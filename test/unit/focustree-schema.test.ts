@@ -238,7 +238,7 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(tree.continuousFocusPositionY, undefined);
     });
 
-    it('collects Conditions options from allow_branch triggers only', () => {
+    it('collects Conditions options from conditional icons and allow_branch triggers', () => {
         const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(
             parseHoi4File(`
@@ -269,9 +269,59 @@ describe('focus tree schema fixtures', () => {
         assert.deepStrictEqual(tree.conditionExprs, [
             {
                 scopeName: '',
+                nodeContent: 'has_war = no',
+            },
+            {
+                scopeName: '',
                 nodeContent: 'has_global_flag = BRANCH_FLAG',
             },
         ]);
+    });
+
+    it('parses alternate, conditional-map, and overlay focus artwork', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const [tree] = getFocusTree(
+            parseHoi4File(`
+                focus_tree = {
+                    id = artwork_tree
+                    focus = {
+                        id = ROOT
+                        x = 0
+                        y = 0
+                        icon = GFX_focus_primary
+                        icon = {
+                            trigger = { has_war = yes }
+                            value = GFX_focus_conditional
+                        }
+                        icon = {
+                            GFX_focus_map = { has_country_flag = custom_icon }
+                        }
+                        alternate_icon = GFX_focus_alternate
+                        overlay = GFX_focus_overlay
+                    }
+                }
+            `),
+            [],
+            'common/national_focus/artwork-tree.txt',
+        );
+
+        const focus = tree?.focuses.ROOT;
+        assert.ok(focus);
+        assert.deepStrictEqual(focus.icon.map(icon => icon.icon), [
+            'GFX_focus_alternate',
+            'GFX_focus_primary',
+            'GFX_focus_conditional',
+            'GFX_focus_map',
+        ]);
+        assert.deepStrictEqual(tree.conditionExprs.map(condition => condition.nodeContent), [
+            'has_war = yes',
+            'has_country_flag = custom_icon',
+            'Show alternate icon',
+        ]);
+        assert.notStrictEqual(focus.icon[0].condition, true);
+        assert.notStrictEqual(focus.icon[2].condition, true);
+        assert.notStrictEqual(focus.icon[3].condition, true);
+        assert.strictEqual(focus.overlay, 'GFX_focus_overlay');
     });
 });
 

@@ -29,6 +29,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
         return {
             isUseConditionInFocusEnabled: () => false,
             isLocalisationIndexEnabled: () => localisationIndexEnabled,
+            featureFlagsAsScript: () => ({ content: '' }),
         };
     }
 

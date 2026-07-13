@@ -28,6 +28,23 @@ export function isLocalisationIndexEnabled(): boolean {
     return !hasFeatureFlag('!localisationIndex');
 }
 
+export function isRightButtonDragEnabled(): boolean {
+    return !hasFeatureFlag('!rightButtonDrag');
+}
+
 export function isTechnologyShowIdEnabled(): boolean {
     return hasFeatureFlag('technologyShowId');
+}
+
+export function featureFlagsAsScript(): string {
+    const featureFlagState = {
+        useConditionInFocus: isUseConditionInFocusEnabled(),
+        eventTreePreview: isEventTreePreviewEnabled(),
+        sharedFocusIndex: isSharedFocusIndexEnabled(),
+        gfxIndex: isGfxIndexEnabled(),
+        localisationIndex: isLocalisationIndexEnabled(),
+        rightButtonDrag: isRightButtonDragEnabled(),
+        technologyShowId: isTechnologyShowIdEnabled(),
+    };
+    return 'window.__featureflags = ' + JSON.stringify(featureFlagState) + ';';
 }

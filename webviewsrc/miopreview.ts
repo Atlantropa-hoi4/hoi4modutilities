@@ -2,8 +2,8 @@ import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, run
 import { DivDropdown } from "./util/dropdown";
 import { minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
-import { StyleTable, normalizeForStyle } from "../src/util/styletable";
-import { applyCondition, ConditionItem } from "../src/hoiformat/condition";
+import { StyleTable } from "../src/util/styletable";
+import { applyCondition, ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
 import { NumberPosition } from "../src/util/common";
 import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";

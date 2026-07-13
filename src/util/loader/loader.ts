@@ -140,15 +140,18 @@ export abstract class FileLoader<T, E={}> extends Loader<T, E> {
     protected abstract loadFromFile(session: LoaderSession): Promise<LoadResultOD<T, E>>;
 }
 
-export abstract class FolderLoader<T, TFile, E={}, EFile={}> extends Loader<T, E> {
+export abstract class FolderLoader<T, TFile, E={}, EFile={}, FileConstructorArgs extends unknown[]=[]> extends Loader<T, E> {
     private fileCount: number = 0;
     private subLoaders: Record<string, FileLoader<TFile, EFile>> = {};
+    private fileConstructorArgs: FileConstructorArgs;
 
     constructor(
         public folder: string,
-        private subLoaderConstructor: { new (file: string): FileLoader<TFile, EFile> },
+        private subLoaderConstructor: { new (file: string, ...args: FileConstructorArgs): FileLoader<TFile, EFile> },
+        ...fileConstructorArgs: FileConstructorArgs
     ) {
         super();
+        this.fileConstructorArgs = fileConstructorArgs;
     }
 
     public async shouldReloadImpl(session: LoaderSession): Promise<boolean> {
@@ -174,7 +177,7 @@ export abstract class FolderLoader<T, TFile, E={}, EFile={}> extends Loader<T, E
             session.throwIfCancelled();
             let subLoader = subLoaders[file];
             if (!subLoader) {
-                subLoader = new this.subLoaderConstructor(path.join(this.folder, file));
+                subLoader = new this.subLoaderConstructor(path.join(this.folder, file), ...this.fileConstructorArgs);
                 subLoader.disableTelemetry = true;
                 subLoader.onProgress(e => this.onProgressEmitter.fire(e));
             }

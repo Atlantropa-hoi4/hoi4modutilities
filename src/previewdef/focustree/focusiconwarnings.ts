@@ -8,18 +8,22 @@ export function addMissingFocusIconWarnings(focusTrees: FocusTree[], unresolvedI
         const warnings: FocusWarning[] = [];
         for (const focus of Object.values(focusTree.focuses)) {
             const reportedIconNames = new Set<string>();
-            for (const icon of focus.icon) {
-                if (!icon.icon || !unresolvedIconNameSet.has(icon.icon) || reportedIconNames.has(icon.icon)) {
+            const referencedIconNames = [
+                ...focus.icon.map(icon => icon.icon),
+                focus.overlay,
+            ];
+            for (const iconName of referencedIconNames) {
+                if (!iconName || !unresolvedIconNameSet.has(iconName) || reportedIconNames.has(iconName)) {
                     continue;
                 }
 
-                reportedIconNames.add(icon.icon);
+                reportedIconNames.add(iconName);
                 warnings.push({
                     code: 'focus-icon-gfx-missing',
                     severity: 'warning',
                     kind: 'parse',
                     source: focus.id,
-                    text: localize('TODO', 'Focus {0} references missing icon GFX {1}.', focus.id, icon.icon),
+                    text: localize('TODO', 'Focus {0} references missing icon GFX {1}.', focus.id, iconName),
                     relatedFocusIds: [focus.id],
                     navigations: focus.token
                         ? [{

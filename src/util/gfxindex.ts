@@ -16,6 +16,7 @@ interface GfxIndexItem {
 }
 
 const globalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+const dlcGfxIndex: Record<string, GfxIndexItem | undefined> = {};
 let workspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
 const gfxIndexBuildConcurrency = 8;
 
@@ -25,6 +26,9 @@ const gfxIndexService = new IndexService<GfxIndexItem>({
         reset: () => {
             for (const key of Object.keys(globalGfxIndex)) {
                 delete globalGfxIndex[key];
+            }
+            for (const key of Object.keys(dlcGfxIndex)) {
+                delete dlcGfxIndex[key];
             }
         },
         statusMessage: 'Building GFX index...',
@@ -87,7 +91,7 @@ export function tryGetGfxContainerFile(gfxName: string | undefined): string | un
         return undefined;
     }
 
-    return workspaceGfxIndex[gfxName]?.file ?? globalGfxIndex[gfxName]?.file;
+    return workspaceGfxIndex[gfxName]?.file ?? dlcGfxIndex[gfxName]?.file ?? globalGfxIndex[gfxName]?.file;
 }
 
 export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Promise<string[]> {
@@ -95,14 +99,28 @@ export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Pr
 }
 
 async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<void> {
-    const options = { mod: false, recursively: true };
-    const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
-    await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
-        fillGfxItems('interface/' + f, globalGfxIndex, options, estimatedSize));
+    const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
+    const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
+    const [baseGfxFiles, dlcGfxFiles] = await Promise.all([
+        listFilesFromModOrHOI4('interface', baseOptions),
+        listFilesFromModOrHOI4('interface', dlcOptions),
+    ]);
+    await Promise.all([
+        mapWithConcurrency(
+            baseGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
+            gfxIndexBuildConcurrency,
+            f => fillGfxItems('interface/' + f, globalGfxIndex, baseOptions, estimatedSize),
+        ),
+        mapWithConcurrency(
+            dlcGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
+            gfxIndexBuildConcurrency,
+            f => fillGfxItems('interface/' + f, dlcGfxIndex, dlcOptions, estimatedSize),
+        ),
+    ]);
 }
 
 async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<void> {
-    const options = { hoi4: false, recursively: true };
+    const options = { mod: true, hoi4: false, dlc: false, recursively: true };
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
     await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
         fillGfxItems('interface/' + f, workspaceGfxIndex, options, estimatedSize));
@@ -135,7 +153,7 @@ export async function prewarmGfxIndex(): Promise<void> {
     ]);
 }
 
-async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean }, estimatedSize?: [number]): Promise<void> {
+async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean, dlc?: boolean }, estimatedSize?: [number]): Promise<void> {
     try {
         if (estimatedSize) {
             estimatedSize[0] += gfxFile.length;
@@ -276,7 +294,7 @@ function addWorkspaceGfxIndex(file: vscode.Uri) {
     if (wsFolder) {
         const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
         if (relative && relative.startsWith('interface/')) {
-            void fillGfxItems(relative, workspaceGfxIndex, { hoi4: false });
+            void fillGfxItems(relative, workspaceGfxIndex, { mod: true, hoi4: false, dlc: false });
         }
     }
 }

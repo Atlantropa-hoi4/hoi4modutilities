@@ -186,6 +186,56 @@ export function subscribeRefreshButton() {
     });
 }
 
+export type PreviewLabelMode = 'id' | 'name';
+
+export function subscribePreviewLabelToggle(defaultMode: PreviewLabelMode = 'id'): void {
+    const controls = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-preview-label-mode-value]'));
+    if (controls.length === 0) {
+        return;
+    }
+
+    const restoredMode = getState().previewLabelMode;
+    const initialMode: PreviewLabelMode = restoredMode === 'id' || restoredMode === 'name'
+        ? restoredMode
+        : defaultMode;
+    applyPreviewLabelMode(initialMode);
+
+    for (const control of controls) {
+        control.addEventListener('click', () => {
+            const mode = control.dataset.previewLabelModeValue === 'name' ? 'name' : 'id';
+            applyPreviewLabelMode(mode);
+        });
+    }
+}
+
+export function refreshPreviewLabelMode(): void {
+    const mode = document.body.dataset.previewLabelMode === 'name' ? 'name' : 'id';
+    applyPreviewLabelMode(mode);
+}
+
+function applyPreviewLabelMode(mode: PreviewLabelMode): void {
+    document.body.dataset.previewLabelMode = mode;
+    setState({ previewLabelMode: mode });
+
+    for (const control of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-preview-label-mode-value]'))) {
+        const active = control.dataset.previewLabelModeValue === mode;
+        control.classList.toggle('active', active);
+        control.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-preview-label-id][data-preview-label-name]'))) {
+        element.textContent = mode === 'name'
+            ? element.dataset.previewLabelName ?? element.dataset.previewLabelId ?? ''
+            : element.dataset.previewLabelId ?? '';
+    }
+
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-preview-title-id][data-preview-title-name]'))) {
+        element.title = mode === 'name'
+            ? element.dataset.previewTitleName ?? element.dataset.previewTitleId ?? ''
+            : element.dataset.previewTitleId ?? '';
+    }
+}
+
 if (window.previewedFileUri) {
     setState({ uri: window.previewedFileUri });
 }
@@ -208,17 +258,37 @@ window.addEventListener('load', function() {
 
     // Drag to scroll
     (function() {
-        // Dragger should be like this: <div id="dragger" style="width:100vw;height:100vh;position:fixed;left:0;top:0;"></div>
+        // Dragger should be like this: <div id="dragger" additionalDraggerHostId="optionalid" style="width:100vw;height:100vh;position:fixed;left:0;top:0;"></div>
         const dragger = document.getElementById("dragger");
         if (!dragger) {
             return;
         }
 
-        dragger.addEventListener('contextmenu', event => event.preventDefault());
+        const rightButtonDrag = (window as any).__featureflags?.rightButtonDrag ?? false;
+        const button = rightButtonDrag ? 2 : 0;
+        const buttonMask = rightButtonDrag ? 2 : 1;
 
-        dragger.addEventListener('mousedown', function(e) {
-            startPreviewPan(e.pageX, e.pageY);
-        });
+        const hosts = [ dragger ];
+        if (rightButtonDrag) {
+            const hostId = dragger.getAttribute("additionalDraggerHostId");
+            if (hostId) {
+                const hostElement = document.getElementById(hostId);
+                if (hostElement) {
+                    hosts.push(hostElement);
+                }
+            }
+        }
+
+        for (const host of hosts) {
+            host.addEventListener('contextmenu', event => event.preventDefault());
+            host.addEventListener('mousedown', function(e) {
+                if (e.button !== button) {
+                    return;
+                }
+
+                startPreviewPan(e.pageX, e.pageY);
+            });
+        }
 
         document.body.addEventListener('mousemove', function(e) {
             if (isPreviewPanDisabled()) {
@@ -236,7 +306,7 @@ window.addEventListener('load', function() {
         });
 
         document.body.addEventListener('mouseenter', function(e) {
-            if (previewPanPressed && (e.buttons & 1) !== 1) {
+            if (previewPanPressed && (e.buttons & buttonMask) !== buttonMask) {
                 previewPanPressed = false;
             }
         });

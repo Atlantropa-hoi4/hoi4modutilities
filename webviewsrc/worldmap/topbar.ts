@@ -8,9 +8,10 @@ import { DivDropdown } from "../util/dropdown";
 import { BehaviorSubject, combineLatest, fromEvent } from 'rxjs';
 import { Renderer } from './renderer';
 import { sendEvent } from '../util/telemetry';
+import { ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../../src/hoiformat/condition";
 
 export type ViewMode = 'province' | 'state' | 'strategicregion' | 'warnings';
-export type ColorSet = 'provinceid' | 'provincetype' | 'terrain' | 'country' | 'stateid' | 'manpower' |
+export type ColorSet = 'provinceid' | 'provincetype' | 'terrain' | 'owner' | 'controller' | 'stateid' | 'manpower' |
     'victorypoint' | 'continent' | 'warnings' | 'strategicregionid' | 'resources' | 'localsupplies';
 
 export const topBarHeight = 40;
@@ -24,8 +25,10 @@ export class TopBar extends Subscriber {
     public selectedStateId$: BehaviorSubject<number | undefined>;
     public hoverStrategicRegionId$: BehaviorSubject<number | undefined>;
     public selectedStrategicRegionId$: BehaviorSubject<number | undefined>;
+    public selectedConditions$: BehaviorSubject<ConditionItem[]>;
     public warningFilter: DivDropdown;
     public display: DivDropdown;
+    public conditions: DivDropdown;
 
     public warningsVisible: boolean = false;
 
@@ -36,15 +39,24 @@ export class TopBar extends Subscriber {
 
         this.addSubscription(this.warningFilter = new DivDropdown(document.getElementById('warningfilter') as HTMLDivElement, true));
         this.addSubscription(this.display = new DivDropdown(document.getElementById('display') as HTMLDivElement, true));
+        this.addSubscription(this.conditions = new DivDropdown(document.getElementById('conditions') as HTMLDivElement, true));
 
         this.viewMode$ = toBehaviorSubject(document.getElementById('viewmode') as HTMLSelectElement, state.viewMode ?? 'province');
-        this.colorSet$ = toBehaviorSubject(document.getElementById('colorset') as HTMLSelectElement, state.colorSet ?? 'provinceid');
+        const initialColorSet = state.colorSet === 'country' ? 'owner' : state.colorSet ?? 'provinceid';
+        this.colorSet$ = toBehaviorSubject(document.getElementById('colorset') as HTMLSelectElement, initialColorSet);
         this.hoverProvinceId$ = new BehaviorSubject<number | undefined>(undefined);
         this.selectedProvinceId$ = new BehaviorSubject<number | undefined>(state.selectedProvinceId ?? undefined);
         this.hoverStateId$ = new BehaviorSubject<number | undefined>(undefined);
         this.selectedStateId$ = new BehaviorSubject<number | undefined>(state.selectedStateId ?? undefined);
         this.hoverStrategicRegionId$ = new BehaviorSubject<number | undefined>(undefined);
         this.selectedStrategicRegionId$ = new BehaviorSubject<number | undefined>(state.selectedStrategicRegionId ?? undefined);
+        const selectedConditionValues: string[] = Array.isArray(state.selectedConditions) ? state.selectedConditions : [];
+        this.selectedConditions$ = new BehaviorSubject<ConditionItem[]>(selectedConditionValues.map(stringValueToConditionItem));
+        this.conditions.selectedValues$.next(selectedConditionValues);
+        this.addSubscription(this.conditions.selectedValues$.subscribe(selection => {
+            this.selectedConditions$.next(selection.map(stringValueToConditionItem));
+        }));
+        this.addSubscription(loader.worldMap$.subscribe(this.setupConditions));
         if (state.warningFilter) {
             this.warningFilter.selectedValues$.next(state.warningFilter);
         } else {
@@ -61,6 +73,31 @@ export class TopBar extends Subscriber {
         this.loadControls();
         this.registerEventListeners(canvas);
     }
+
+    private setupConditions = (worldMap: FEWorldMap) => {
+        const bookmarkNames = new Map<string, string[]>();
+        for (const bookmark of worldMap.bookmarks ?? []) {
+            const key = `${bookmark.date.year}.${bookmark.date.month}.${bookmark.date.day}.${bookmark.date.hour}`;
+            const names = bookmarkNames.get(key) ?? [];
+            bookmarkNames.set(key, [...names, bookmark.name]);
+        }
+
+        const options = (worldMap.conditionExprs ?? []).map(option => {
+            const names = option.scopeName === '' ? bookmarkNames.get(option.nodeContent) : undefined;
+            return {
+                value: conditionItemToStringValue(option),
+                text: names ? `${names.join(' / ')} (${option.nodeContent})` : conditionToString(option),
+            };
+        });
+        const optionValues = new Set(options.map(option => option.value));
+        const selectedConditions = this.conditions.selectedValues$.value.filter(value => optionValues.has(value));
+        this.conditions.setupOptions(options);
+        this.conditions.selectedValues$.next(selectedConditions);
+        const group = this.conditions.select.closest('.group') as HTMLElement | null;
+        if (group) {
+            group.hidden = options.length === 0;
+        }
+    };
 
     private onViewModeChange() {
         document.querySelectorAll('#colorset > option[viewmode]').forEach(v => {

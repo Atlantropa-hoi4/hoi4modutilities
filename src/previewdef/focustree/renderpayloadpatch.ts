@@ -309,6 +309,7 @@ function deriveRenderStateMetadata(
                 'focus',
                 focus.id,
                 focus.icon.map(icon => [icon.icon, icon.condition]),
+                focus.overlay,
             ]);
         }
 
@@ -340,6 +341,7 @@ function toTreePatchComparable(focusTree: FocusTree) {
             focus.x,
             focus.y,
             focus.icon,
+            focus.overlay,
             focus.available,
             focus.availableIfCapitulated,
             focus.hasAiWillDo,
@@ -450,6 +452,7 @@ function toFocusRenderComparable(focus: Focus) {
         file: focus.file,
         isInCurrentFile: focus.isInCurrentFile,
         text: focus.text,
+        overlay: focus.overlay,
         layoutEditable: focus.layout?.editable,
         layoutSourceFile: focus.layout?.sourceFile,
     };

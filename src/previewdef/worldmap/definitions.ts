@@ -1,3 +1,4 @@
+import { ConditionComplexExpr, ConditionItem } from "../../hoiformat/condition";
 import { Token } from "../../hoiformat/hoiparser";
 import { Warning } from "../../util/common";
 
@@ -26,6 +27,8 @@ export interface WorldMapData {
     terrains: Terrain[];
     resources: Resource[];
     rivers: River[];
+    conditionExprs: ConditionItem[];
+    bookmarks: Bookmark[];
     warnings: WorldMapWarning[];
 }
 
@@ -85,16 +88,28 @@ export interface ProvinceEdgeAdjacency {
 
 export type ProvinceEdge = Omit<ProvinceEdgeGraph & ProvinceEdgeAdjacency, 'from' | 'row' | 'toColor'>;
 
+export interface Bookmark {
+    name: string;
+    date: BookmarkDate;
+}
+
+export interface BookmarkDate {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+}
+
 export interface State extends Region, TokenInFile {
     id: number;
     name: string;
     manpower: number;
     category: string;
-    owner: string | undefined;
-    controller: string | undefined;
+    owner: WithCondition<string>[];
+    controller: WithCondition<string>[];
     provinces: number[];
     provinceTokens?: Record<number, Token>;
-    cores: string[];
+    cores: WithCondition<string>[];
     impassable: boolean;
     demilitarized: boolean | undefined;
     localSupplies: number;
@@ -114,6 +129,11 @@ export interface StateDatedHistory {
     demilitarized: boolean | undefined;
     buildings: Record<string, number | undefined>;
     provinceBuildings: Record<number, Record<string, number | undefined> | undefined>;
+}
+
+export interface WithCondition<T> {
+    condition: ConditionComplexExpr;
+    value: T;
 }
 
 export interface Railway {
@@ -255,7 +275,7 @@ export interface RequestMapItemMessage {
 }
 
 export interface MapItemMessage {
-    command: 'provinces' | 'states' | 'countries' | 'warnings' | 'continents' | 'terrains' | 'strategicregions' | 'supplyareas' | 'railways' | 'supplynodes' | 'resources';
+    command: 'provinces' | 'states' | 'countries' | 'warnings' | 'continents' | 'terrains' | 'strategicregions' | 'supplyareas' | 'railways' | 'supplynodes' | 'resources' | 'rivers' | 'conditionexprs' | 'bookmarks';
     data: string;
     start: number;
     end: number;
@@ -295,4 +315,7 @@ export interface ExportMapMessage {
 
 export type ProgressReporter = (progress: string) => Promise<void>;
 
-export type MapLoaderExtra = { warnings: WorldMapWarning[] };
+export type MapLoaderExtra = {
+    warnings: WorldMapWarning[];
+    conditionExprs?: ConditionItem[];
+};

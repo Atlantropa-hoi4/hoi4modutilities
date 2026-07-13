@@ -1,4 +1,4 @@
-import { Province, Point, State, Zone, Terrain, StrategicRegion } from "../../src/previewdef/worldmap/definitions";
+import { Province, Point, State, Zone, Terrain, StrategicRegion, WithCondition } from "../../src/previewdef/worldmap/definitions";
 import { FEWorldMap, Loader } from "./loader";
 import { ViewPoint } from "./viewpoint";
 import { bboxCenter, distanceSqr, distanceHamming } from "./graphutils";
@@ -9,6 +9,7 @@ import { feLocalize } from "../util/i18n";
 import { max, padStart } from "lodash";
 import { combineLatest, fromEvent } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
+import { applyCondition, ConditionItem } from "../../src/hoiformat/condition";
 
 const landWarning = 0xE02020;
 const landNoWarning = 0x7FFF7F;
@@ -79,6 +80,7 @@ export class Renderer extends Subscriber {
                 topBar.selectedStrategicRegionId$,
                 topBar.warningFilter.selectedValues$,
                 topBar.display.selectedValues$,
+                topBar.selectedConditions$,
             ]).pipe(
                 distinctUntilChanged((x, y) => x.every((v, i) => v === y[i]))
             ).subscribe(this.renderCanvas)
@@ -150,6 +152,7 @@ export class Renderer extends Subscriber {
             viewMode: this.topBar.viewMode$.value,
             colorSet: this.topBar.colorSet$.value,
             warningFilter: this.topBar.warningFilter.selectedValues$.value,
+            selectedConditions: this.topBar.selectedConditions$.value,
             edgeVisible: displayOptions.includes('edge'),
             labelVisible: displayOptions.includes('label'),
             adaptZooming: displayOptions.includes('adaptzooming'),
@@ -625,13 +628,15 @@ export class Renderer extends Subscriber {
             this.renderProvince(this.backCanvasContext, province, this.viewPoint.scale, xOffset));
     }
 
-    private renderProvinceTooltip(province: Province, worldMap: FEWorldMap) {
+    private renderProvinceTooltip(province: Province, worldMap: FEWorldMap, selectedConditions: ConditionItem[]) {
         const stateObject = worldMap.getStateByProvinceId(province.id);
         const strategicRegion = worldMap.getStrategicRegionByProvinceId(province.id);
         const railwayLevel = worldMap.getRailwayLevelByProvinceId(province.id);
         const provinceBuildings = stateObject?.provinceBuildings[province.id];
         const supplyNode = worldMap.getSupplyNodeByProvinceId(province.id) || (provinceBuildings?.supply_node ?? 0) > 0;
         const vp = stateObject?.victoryPoints[province.id];
+        const owner = solveWithCondition(stateObject?.owner, selectedConditions);
+        const controller = solveWithCondition(stateObject?.controller, selectedConditions);
 
         this.renderTooltip(`
 ${stateObject?.impassable ? '|r|' + feLocalize('worldmap.tooltip.impassable', 'Impassable') : ''}
@@ -651,10 +656,10 @@ ${feLocalize('worldmap.tooltip.strategicregion', 'Strategic region')}=${strategi
 `: ''
 }
 ${stateObject ? `
-${feLocalize('worldmap.tooltip.owner', 'Owner')}=${stateObject.owner}
-${stateObject.controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${stateObject.controller}` : ''}
+${feLocalize('worldmap.tooltip.owner', 'Owner')}=${owner ?? ''}
+${controller && owner !== controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${controller}` : ''}
 ${stateObject.demilitarized ? feLocalize('worldmap.tooltip.demilitarized', 'Demilitarized') + '=true' : ''}
-${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${stateObject.cores.join(',')}
+${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${solveWithConditionAsSet(stateObject.cores, selectedConditions).join(',')}
 ${feLocalize('worldmap.tooltip.manpower', 'Manpower')}=${toCommaDivideNumber(stateObject.manpower)}
 ${feLocalize('worldmap.tooltip.localsupplies', 'Local supplies')}=${stateObject.localSupplies}
 ${feLocalize('worldmap.tooltip.buildingsmaxlevelfactor', 'Buildings max level factor')}=${stateObject.buildingsMaxLevelFactor}
@@ -698,7 +703,7 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion).map(v => 
                 this.renderHoverProvince(province, worldMap);
             }
             if (this.isTooltipVisible()) {
-                this.renderProvinceTooltip(province, worldMap);
+                this.renderProvinceTooltip(province, worldMap, this.topBar.selectedConditions$.value);
             }
         }
     }
@@ -706,7 +711,7 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion).map(v => 
     private renderStateHoverSelection(worldMap: FEWorldMap) {
         const hover = worldMap.getStateById(this.topBar.hoverStateId$.value);
         this.renderHoverSelection(worldMap, hover, worldMap.getStateById(this.topBar.selectedStateId$.value));
-        hover && this.isTooltipVisible() && this.renderStateTooltip(hover, worldMap);
+        hover && this.isTooltipVisible() && this.renderStateTooltip(hover, worldMap, this.topBar.selectedConditions$.value);
     }
 
     private renderStrategicRegionHoverSelection(worldMap: FEWorldMap) {
@@ -735,14 +740,16 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion).map(v => 
         }
     }
 
-    private renderStateTooltip(state: State, worldMap: FEWorldMap) {
+    private renderStateTooltip(state: State, worldMap: FEWorldMap, selectedConditions: ConditionItem[]) {
+        const owner = solveWithCondition(state.owner, selectedConditions);
+        const controller = solveWithCondition(state.controller, selectedConditions);
         this.renderTooltip(`
 ${state.impassable ? '|r|' + feLocalize('worldmap.tooltip.impassable', 'Impassable') : ''}
 ${feLocalize('worldmap.tooltip.state', 'State')}=${state.id}
-${feLocalize('worldmap.tooltip.owner', 'Owner')}=${state.owner}
-${state.controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${state.controller}` : ''}
+${feLocalize('worldmap.tooltip.owner', 'Owner')}=${owner ?? ''}
+${controller && owner !== controller ? `${feLocalize('worldmap.tooltip.controller', 'Controller')}=${controller}` : ''}
 ${state.demilitarized ? feLocalize('worldmap.tooltip.demilitarized', 'Demilitarized') + '=true' : ''}
-${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${state.cores.join(',')}
+${feLocalize('worldmap.tooltip.coreof', 'Core of')}=${solveWithConditionAsSet(state.cores, selectedConditions).join(',')}
 ${feLocalize('worldmap.tooltip.manpower', 'Manpower')}=${toCommaDivideNumber(state.manpower)}
 ${feLocalize('worldmap.tooltip.category', 'Category')}=${state.category}
 ${feLocalize('worldmap.tooltip.localsupplies', 'Local supplies')}=${state.localSupplies}
@@ -921,6 +928,14 @@ ${worldMap.getStrategicRegionWarnings(strategicRegion).map(v => '|r|' + v).join(
     }
 }
 
+function solveWithCondition<T>(value: WithCondition<T>[] | undefined, selectedConditions: ConditionItem[]): T | undefined {
+    return value?.find(o => applyCondition(o.condition, selectedConditions))?.value;
+}
+
+function solveWithConditionAsSet<T>(value: WithCondition<T>[] | undefined, selectedConditions: ConditionItem[]): T[] {
+    return value?.filter(o => applyCondition(o.condition, selectedConditions)).map(o => o.value) ?? [];
+}
+
 function toColor(colorNum: number) {
     return '#' + padStart(colorNum.toString(16), 6, '0');
 }
@@ -980,10 +995,19 @@ function getColorByColorSet(
     switch (colorSet) {
         case 'provincetype':
             return (province.type === 'land' ? 0x007F00 : province.type === 'lake' ? 0x00FFFF : 0x00007F) | (province.coastal ? 0x7F0000 : 0);
-        case 'country':
+        case 'owner':
             {
                 const stateId = provinceToState[province.id];
-                return worldMap.countries.find(c => c && c.tag === worldMap.getStateById(stateId)?.owner)?.color ?? defaultColor(province);
+                const owner = solveWithCondition(worldMap.getStateById(stateId)?.owner, renderContext.topBar.selectedConditions$.value);
+                return worldMap.countries.find(c => c && c.tag === owner)?.color ?? defaultColor(province);
+            }
+        case 'controller':
+            {
+                const stateId = provinceToState[province.id];
+                const state = worldMap.getStateById(stateId);
+                const controller = solveWithCondition(state?.controller, renderContext.topBar.selectedConditions$.value) ??
+                    solveWithCondition(state?.owner, renderContext.topBar.selectedConditions$.value);
+                return worldMap.countries.find(c => c && c.tag === controller)?.color ?? defaultColor(province);
             }
         case 'terrain':
             {

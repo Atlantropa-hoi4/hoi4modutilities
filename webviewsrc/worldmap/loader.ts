@@ -2,9 +2,10 @@ import { WorldMapMessage, Province, WorldMapData, RequestMapItemMessage, State, 
 import { copyArray } from "../util/common";
 import { inBBox } from "./graphutils";
 import { Subscriber } from "../util/event";
-import { WorldMapWarning, Terrain, StrategicRegion, SupplyArea, Railway, SupplyNode, Resource, River } from "../../src/previewdef/worldmap/definitions";
+import { WorldMapWarning, Terrain, StrategicRegion, SupplyArea, Railway, SupplyNode, Resource, River, Bookmark } from "../../src/previewdef/worldmap/definitions";
 import { vscode } from "../util/vscode";
 import { BehaviorSubject, fromEvent, Observable, ObservedValueOf, Subject } from 'rxjs';
+import { ConditionItem } from "../../src/hoiformat/condition";
 
 interface ExtraMapData {
     provincesCount: number;
@@ -92,6 +93,8 @@ export class Loader extends Subscriber {
                 case 'provincemapsummary':
                     this.loadGeneration = message.loadGeneration ?? this.loadGeneration + 1;
                     this.loadingProvinceMap = { ...message.data };
+                    this.loadingProvinceMap.conditionExprs ??= [];
+                    this.loadingProvinceMap.bookmarks ??= [];
                     this.loadingProvinceMap.provinces = new Array(this.loadingProvinceMap.provincesCount);
                     this.loadingProvinceMap.states = new Array(this.loadingProvinceMap.statesCount);
                     this.loadingProvinceMap.countries = new Array(this.loadingProvinceMap.countriesCount);
@@ -168,6 +171,24 @@ export class Loader extends Subscriber {
                 case 'resources':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
                         this.loadingProvinceMap.resources = JSON.parse(message.data);
+                        this.loadNext(false);
+                    }
+                    break;
+                case 'rivers':
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
+                        this.loadingProvinceMap.rivers = JSON.parse(message.data);
+                        this.loadNext(false);
+                    }
+                    break;
+                case 'conditionexprs':
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
+                        this.loadingProvinceMap.conditionExprs = JSON.parse(message.data);
+                        this.loadNext(false);
+                    }
+                    break;
+                case 'bookmarks':
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
+                        this.loadingProvinceMap.bookmarks = JSON.parse(message.data);
                         this.loadNext(false);
                     }
                     break;
@@ -305,6 +326,8 @@ export class FEWorldMapClass implements FEWorldMap {
     terrains!: Terrain[];
     resources!: Resource[];
     rivers!: River[];
+    conditionExprs!: ConditionItem[];
+    bookmarks!: Bookmark[];
 
     private provinces!: (Province | null | undefined)[];
     private states!: (State | null | undefined)[];
@@ -319,13 +342,14 @@ export class FEWorldMapClass implements FEWorldMap {
     private supplyNodeByProvinceId?: Record<number, SupplyNode | undefined>;
 
     constructor(worldMap?: WorldMapData & ExtraMapData) {
-        Object.assign(this, worldMap ?? ({
+        Object.assign(this, { conditionExprs: [], bookmarks: [] }, worldMap ?? ({
             width: 0, height: 0,
             provinces: [], states: [], countries: [], warnings: [], continents: [], strategicRegions: [], supplyAreas: [], terrains: [],
             railways: [], supplyNodes: [], resources: [], rivers: [],
             provincesCount: 0, statesCount: 0, countriesCount: 0, strategicRegionsCount: 0, supplyAreasCount: 0,
             badProvincesCount: 0, badStatesCount: 0, badStrategicRegionsCount: 0, badSupplyAreasCount: 0,
             railwaysCount: 0, supplyNodesCount: 0,
+            conditionExprs: [], bookmarks: []
         } as WorldMapData & ExtraMapData));
     }
 
