@@ -31,6 +31,21 @@ const listFilesFromModOrHOI4InFlight = new Map<string, Promise<string[]>>();
 const fileReadConcurrencyLimit = 12;
 let activeFileReadCount = 0;
 const queuedFileReads: Array<() => void> = [];
+const selectedModRootCacheFreshnessMs = 5 * 1000;
+
+interface SelectedModRootCacheEntry {
+    candidates: vscode.Uri[];
+    roots: vscode.Uri[];
+}
+
+const selectedModRootFoldersCache = new PromiseCache<SelectedModRootCacheEntry>({
+    name: 'selectedModRoots',
+    factory: getSelectedModRootFoldersFromModFile,
+    expireWhenChange: getSelectedModRootFoldersExpiryToken,
+    life: 60 * 1000,
+    nonExpireLife: selectedModRootCacheFreshnessMs,
+});
+const selectedModRootFoldersInFlight = new Map<string, Promise<SelectedModRootCacheEntry>>();
 
 function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
     const uri = vscode.Uri.parse(dlcZipPath);
@@ -487,6 +502,29 @@ export async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
         return [];
     }
 
+    const entry = await getCachedSelectedModRootFolders(modFile.toString());
+    return [...entry.roots];
+}
+
+function getCachedSelectedModRootFolders(absolutePath: string): Promise<SelectedModRootCacheEntry> {
+    const inFlight = selectedModRootFoldersInFlight.get(absolutePath);
+    if (inFlight) {
+        incrementPerfCounter('fileloader.modRoots.inflightHit');
+        return inFlight;
+    }
+
+    const request = selectedModRootFoldersCache.get(absolutePath).finally(() => {
+        if (selectedModRootFoldersInFlight.get(absolutePath) === request) {
+            selectedModRootFoldersInFlight.delete(absolutePath);
+        }
+    });
+    selectedModRootFoldersInFlight.set(absolutePath, request);
+    return request;
+}
+
+async function getSelectedModRootFoldersFromModFile(absolutePath: string): Promise<SelectedModRootCacheEntry> {
+    const modFile = vscode.Uri.parse(absolutePath);
+
     let descriptorPath: string | undefined;
     try {
         const content = (await readFile(modFile)).toString();
@@ -496,15 +534,36 @@ export async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
         error(e);
     }
 
+    const candidates = getModRootCandidatePaths(modFile.fsPath, descriptorPath).map(candidate => vscode.Uri.file(candidate));
     const roots: vscode.Uri[] = [];
-    for (const candidate of getModRootCandidatePaths(modFile.fsPath, descriptorPath)) {
-        const uri = vscode.Uri.file(candidate);
+    for (const uri of candidates) {
         if (await isDirectory(uri) && roots.every(root => !isSameUri(root, uri))) {
             roots.push(uri);
         }
     }
 
-    return roots;
+    return { candidates, roots };
+}
+
+async function getSelectedModRootFoldersExpiryToken(
+    absolutePath: string,
+    cachedEntry: Promise<SelectedModRootCacheEntry>,
+): Promise<string> {
+    const entry = await cachedEntry;
+    const [descriptorModifiedAt, ...candidateDirectoryStates] = await Promise.all([
+        getLastModifiedOrMissing(vscode.Uri.parse(absolutePath)),
+        ...entry.candidates.map(candidate => isDirectory(candidate)),
+    ]);
+
+    return JSON.stringify([descriptorModifiedAt, ...candidateDirectoryStates]);
+}
+
+async function getLastModifiedOrMissing(uri: vscode.Uri): Promise<number | undefined> {
+    try {
+        return await getLastModifiedAsync(uri);
+    } catch {
+        return undefined;
+    }
 }
 
 export function getModRootCandidatePaths(modFilePath: string, descriptorPath?: string): string[] {

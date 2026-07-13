@@ -6,7 +6,12 @@ const nodeModule = Module as typeof Module & { _load: (request: string, parent: 
 const originalLoad = nodeModule._load;
 const mockWorkspaceFolders: Array<{ uri: { fsPath: string; path: string; scheme: string; toString: () => string } }> = [];
 const mockFiles = new Set<string>();
+const mockDirectories = new Set<string>();
+const mockReadContents = new Map<string, string>();
+const mockReadCounts = new Map<string, number>();
+const mockModifiedTimes = new Map<string, number>();
 let mockReadDelayMs = 0;
+let mockConfigurationModFile = '';
 
 function normalizeMockPath(value: string): string {
     return path.normalize(value).toLowerCase();
@@ -20,7 +25,15 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 Directory: 2,
             },
             Uri: {
-                parse: (value: string) => ({ toString: () => value }),
+                parse: (value: string) => {
+                    const fsPath = value.startsWith('file:///') ? value.slice('file:///'.length) : value;
+                    return {
+                        fsPath,
+                        path: fsPath,
+                        scheme: value.match(/^([^:]+):/)?.[1] ?? 'file',
+                        toString: () => value,
+                    };
+                },
                 file: (value: string) => ({ fsPath: value, path: value, scheme: 'file', toString: () => `file:///${value}` }),
                 joinPath: (base: { fsPath?: string; path?: string }, ...segments: string[]) => ({
                     fsPath: path.join(base.fsPath ?? base.path ?? '', ...segments),
@@ -35,24 +48,30 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 getConfiguration: () => ({
                     installPath: '',
                     loadDlcContents: false,
-                    modFile: '',
+                    modFile: mockConfigurationModFile,
                     featureFlags: [],
                     previewLocalisation: 'English',
                 }),
                 fs: {
                     stat: async (uri: { fsPath: string }) => {
-                        if (!mockFiles.has(normalizeMockPath(uri.fsPath))) {
+                        const normalizedPath = normalizeMockPath(uri.fsPath);
+                        const type = mockFiles.has(normalizedPath)
+                            ? 1
+                            : mockDirectories.has(normalizedPath) ? 2 : undefined;
+                        if (type === undefined) {
                             throw new Error(`missing ${uri.fsPath}`);
                         }
 
-                        return { type: 1, mtime: 1 };
+                        return { type, mtime: mockModifiedTimes.get(normalizedPath) ?? 1 };
                     },
                     readFile: async (uri: { fsPath: string }) => {
                         if (mockReadDelayMs > 0) {
                             await new Promise(resolve => setTimeout(resolve, mockReadDelayMs));
                         }
 
-                        return Buffer.from(uri.fsPath);
+                        const normalizedPath = normalizeMockPath(uri.fsPath);
+                        mockReadCounts.set(normalizedPath, (mockReadCounts.get(normalizedPath) ?? 0) + 1);
+                        return Buffer.from(mockReadContents.get(normalizedPath) ?? uri.fsPath);
                     },
                     readDirectory: async () => [],
                 },
@@ -73,7 +92,12 @@ describe('fileloader mod root helpers', () => {
     beforeEach(() => {
         mockWorkspaceFolders.length = 0;
         mockFiles.clear();
+        mockDirectories.clear();
+        mockReadContents.clear();
+        mockReadCounts.clear();
+        mockModifiedTimes.clear();
         mockReadDelayMs = 0;
+        mockConfigurationModFile = '';
     });
 
     after(() => {
@@ -128,5 +152,61 @@ describe('fileloader mod root helpers', () => {
         ]);
 
         assert.ok(result[0].toString().endsWith('after-queue.txt'));
+    });
+
+    it('reuses selected mod root resolution across a file read burst', async () => {
+        const modFile = path.join('C:', 'mods', 'burst.mod');
+        const modRoot = path.join('C:', 'mods', 'burst-content');
+        const normalizedModFile = normalizeMockPath(modFile);
+        mockConfigurationModFile = modFile;
+        mockFiles.add(normalizedModFile);
+        mockDirectories.add(normalizeMockPath(modRoot));
+        mockReadContents.set(normalizedModFile, `path = "${modRoot.replace(/\\/g, '/')}"`);
+
+        const relativePaths = Array.from({ length: 24 }, (_, index) => `common/file-${index}.txt`);
+        for (const relativePath of relativePaths) {
+            mockFiles.add(normalizeMockPath(path.join(modRoot, relativePath)));
+        }
+
+        await Promise.all(relativePaths.map(relativePath => readFileFromModOrHOI4(relativePath, { hoi4: false })));
+
+        assert.strictEqual(mockReadCounts.get(normalizedModFile), 1);
+    });
+
+    it('refreshes selected mod roots after the descriptor changes', async () => {
+        const originalNow = Date.now;
+        let now = 1_000_000;
+        Date.now = () => now;
+
+        try {
+            const modFile = path.join('C:', 'mods', 'changing.mod');
+            const firstModRoot = path.join('C:', 'mods', 'first-content');
+            const secondModRoot = path.join('C:', 'mods', 'second-content');
+            const normalizedModFile = normalizeMockPath(modFile);
+            mockConfigurationModFile = modFile;
+            mockFiles.add(normalizedModFile);
+            mockDirectories.add(normalizeMockPath(firstModRoot));
+            mockReadContents.set(normalizedModFile, `path = "${firstModRoot.replace(/\\/g, '/')}"`);
+            mockFiles.add(normalizeMockPath(path.join(firstModRoot, 'first.txt')));
+
+            await readFileFromModOrHOI4('first.txt', { hoi4: false });
+
+            mockDirectories.add(normalizeMockPath(secondModRoot));
+            mockReadContents.set(normalizedModFile, `path = "${secondModRoot.replace(/\\/g, '/')}"`);
+            mockModifiedTimes.set(normalizedModFile, 2);
+            const secondRelativePaths = Array.from({ length: 24 }, (_, index) => `second-${index}.txt`);
+            for (const relativePath of secondRelativePaths) {
+                mockFiles.add(normalizeMockPath(path.join(secondModRoot, relativePath)));
+            }
+            now += 5_001;
+
+            const resolvedFiles = await Promise.all(secondRelativePaths.map(relativePath =>
+                readFileFromModOrHOI4(relativePath, { hoi4: false })));
+
+            assert.strictEqual(resolvedFiles[0][1].fsPath, path.join(secondModRoot, secondRelativePaths[0]));
+            assert.strictEqual(mockReadCounts.get(normalizedModFile), 2);
+        } finally {
+            Date.now = originalNow;
+        }
     });
 });

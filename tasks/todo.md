@@ -552,3 +552,11 @@ Codebase review and reliability refactor 2026-07-10:
 - [x] Reverify focused coverage, TypeScript checks, lint, build, full unit tests, UI smoke tests, and whitespace.
 
 Review note: Loader session state now has an explicit child-sharing API and key-safe loader cache, preview replacement lifecycle events cannot delete or reindex the current preview, delayed update failures are routed through the extension error reporter, and async host/webview callbacks no longer leak rejected promises. Added 10 focused regression tests. Reverified with strict floating/misused Promise ESLint checks, `npm test` (321 unit tests), `npm run test-ui` (15 Extension Host smoke tests), and `git diff --check`.
+
+Selected mod-root resolution performance 2026-07-10:
+- [x] Identify repeated descriptor reads and parses in concurrent file-loader bursts.
+- [x] Cache selected mod-root resolution with descriptor and candidate-directory invalidation.
+- [x] Cover burst coalescing and descriptor-change refresh behavior with focused tests.
+- [x] Reverify focused tests, TypeScript checks, lint, and whitespace.
+
+Review note: Selected mod-root resolution now reuses one in-flight/cached descriptor parse across concurrent file loads, then revalidates descriptor mtime and candidate-directory state after a short freshness window. Focused tests confirm both initial and expired 24-file bursts read the descriptor once and that descriptor path changes select the new root. Reverified with `npm run compile-tests`, focused fileloader/cache/preview-manager mocha coverage, `npm run compile-ts`, `npm run lint`, the full `npm run test:unit` suite (323 tests), and `git diff --check`.
