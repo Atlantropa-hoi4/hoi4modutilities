@@ -3,8 +3,7 @@ import { readFileFromModOrHOI4 } from "../../../util/fileloader";
 import { localize } from "../../../util/i18n";
 import { BMP, parseBmp } from "../../../util/image/bmp/bmpparser";
 import { Point, ProgressReporter, ProvinceBmp, ProvinceEdgeGraph, ProvinceGraph, Region, WorldMapWarning, Zone } from "../definitions";
-import { FileLoader, LoadResult, LoadResultOD, mergeRegions, pointEqual } from "./common";
-import { toArrayBuffer } from "../../../util/common";
+import { FileLoader, LoadResult, LoadResultOD, mergeRegions } from "./common";
 
 export class ProvinceBmpLoader extends FileLoader<ProvinceBmp> {
     protected async loadFromFile(): Promise<LoadResultOD<ProvinceBmp>> {
@@ -33,7 +32,7 @@ async function loadProvincesBmp(provincesFile: string, progressReporter: Progres
     await progressReporter(localize('worldmap.progress.loadingprovincebmp', 'Loading province bmp...',));
 
     const [provinceMapImageBuffer] = await readFileFromModOrHOI4(provincesFile);
-    const provinceMapImage = parseBmp(toArrayBuffer(provinceMapImageBuffer), 0);
+    const provinceMapImage = parseProvinceBmpBuffer(provinceMapImageBuffer);
     
     await progressReporter(localize('worldmap.progress.calculatingregion', 'Calculating province region...'));
 
@@ -93,6 +92,10 @@ function getProvincesByPosition(provinceMapImage: BMP): { colorByPosition: Uint3
         colorToProvince,
         provinces,
     };
+}
+
+export function parseProvinceBmpBuffer(buffer: Uint8Array): BMP {
+    return parseBmp(buffer.buffer as ArrayBuffer, buffer.byteOffset, buffer.byteLength);
 }
 
 export function getProvinceColorsByPositionForTest(provinceMapImage: BMP): Uint32Array {
@@ -191,6 +194,7 @@ function fillEdges<T extends ColorContainer>(
                 continue;
             }
 
+            accessedPixels[xi] = 1;
             fillEdgesOfProvince(xi, colorToProvince, colorByPosition, accessedPixels, width, height);
         }
     }
@@ -243,10 +247,6 @@ function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number
 
     while (pixelStack.length > 0) {
         const pixelIndex = pixelStack.pop()!;
-        if (accessedPixels[pixelIndex]) {
-            continue;
-        }
-
         const x = pixelIndex % width;
         const y = Math.floor(pixelIndex / width);
 
@@ -263,13 +263,12 @@ function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number
                 const adjecentColor = colorByPosition[adjecentIndex];
                 if (color !== adjecentColor) {
                     edgePixels.push([adjecentColor, indicesToOffset[i].map(([xOff, yOff]) => ({ x: x + xOff, y: y + yOff })) as [Point, Point]]);
-                } else {
+                } else if (!accessedPixels[adjecentIndex]) {
+                    accessedPixels[adjecentIndex] = 1;
                     pixelStack.push(adjecentIndex);
                 }
             }
         }
-
-        accessedPixels[pixelIndex] = 1;
     }
 
     return edgePixels;
@@ -285,24 +284,33 @@ export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
             continue;
         }
 
-        const edge: Point[] = edges[i];
+        const initialEdge = edges[i];
+        const prependedPoints: Point[] = [];
+        const appendedPoints: Point[] = [initialEdge[0], initialEdge[1]];
+        let head = initialEdge[0];
+        let tail = initialEdge[1];
         accessedEdges[i] = true;
 
         let foundNew = true;
         while (foundNew) {
             foundNew = false;
-            const headTail = findUnaccessedEdge(edgesByEnd, edge[0], accessedEdges);
+            const headTail = findUnaccessedEdge(edgesByEnd, head, accessedEdges);
             if (headTail !== -1) {
                 accessedEdges[headTail] = foundNew = true;
-                edge.unshift(edges[headTail][0]);
+                head = edges[headTail][0];
+                prependedPoints.push(head);
             }
 
-            const tailHead = findUnaccessedEdge(edgesByStart, edge[edge.length - 1], accessedEdges);
+            const tailHead = findUnaccessedEdge(edgesByStart, tail, accessedEdges);
             if (tailHead !== -1) {
                 accessedEdges[tailHead] = foundNew = true;
-                edge.push(edges[tailHead][1]);
+                tail = edges[tailHead][1];
+                appendedPoints.push(tail);
             }
         }
+
+        prependedPoints.reverse();
+        const edge = prependedPoints.concat(appendedPoints);
 
         const newEdge: Point[] = [];
         let lastPoint: Point = edge[0];
@@ -350,20 +358,17 @@ function pointKey(point: Point): string {
 }
 
 function validateProvince(colorByPosition: Uint32Array, width: number, height: number, file: string, warnings: WorldMapWarning[]) {
-    const i = new Array(4);
-    for (let y = 1, y0 = width, index = width; y < height; y++, y0 += width) {
+    for (let y = 1, index = width; y < height; y++) {
         for (let x = 0; x < width; x++, index++) {
-            i[0] = index;
-            i[1] = index + (x === width - 1 ? -width : 0) + 1;
-            i[2] = i[0] - width;
-            i[3] = i[1] - width;
-            i.forEach((v, i0) => {
-                i[i0] = colorByPosition[v];
-            });
-            if (i[0] !== i[1] && i[0] !== i[2] && i[0] !== i[3] && i[1] !== i[2] && i[1] !== i[3] && i[2] !== i[3]) {
-                const colors = i.filter((v, i, a) => a.indexOf(v) === i);
+            const nextXIndex = index + (x === width - 1 ? -width : 0) + 1;
+            const bottomLeft = colorByPosition[index];
+            const bottomRight = colorByPosition[nextXIndex];
+            const topLeft = colorByPosition[index - width];
+            const topRight = colorByPosition[nextXIndex - width];
+            if (bottomLeft !== bottomRight && bottomLeft !== topLeft && bottomLeft !== topRight &&
+                bottomRight !== topLeft && bottomRight !== topRight && topLeft !== topRight) {
                 warnings.push({
-                    source: colors.map(color => ({ color, id: -1, type: 'province' })),
+                    source: [bottomLeft, bottomRight, topLeft, topRight].map(color => ({ color, id: -1, type: 'province' })),
                     relatedFiles: [file],
                     text: localize('worldmap.warnings.xcrossing', 'Map invalid X crossing at: ({0}, {1}).', x, y - 1),
                 });

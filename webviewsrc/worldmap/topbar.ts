@@ -10,6 +10,7 @@ import { Renderer } from './renderer';
 import { sendEvent } from '../util/telemetry';
 import { ConditionItem, stringValueToConditionItem } from "../../src/hoiformat/condition";
 import { buildWorldMapConditionOptions } from "./conditionoptions";
+import { nextBehaviorSubjectIfChanged } from './subject';
 
 export type ViewMode = 'province' | 'state' | 'strategicregion' | 'warnings';
 export type ColorSet = 'provinceid' | 'provincetype' | 'terrain' | 'owner' | 'controller' | 'stateid' | 'manpower' |
@@ -73,6 +74,19 @@ export class TopBar extends Subscriber {
 
         this.loadControls();
         this.registerEventListeners(canvas);
+    }
+
+    public override dispose(): void {
+        super.dispose();
+        this.viewMode$.complete();
+        this.colorSet$.complete();
+        this.hoverProvinceId$.complete();
+        this.selectedProvinceId$.complete();
+        this.hoverStateId$.complete();
+        this.selectedStateId$.complete();
+        this.hoverStrategicRegionId$.complete();
+        this.selectedStrategicRegionId$.complete();
+        this.selectedConditions$.complete();
     }
 
     private setupConditions = (worldMap: FEWorldMap) => {
@@ -256,39 +270,43 @@ export class TopBar extends Subscriber {
             canvas.width = Math.max(1, worldMap.width);
             canvas.height = Math.max(1, worldMap.height);
             const viewPoint = new ViewPoint(canvas, this.loader, 0, { x: 0, y: 0, scale: 1 });
-            Renderer.renderMapImpl(canvas, this, viewPoint, worldMap, { preciseEdge: true, overwriteRenderPrecision: 1 });
-            vscode.postMessage({ command: 'exportmap', dataUrl: canvas.toDataURL() });
+            try {
+                Renderer.renderMapImpl(canvas, this, viewPoint, worldMap, { preciseEdge: true, overwriteRenderPrecision: 1 });
+                vscode.postMessage({ command: 'exportmap', dataUrl: canvas.toDataURL() });
+            } finally {
+                viewPoint.dispose();
+            }
         }));
     }
     
     private registerEventListeners(canvas: HTMLCanvasElement) {
         this.addSubscription(fromEvent<MouseEvent>(canvas, 'mousemove').subscribe((e) => {
             if (!this.loader.worldMap) {
-                this.hoverProvinceId$.next(undefined);
-                this.hoverStateId$.next(undefined);
-                this.hoverStrategicRegionId$.next(undefined);
+                nextBehaviorSubjectIfChanged(this.hoverProvinceId$, undefined);
+                nextBehaviorSubjectIfChanged(this.hoverStateId$, undefined);
+                nextBehaviorSubjectIfChanged(this.hoverStrategicRegionId$, undefined);
                 return;
             }
     
             const worldMap = this.loader.worldMap;
             let x = this.viewPoint.convertBackX(e.pageX);
-            let y = this.viewPoint.convertBackY(e.pageY);
-            if (x < 0) {
-                x += worldMap.width;
-            }
-            while (x >= worldMap.width && worldMap.width > 0) {
-                x -= worldMap.width;
+            const y = this.viewPoint.convertBackY(e.pageY);
+            if (worldMap.width > 0) {
+                x = (x % worldMap.width + worldMap.width) % worldMap.width;
             }
 
-            this.hoverProvinceId$.next(worldMap.getProvinceByPosition(x, y)?.id);
-            this.hoverStateId$.next(this.hoverProvinceId$.value === undefined ? undefined : worldMap.getStateByProvinceId(this.hoverProvinceId$.value)?.id);
-            this.hoverStrategicRegionId$.next(this.hoverProvinceId$.value === undefined ? undefined : worldMap.getStrategicRegionByProvinceId(this.hoverProvinceId$.value)?.id);
+            const provinceId = worldMap.getProvinceByPosition(x, y)?.id;
+            const stateId = provinceId === undefined ? undefined : worldMap.getStateByProvinceId(provinceId)?.id;
+            const strategicRegionId = provinceId === undefined ? undefined : worldMap.getStrategicRegionByProvinceId(provinceId)?.id;
+            nextBehaviorSubjectIfChanged(this.hoverProvinceId$, provinceId);
+            nextBehaviorSubjectIfChanged(this.hoverStateId$, stateId);
+            nextBehaviorSubjectIfChanged(this.hoverStrategicRegionId$, strategicRegionId);
         }));
     
         this.addSubscription(fromEvent(canvas, 'mouseleave').subscribe(() => {
-            this.hoverProvinceId$.next(undefined);
-            this.hoverStateId$.next(undefined);
-            this.hoverStrategicRegionId$.next(undefined);
+            nextBehaviorSubjectIfChanged(this.hoverProvinceId$, undefined);
+            nextBehaviorSubjectIfChanged(this.hoverStateId$, undefined);
+            nextBehaviorSubjectIfChanged(this.hoverStrategicRegionId$, undefined);
         }));
     
         this.addSubscription(fromEvent(canvas, 'click').subscribe(() => {

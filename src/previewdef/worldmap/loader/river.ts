@@ -1,9 +1,8 @@
 import { readFileFromModOrHOI4 } from "../../../util/fileloader";
 import { localize } from "../../../util/i18n";
 import { BMP, parseBmp } from "../../../util/image/bmp/bmpparser";
-import { ProgressReporter, River, RiverBmp, WorldMapWarning, Zone } from "../definitions";
-import { FileLoader, LoadResult, LoadResultOD, addPointToZone } from "./common";
-import { toArrayBuffer } from "../../../util/common";
+import { ProgressReporter, River, RiverBmp, WorldMapWarning } from "../definitions";
+import { FileLoader, LoadResult, LoadResultOD } from "./common";
 
 export class RiverLoader extends FileLoader<RiverBmp> {
     protected async loadFromFile(): Promise<LoadResultOD<RiverBmp>> {
@@ -30,7 +29,7 @@ async function loadRivers(file: string, progressReporter: ProgressReporter, warn
     await progressReporter(localize('worldmap.progress.loadingrivers', 'Loading rivers...'));
     
     const [riversImageBuffer] = await readFileFromModOrHOI4(file);
-    const riversImage = parseBmp(toArrayBuffer(riversImageBuffer), 0);
+    const riversImage = parseRiverBmp(riversImageBuffer);
     const result: RiverBmp = {
         width: riversImage.width,
         height: riversImage.height,
@@ -47,7 +46,7 @@ async function loadRivers(file: string, progressReporter: ProgressReporter, warn
         return result;
     }
 
-    const rivers = findRiverPointsList(riversImage);
+    const { rivers } = findRiverPointsList(riversImage);
     result.rivers = rivers;
 
     validateRivers(file, rivers, warnings);
@@ -55,64 +54,99 @@ async function loadRivers(file: string, progressReporter: ProgressReporter, warn
     return result;
 }
 
-function findRiverPointsList(riversImage: BMP): River[] {
-    const result: River[] = [];
+interface RiverTraversalResult {
+    rivers: River[];
+    processedPixels: number;
+}
+
+function parseRiverBmp(buffer: Buffer): BMP {
+    return parseBmp(buffer.buffer as ArrayBuffer, buffer.byteOffset, buffer.byteLength);
+}
+
+function findRiverPointsList(riversImage: BMP): RiverTraversalResult {
+    const rivers: River[] = [];
+    const visited = new Uint32Array(Math.ceil(riversImage.width * riversImage.height / 32));
+    let processedPixels = 0;
 
     for (let y = riversImage.height - 1, sy = 0, dy = (riversImage.height - 1) * riversImage.width;
         y >= 0;
         y--, sy += riversImage.bytesPerRow, dy -= riversImage.width) {
         for (let x = 0, sx = sy, dx = dy; x < riversImage.width; x++, sx++, dx++) {
             const color = riversImage.data[sx];
-            if (color > 11) {
+            if (color > 11 || !markVisited(visited, dx)) {
                 continue;
             }
 
-            result.push(findRiverPoints(x, y, riversImage));
+            const component = findRiverPoints(dx, riversImage, visited);
+            rivers.push(component.river);
+            processedPixels += component.processedPixels;
         }
     }
 
-    return result;
+    return { rivers, processedPixels };
 }
 
-function findRiverPoints(startX: number, startY: number, riversImage: BMP): River {
+function findRiverPoints(startIndex: number, riversImage: BMP, visited: Uint32Array): { river: River; processedPixels: number } {
+    const startX = startIndex % riversImage.width;
+    const startY = Math.floor(startIndex / riversImage.width);
     const colors: Record<number, number> = {};
     const ends: number[] = [];
-    const boundingBox: Zone = { x: startX, y: startY, w: 1, h: 1 };
-    const stack: { x: number; y: number; }[] = [];
-    stack.push({ x: startX, y: startY });
-    let firstPoint = true;
+    const stack: number[] = [startIndex];
+    let minX = startX;
+    let minY = startY;
+    let maxX = startX;
+    let maxY = startY;
+    let processedPixels = 0;
 
     while (stack.length > 0) {
-        const point = stack.pop()!;
-        const { x, y } = point;
+        const di = stack.pop()!;
+        const x = di % riversImage.width;
+        const y = Math.floor(di / riversImage.width);
         const si = (riversImage.height - 1 - y) * riversImage.bytesPerRow + x;
-        const di = y * riversImage.width + x;
         colors[di] = riversImage.data[si];
-        riversImage.data[si] = 255;
-        let adjecents = 0;
+        processedPixels++;
+
+        let adjacentCount = 0;
         if (x > 0 && riversImage.data[si - 1] <= 11) {
-            stack.push({ x: x - 1, y });
-            adjecents++;
+            adjacentCount++;
+            const adjacentIndex = di - 1;
+            if (markVisited(visited, adjacentIndex)) {
+                stack.push(adjacentIndex);
+            }
         }
         if (x < riversImage.width - 1 && riversImage.data[si + 1] <= 11) {
-            stack.push({ x: x + 1, y });
-            adjecents++;
+            adjacentCount++;
+            const adjacentIndex = di + 1;
+            if (markVisited(visited, adjacentIndex)) {
+                stack.push(adjacentIndex);
+            }
         }
         if (y > 0 && riversImage.data[si + riversImage.bytesPerRow] <= 11) {
-            stack.push({ x, y: y - 1 });
-            adjecents++;
+            adjacentCount++;
+            const adjacentIndex = di - riversImage.width;
+            if (markVisited(visited, adjacentIndex)) {
+                stack.push(adjacentIndex);
+            }
         }
         if (y < riversImage.height - 1 && riversImage.data[si - riversImage.bytesPerRow] <= 11) {
-            stack.push({ x, y: y + 1 });
-            adjecents++;
+            adjacentCount++;
+            const adjacentIndex = di + riversImage.width;
+            if (markVisited(visited, adjacentIndex)) {
+                stack.push(adjacentIndex);
+            }
         }
-        if (adjecents === 0 || (adjecents === 1 && firstPoint)) {
+
+        if (adjacentCount <= 1) {
             ends.push(di);
         }
-        addPointToZone(boundingBox, point);
-        firstPoint = false;
+
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
     }
 
+    const boundingBox = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
     const convertedColors: Record<number, number> = {};
     for (const key in colors) {
         const value = colors[key];
@@ -130,10 +164,28 @@ function findRiverPoints(startX: number, startY: number, riversImage: BMP): Rive
     }
 
     return {
-        colors: convertedColors,
-        ends: convertedEnds,
-        boundingBox,
+        river: {
+            colors: convertedColors,
+            ends: convertedEnds,
+            boundingBox,
+        },
+        processedPixels,
     };
+}
+
+function markVisited(visited: Uint32Array, index: number): boolean {
+    const wordIndex = index >>> 5;
+    const mask = 1 << (index & 31);
+    if ((visited[wordIndex] & mask) !== 0) {
+        return false;
+    }
+
+    visited[wordIndex] |= mask;
+    return true;
+}
+
+export function findRiversInBufferForTest(buffer: Buffer): RiverTraversalResult {
+    return findRiverPointsList(parseRiverBmp(buffer));
 }
 
 function validateRivers(file: string, rivers: River[], warnings: WorldMapWarning[]) {

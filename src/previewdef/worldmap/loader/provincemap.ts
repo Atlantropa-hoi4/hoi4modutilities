@@ -153,7 +153,8 @@ export class DefaultMapLoader extends FileLoader<ProvinceMap> {
         };
     }
 
-    public releaseTransientCache(): void {
+    public releaseTransientCache(provinceMap: ProvinceMap): void {
+        delete (provinceMap as Partial<ProvinceMap>).colorByPosition;
         this.provinceBmpLoader?.clearCache();
     }
 

@@ -23,6 +23,18 @@ describe('loader session state', () => {
         assert.deepStrictEqual(parent.getLoadedLoaderNames(), ['first', 'second']);
     });
 
+    it('shares and clears a negative reload decision with child sessions', () => {
+        const parent = new LoaderSession(false);
+        const loader = createLoader('stable');
+        parent.setShouldReload(loader, false);
+
+        assert.strictEqual(parent.shouldReload(loader), false);
+        assert.strictEqual(parent.forChild().shouldReload(loader), false);
+
+        parent.clearShouldReload(loader);
+        assert.strictEqual(parent.shouldReload(loader), undefined);
+    });
+
     it('copies the active loading stack without sharing later stack mutations', () => {
         const parent = new LoaderSession(false);
         const parentLoader = createLoader('parent', 'common/parent.txt');

@@ -31,16 +31,16 @@ export class LoaderSession {
         this.shouldReloadStates.set(loader, 'checking');
     }
 
-    public setShouldReload(loader: AnyLoader): void {
-        this.shouldReloadStates.set(loader, true);
+    public setShouldReload(loader: AnyLoader, shouldReload: boolean = true): void {
+        this.shouldReloadStates.set(loader, shouldReload);
     }
 
     public clearShouldReload(loader: AnyLoader): void {
         this.shouldReloadStates.delete(loader);
     }
 
-    public shouldReload(loader: AnyLoader): ShouldReloadState {
-        return this.shouldReloadStates.get(loader) ?? false;
+    public shouldReload(loader: AnyLoader): ShouldReloadState | undefined {
+        return this.shouldReloadStates.get(loader);
     }
 
     public createOrGetCachedLoader<R extends AnyLoader>(file: string, loaderType: { new (file: string): R }): R {

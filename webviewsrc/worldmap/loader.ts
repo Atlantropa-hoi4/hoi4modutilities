@@ -2,7 +2,7 @@ import { WorldMapMessage, Province, WorldMapData, RequestMapItemMessage, State, 
 import { copyArray } from "../util/common";
 import { inBBox } from "./graphutils";
 import { Subscriber } from "../util/event";
-import { WorldMapWarning, Terrain, StrategicRegion, SupplyArea, Railway, SupplyNode, Resource, River, Bookmark } from "../../src/previewdef/worldmap/definitions";
+import { WorldMapWarning, WorldMapWarningSource, Terrain, StrategicRegion, SupplyArea, Railway, SupplyNode, Resource, River, Bookmark } from "../../src/previewdef/worldmap/definitions";
 import { vscode } from "../util/vscode";
 import { BehaviorSubject, fromEvent, Observable, ObservedValueOf, Subject } from 'rxjs';
 import { ConditionItem } from "../../src/hoiformat/condition";
@@ -20,6 +20,7 @@ interface FEWorldMapClassExtra {
     getStateById(stateId: number | undefined): State | undefined;
     getStrategicRegionById(strategicRegionId: number | undefined): StrategicRegion | undefined;
     getSupplyAreaById(supplyAreaId: number | undefined): SupplyArea | undefined;
+    getCountryByTag(tag: string | undefined): Country | undefined;
 
     getStateByProvinceId(provinceId: number): State | undefined;
     getProvinceToStateMap(): Record<number, number | undefined>;
@@ -53,12 +54,29 @@ interface FEWorldMapClassExtra {
 export type FEWorldMap = Omit<WorldMapData, 'states' | 'provinces' | 'strategicRegions' | 'supplyAreas' | 'railways' | 'supplyNodes'>
     & ExtraMapData & FEWorldMapClassExtra;
 
+const provinceSpatialCellSize = 128;
+
+interface ProvinceSpatialIndex {
+    columns: number;
+    rows: number;
+    buckets: (Province[] | undefined)[];
+}
+
+interface WorldMapWarningIndex {
+    provinceById: Map<number, number[]>;
+    provinceByColor: Map<number, number[]>;
+    stateById: Map<number, number[]>;
+    strategicRegionById: Map<number, number[]>;
+    supplyAreaById: Map<number, number[]>;
+    riverByIndex: Map<number, number[]>;
+}
+
 export class Loader extends Subscriber {
     public worldMap: FEWorldMapClass;
     public loading$ = new BehaviorSubject<boolean>(false);
     public progress: number = 0;
     public progressText: string = '';
-    public batchStats = { chunksReceived: 0, worldMapEmits: 0 };
+    public batchStats = { chunksReceived: 0, worldMapEmits: 0, maxInFlightRequests: 0 };
 
     private writableWorldMap$ = new Subject<FEWorldMap>();
     public worldMap$: Observable<FEWorldMap> = this.writableWorldMap$;
@@ -66,17 +84,21 @@ export class Loader extends Subscriber {
     private writableProgress$ = new BehaviorSubject({ progress: 0, progressText: '' });
     public progress$: Observable<ObservedValueOf<Loader['writableProgress$']>> = this.writableProgress$;
 
-    private loadingProvinceMap: WorldMapData & { provincesCount: number; statesCount: number; countriesCount: number; } | undefined;
-    private loadingQueue: WorldMapMessage[] = [];
-    private loadingQueueStartLength = 0;
+    private loadingProvinceMap: WorldMapData | undefined;
+    private committedProvinceMap: WorldMapData | undefined;
+    private loadingQueue: RequestMapItemMessage[] = [];
+    private totalInitialRequests = 0;
+    private completedInitialRequests = 0;
+    private inFlightInitialRequests = 0;
+    private initialLoadPending = false;
     private loadGeneration = 0;
-    private pendingWorldMapEmit = false;
+    private readonly maxConcurrentRequests = 4;
 
     constructor() {
         super();
         this.worldMap = new FEWorldMapClass();
         this.load();
-        this.worldMap$.subscribe(wm => (window as any)['worldMap'] = wm);
+        this.addSubscription(this.worldMap$.subscribe(wm => (window as any)['worldMap'] = wm));
     }
 
     public refresh() {
@@ -91,6 +113,9 @@ export class Loader extends Subscriber {
             const message = event.data as WorldMapMessage;
             switch (message.command) {
                 case 'provincemapsummary':
+                    if (message.loadGeneration !== undefined && message.loadGeneration < this.loadGeneration) {
+                        break;
+                    }
                     this.loadGeneration = message.loadGeneration ?? this.loadGeneration + 1;
                     this.loadingProvinceMap = { ...message.data };
                     this.loadingProvinceMap.conditionExprs ??= [];
@@ -99,6 +124,9 @@ export class Loader extends Subscriber {
                     this.loadingProvinceMap.states = new Array(this.loadingProvinceMap.statesCount);
                     this.loadingProvinceMap.countries = new Array(this.loadingProvinceMap.countriesCount);
                     this.loadingProvinceMap.strategicRegions = new Array(this.loadingProvinceMap.strategicRegionsCount);
+                    this.loadingProvinceMap.supplyAreas = new Array(this.loadingProvinceMap.supplyAreasCount);
+                    this.loadingProvinceMap.railways = new Array(this.loadingProvinceMap.railwaysCount);
+                    this.loadingProvinceMap.supplyNodes = new Array(this.loadingProvinceMap.supplyNodesCount);
                     this.startLoading();
                     break;
                 case 'provinces':
@@ -106,90 +134,99 @@ export class Loader extends Subscriber {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.provinces, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'states':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.states, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'countries':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.countries, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'strategicregions':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.strategicRegions, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'supplyareas':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.supplyAreas, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'railways':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.railways, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'supplynodes':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
                     this.receiveData(this.loadingProvinceMap?.supplyNodes, message.start, message.end, message.data);
-                    this.loadNext(false);
+                    this.completeMapItem();
                     break;
                 case 'warnings':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.warnings = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.warnings = decodeMapItemData<WorldMapWarning>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'continents':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.continents = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.continents = decodeMapItemData<string>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'terrains':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.terrains = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.terrains = decodeMapItemData<Terrain>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'resources':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.resources = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.resources = decodeMapItemData<Resource>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'rivers':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.rivers = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.rivers = decodeMapItemData<River>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'conditionexprs':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.conditionExprs = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.conditionExprs = decodeMapItemData<ConditionItem>(message.data);
+                        this.completeMapItem();
                     }
                     break;
                 case 'bookmarks':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message)) {
-                        this.loadingProvinceMap.bookmarks = JSON.parse(message.data);
-                        this.loadNext(false);
+                        this.loadingProvinceMap.bookmarks = decodeMapItemData<Bookmark>(message.data);
+                        this.completeMapItem();
+                    }
+                    break;
+                case 'mapupdatecomplete':
+                    if (this.loadingProvinceMap && this.isCurrentLoadMessage(message) && !this.initialLoadPending) {
+                        this.committedProvinceMap = this.loadingProvinceMap;
+                        this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
+                        this.emitWorldMap();
+                        this.loading$.next(false);
+                        this.postMapReady();
                     }
                     break;
                 case 'progress':
@@ -197,6 +234,9 @@ export class Loader extends Subscriber {
                         break;
                     }
                     this.progressText = message.data;
+                    if (this.progressText && !this.initialLoadPending) {
+                        this.loading$.next(true);
+                    }
                     this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
                     break;
                 case 'error':
@@ -233,11 +273,15 @@ export class Loader extends Subscriber {
         this.queueLoadingRequest('requestrailways', this.loadingProvinceMap.railwaysCount, 2000);
         this.queueLoadingRequest('requestsupplynodes', this.loadingProvinceMap.supplyNodesCount, 4000);
 
-        this.loadingQueueStartLength = this.loadingQueue.length;
+        this.totalInitialRequests = this.loadingQueue.length;
+        this.completedInitialRequests = 0;
+        this.inFlightInitialRequests = 0;
+        this.initialLoadPending = true;
+        this.progress = 0;
         this.progressText = '';
-        this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
-        this.scheduleWorldMapEmit();
-        this.loadNext();
+        this.loading$.next(true);
+        this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
+        this.pumpInitialRequests();
     }
 
     private queueLoadingRequest<C extends RequestMapItemMessage['command']>(command: C, count: number, step: number, offset: number = 0) {
@@ -251,47 +295,61 @@ export class Loader extends Subscriber {
         }
     }
 
-    private loadNext(updateMap: boolean = false) {
-        this.progress = 1 - this.loadingQueue.length / this.loadingQueueStartLength;
-    
-        if (updateMap) {
-            this.worldMap = new FEWorldMapClass(this.loadingProvinceMap!);
-            this.scheduleWorldMapEmit();
-        }
-    
-        if (this.loadingQueue.length === 0) {
-            this.worldMap = new FEWorldMapClass(this.loadingProvinceMap!);
-            this.emitWorldMap();
-            this.loading$.next(false);
-        } else {
-            vscode.postMessage(this.loadingQueue.shift());
+    private pumpInitialRequests(): void {
+        while (this.initialLoadPending &&
+            this.inFlightInitialRequests < this.maxConcurrentRequests &&
+            this.loadingQueue.length > 0) {
+            const request = this.loadingQueue.shift()!;
+            this.inFlightInitialRequests++;
+            this.batchStats.maxInFlightRequests = Math.max(
+                this.batchStats.maxInFlightRequests,
+                this.inFlightInitialRequests,
+            );
+            vscode.postMessage(request);
         }
 
-        this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
-    }
-    
-    private receiveData<T>(arr: T[] | undefined, start: number, end: number, data: string): void {
-        if (arr) {
-            copyArray(JSON.parse(data), arr, 0, start, end - start);
-            this.batchStats.chunksReceived++;
+        if (this.initialLoadPending && this.loadingQueue.length === 0 && this.inFlightInitialRequests === 0) {
+            this.finishInitialLoad();
         }
     }
 
-    private scheduleWorldMapEmit(): void {
-        if (this.pendingWorldMapEmit) {
+    private completeMapItem(): void {
+        if (!this.initialLoadPending) {
             return;
         }
 
-        this.pendingWorldMapEmit = true;
-        const schedule = typeof requestAnimationFrame === 'function' ?
-            requestAnimationFrame :
-            (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0);
-        schedule(() => {
-            this.pendingWorldMapEmit = false;
-            if (this.loading$.value) {
-                this.emitWorldMap();
-            }
-        });
+        this.inFlightInitialRequests = Math.max(0, this.inFlightInitialRequests - 1);
+        this.completedInitialRequests++;
+        this.progress = this.totalInitialRequests === 0 ? 1 :
+            Math.min(1, this.completedInitialRequests / this.totalInitialRequests);
+        this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
+        this.pumpInitialRequests();
+    }
+
+    private finishInitialLoad(): void {
+        if (!this.loadingProvinceMap) {
+            return;
+        }
+
+        this.initialLoadPending = false;
+        this.progress = 1;
+        this.committedProvinceMap = this.loadingProvinceMap;
+        this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
+        this.emitWorldMap();
+        this.loading$.next(false);
+        this.writableProgress$.next({ progressText: this.progressText, progress: this.progress });
+        this.postMapReady();
+    }
+
+    private postMapReady(): void {
+        vscode.postMessage({ command: 'mapready', loadGeneration: this.loadGeneration } as WorldMapMessage);
+    }
+
+    private receiveData<T>(arr: T[] | undefined, start: number, end: number, data: unknown[] | string): void {
+        if (arr) {
+            copyArray(decodeMapItemData<T>(data), arr, 0, start, end - start);
+            this.batchStats.chunksReceived++;
+        }
     }
 
     private emitWorldMap(): void {
@@ -315,9 +373,46 @@ export class Loader extends Subscriber {
             return false;
         }
 
+        if (loadGeneration > this.loadGeneration) {
+            this.prepareDiffStagingMap();
+        }
         this.loadGeneration = loadGeneration;
         return true;
     }
+
+    private prepareDiffStagingMap(): void {
+        const source = this.committedProvinceMap;
+        if (!source) {
+            return;
+        }
+
+        this.loadingProvinceMap = {
+            ...source,
+            provinces: source.provinces.slice(),
+            states: source.states.slice(),
+            countries: source.countries.slice(),
+            strategicRegions: source.strategicRegions.slice(),
+            supplyAreas: source.supplyAreas.slice(),
+            railways: source.railways.slice(),
+            supplyNodes: source.supplyNodes.slice(),
+        };
+    }
+
+    public override dispose(): void {
+        super.dispose();
+        this.loadingQueue.length = 0;
+        this.initialLoadPending = false;
+        this.loadingProvinceMap = undefined;
+        this.committedProvinceMap = undefined;
+        (window as any)['worldMap'] = undefined;
+        this.loading$.complete();
+        this.writableWorldMap$.complete();
+        this.writableProgress$.complete();
+    }
+}
+
+function decodeMapItemData<T>(data: unknown[] | string): T[] {
+    return (typeof data === 'string' ? JSON.parse(data) : data) as T[];
 }
 
 export class FEWorldMapClass implements FEWorldMap {
@@ -354,6 +449,9 @@ export class FEWorldMapClass implements FEWorldMap {
     private stateToSupplyAreaMap?: Record<number, number | undefined>;
     private railwayLevelByProvinceId?: Record<number, number | undefined>;
     private supplyNodeByProvinceId?: Record<number, SupplyNode | undefined>;
+    private countryByTag?: Map<string, Country>;
+    private provinceSpatialIndex?: ProvinceSpatialIndex;
+    private warningIndex?: WorldMapWarningIndex;
 
     constructor(worldMap?: WorldMapData & ExtraMapData) {
         Object.assign(this, { conditionExprs: [], bookmarks: [] }, worldMap ?? ({
@@ -382,6 +480,24 @@ export class FEWorldMapClass implements FEWorldMap {
     public getSupplyAreaById = (supplyAreaId: number | undefined): SupplyArea | undefined => {
         return supplyAreaId ? this.supplyAreas[supplyAreaId] ?? undefined : undefined;
     };
+
+    public getCountryByTag(tag: string | undefined): Country | undefined {
+        if (tag === undefined) {
+            return undefined;
+        }
+
+        if (!this.countryByTag) {
+            const countryByTag = new Map<string, Country>();
+            for (const country of this.countries) {
+                if (country && !countryByTag.has(country.tag)) {
+                    countryByTag.set(country.tag, country);
+                }
+            }
+            this.countryByTag = countryByTag;
+        }
+
+        return this.countryByTag.get(tag);
+    }
 
     public getStateByProvinceId(provinceId: number): State | undefined {
         return this.getStateById(this.getProvinceToStateMap()[provinceId]);
@@ -422,15 +538,63 @@ export class FEWorldMapClass implements FEWorldMap {
     }
     
     public getProvinceByPosition(x: number, y: number): Province | undefined {
+        const spatialIndex = this.getProvinceSpatialIndex();
+        if (spatialIndex.columns === 0 || spatialIndex.rows === 0 || x < 0 || y < 0 || x >= this.width || y >= this.height) {
+            return undefined;
+        }
+
         const point: Point = { x, y };
-        let resultProvince: Province | undefined = undefined;
+        const cellX = Math.floor(x / provinceSpatialCellSize);
+        const cellY = Math.floor(y / provinceSpatialCellSize);
+        const candidates = spatialIndex.buckets[cellY * spatialIndex.columns + cellX] ?? [];
+        for (const province of candidates) {
+            if (province.coverZones.some(z => inBBox(point, z))) {
+                return province;
+            }
+        }
+
+        return undefined;
+    }
+
+    private getProvinceSpatialIndex(): ProvinceSpatialIndex {
+        if (this.provinceSpatialIndex) {
+            return this.provinceSpatialIndex;
+        }
+
+        if (this.width <= 0 || this.height <= 0) {
+            return this.provinceSpatialIndex = { columns: 0, rows: 0, buckets: [] };
+        }
+
+        const columns = Math.ceil(this.width / provinceSpatialCellSize);
+        const rows = Math.ceil(this.height / provinceSpatialCellSize);
+        const buckets: (Province[] | undefined)[] = new Array(columns * rows);
         this.forEachProvince(province => {
-            if (inBBox(point, province.boundingBox) && province.coverZones.some(z => inBBox(point, z))) {
-                resultProvince = province;
-                return true;
+            for (const zone of province.coverZones) {
+                const left = Math.max(0, zone.x);
+                const top = Math.max(0, zone.y);
+                const right = Math.min(this.width, zone.x + zone.w);
+                const bottom = Math.min(this.height, zone.y + zone.h);
+                if (right <= left || bottom <= top) {
+                    continue;
+                }
+
+                const minCellX = Math.floor(left / provinceSpatialCellSize);
+                const minCellY = Math.floor(top / provinceSpatialCellSize);
+                const maxCellX = Math.floor((right - 1) / provinceSpatialCellSize);
+                const maxCellY = Math.floor((bottom - 1) / provinceSpatialCellSize);
+                for (let cellY = minCellY; cellY <= maxCellY; cellY++) {
+                    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+                        const index = cellY * columns + cellX;
+                        const bucket = buckets[index] ??= [];
+                        if (bucket[bucket.length - 1] !== province) {
+                            bucket.push(province);
+                        }
+                    }
+                }
             }
         });
-        return resultProvince;
+
+        return this.provinceSpatialIndex = { columns, rows, buckets };
     }
 
     public getProvinceToStateMap(): Record<number, number | undefined> {
@@ -539,34 +703,107 @@ export class FEWorldMapClass implements FEWorldMap {
     }
 
     public getProvinceWarnings(province?: Province, state?: State, strategicRegion?: StrategicRegion, supplyArea?: SupplyArea): string[] {
-        return this.warnings
-            .filter(v => v.source.some(s =>
-                (province && s.type === 'province' && (s.id === province.id || s.color === province.color)) || 
-                (state && s.type === 'state' && s.id === state.id) ||
-                (strategicRegion && s.type === 'strategicregion' && s.id === strategicRegion.id) ||
-                (supplyArea && s.type === 'supplyarea' && s.id === supplyArea.id)
-                ))
-            .map(v => v.text);
+        const index = this.getWarningIndex();
+        return this.getWarningTexts(
+            province ? index.provinceById.get(province.id) : undefined,
+            province ? index.provinceByColor.get(province.color) : undefined,
+            state ? index.stateById.get(state.id) : undefined,
+            strategicRegion ? index.strategicRegionById.get(strategicRegion.id) : undefined,
+            supplyArea ? index.supplyAreaById.get(supplyArea.id) : undefined,
+        );
     }
 
     public getStateWarnings(state: State, supplyArea?: SupplyArea): string[] {
-        return this.warnings
-            .filter(v => v.source.some(s =>
-                (s.type === 'state' && s.id === state.id) ||
-                (supplyArea && s.type === 'supplyarea' && s.id === supplyArea.id)
-                ))
-            .map(v => v.text);
+        const index = this.getWarningIndex();
+        return this.getWarningTexts(
+            index.stateById.get(state.id),
+            supplyArea ? index.supplyAreaById.get(supplyArea.id) : undefined,
+        );
     }
 
     public getStrategicRegionWarnings(strategicRegion: StrategicRegion): string[] {
-        return this.warnings.filter(v => v.source.some(s => s.type === 'strategicregion' && s.id === strategicRegion.id)).map(v => v.text);
+        return this.getWarningTexts(this.getWarningIndex().strategicRegionById.get(strategicRegion.id));
     }
     
     public getSupplyAreaWarnings(supplyArea: SupplyArea): string[] {
-        return this.warnings.filter(v => v.source.some(s => s.type === 'supplyarea' && s.id === supplyArea.id)).map(v => v.text);
+        return this.getWarningTexts(this.getWarningIndex().supplyAreaById.get(supplyArea.id));
     }
 
     public getRiverWarnings(riverIndex: number): string[] {
-        return this.warnings.filter(v => v.source.some(s => s.type === 'river' && s.index === riverIndex)).map(v => v.text);
+        return this.getWarningTexts(this.getWarningIndex().riverByIndex.get(riverIndex));
+    }
+
+    private getWarningIndex(): WorldMapWarningIndex {
+        if (this.warningIndex) {
+            return this.warningIndex;
+        }
+
+        const warningIndex: WorldMapWarningIndex = {
+            provinceById: new Map(),
+            provinceByColor: new Map(),
+            stateById: new Map(),
+            strategicRegionById: new Map(),
+            supplyAreaById: new Map(),
+            riverByIndex: new Map(),
+        };
+        for (let warningIndexValue = 0; warningIndexValue < this.warnings.length; warningIndexValue++) {
+            for (const source of this.warnings[warningIndexValue].source) {
+                this.addWarningSourceToIndex(warningIndex, source, warningIndexValue);
+            }
+        }
+
+        return this.warningIndex = warningIndex;
+    }
+
+    private addWarningSourceToIndex(index: WorldMapWarningIndex, source: WorldMapWarningSource, warningIndex: number): void {
+        switch (source.type) {
+            case 'province':
+                if (source.id !== null) {
+                    appendWarningIndex(index.provinceById, source.id, warningIndex);
+                }
+                appendWarningIndex(index.provinceByColor, source.color, warningIndex);
+                break;
+            case 'state':
+                appendWarningIndex(index.stateById, source.id, warningIndex);
+                break;
+            case 'strategicregion':
+                appendWarningIndex(index.strategicRegionById, source.id, warningIndex);
+                break;
+            case 'supplyarea':
+                appendWarningIndex(index.supplyAreaById, source.id, warningIndex);
+                break;
+            case 'river':
+                appendWarningIndex(index.riverByIndex, source.index, warningIndex);
+                break;
+        }
+    }
+
+    private getWarningTexts(...warningIndexes: (number[] | undefined)[]): string[] {
+        const presentIndexes = warningIndexes.filter((value): value is number[] => value !== undefined && value.length > 0);
+        if (presentIndexes.length === 0) {
+            return [];
+        }
+        if (presentIndexes.length === 1) {
+            return presentIndexes[0].map(index => this.warnings[index].text);
+        }
+
+        const mergedIndexes = new Set<number>();
+        for (const indexes of presentIndexes) {
+            for (const index of indexes) {
+                mergedIndexes.add(index);
+            }
+        }
+        return Array.from(mergedIndexes)
+            .sort((left, right) => left - right)
+            .map(index => this.warnings[index].text);
+    }
+}
+
+function appendWarningIndex(index: Map<number, number[]>, key: number, warningIndex: number): void {
+    const warningIndexes = index.get(key);
+    if (!warningIndexes) {
+        index.set(key, [warningIndex]);
+    } else if (warningIndexes[warningIndexes.length - 1] !== warningIndex) {
+        warningIndexes.push(warningIndex);
     }
 }

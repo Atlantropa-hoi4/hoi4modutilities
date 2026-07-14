@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { WorldMapMessage } from '../../src/previewdef/worldmap/definitions';
+import { RequestMapItemMessage, WorldMapMessage } from '../../src/previewdef/worldmap/definitions';
 
 declare global {
     function acquireVsCodeApi(): {
@@ -26,10 +26,9 @@ describe('world map webview loader batching', () => {
         delete require.cache[require.resolve('../../webviewsrc/worldmap/loader')];
     });
 
-    it('does not emit a full world map for every received chunk', () => {
+    it('pipelines at most four chunk requests and emits one completed world map', () => {
         const postedMessages: WorldMapMessage[] = [];
         const windowTarget = new EventTarget();
-        const frameCallbacks: FrameRequestCallback[] = [];
 
         (global as any).acquireVsCodeApi = () => ({
             postMessage: (message: WorldMapMessage) => postedMessages.push(message),
@@ -37,10 +36,6 @@ describe('world map webview loader batching', () => {
             setState: () => undefined,
         });
         (global as any).window = windowTarget;
-        (global as any).requestAnimationFrame = (callback: FrameRequestCallback) => {
-            frameCallbacks.push(callback);
-            return frameCallbacks.length;
-        };
 
         const { Loader } = require('../../webviewsrc/worldmap/loader') as typeof import('../../webviewsrc/worldmap/loader');
         const loader = new Loader();
@@ -60,8 +55,8 @@ describe('world map webview loader batching', () => {
                 supplyAreas: [],
                 railways: [],
                 supplyNodes: [],
-                provincesCount: 3,
-                statesCount: 3,
+                provincesCount: 5000,
+                statesCount: 0,
                 countriesCount: 0,
                 strategicRegionsCount: 0,
                 supplyAreasCount: 0,
@@ -81,33 +76,60 @@ describe('world map webview loader batching', () => {
             },
         } as WorldMapMessage);
 
-        const stateRequest = postedMessages[postedMessages.length - 1] as any;
-        assert.strictEqual(stateRequest.command, 'requeststates');
+        assert.strictEqual(postedMessages.length, 5, 'loaded plus four in-flight requests');
+        let requestIndex = 1;
+        while (loader.loading$.value) {
+            const request = postedMessages[requestIndex++] as RequestMapItemMessage | undefined;
+            assert.ok(request, 'a completed request should release the next queued request');
+            assert.strictEqual(request.command, 'requestprovinces');
+            const itemCount = request.end - request.start;
+            const chunk = new Array(itemCount);
+            if (request.start === 0) {
+                chunk[1] = { id: 1, color: 101 };
+            }
+            dispatchWindowMessage(windowTarget, {
+                command: 'provinces',
+                start: request.start,
+                end: request.end,
+                loadGeneration: 1,
+                data: requestIndex === 2 ? JSON.stringify(chunk) : chunk,
+            });
+            if (requestIndex === 2) {
+                assert.strictEqual(worldMapEmits, 0);
+            }
+        }
 
-        dispatchWindowMessage(windowTarget, {
-            command: 'states',
-            start: stateRequest.start,
-            end: stateRequest.end,
-            loadGeneration: 1,
-            data: JSON.stringify([undefined, undefined, undefined]),
-        } as WorldMapMessage);
-
-        assert.strictEqual(worldMapEmits, 0);
-
-        const provinceRequest = postedMessages[postedMessages.length - 1] as any;
-        assert.strictEqual(provinceRequest.command, 'requestprovinces');
-
-        dispatchWindowMessage(windowTarget, {
-            command: 'provinces',
-            start: provinceRequest.start,
-            end: provinceRequest.end,
-            loadGeneration: 1,
-            data: JSON.stringify([undefined, undefined, undefined]),
-        } as WorldMapMessage);
-
-        assert.strictEqual(loader.batchStats.chunksReceived, 2);
+        assert.strictEqual(requestIndex, 6);
+        assert.strictEqual(loader.batchStats.chunksReceived, 5);
+        assert.strictEqual(loader.batchStats.maxInFlightRequests, 4);
         assert.strictEqual(loader.batchStats.worldMapEmits, 1);
         assert.strictEqual(worldMapEmits, 1);
+        assert.deepStrictEqual(postedMessages[postedMessages.length - 1], {
+            command: 'mapready',
+            loadGeneration: 1,
+        });
+
+        const committedProvince = loader.worldMap.getProvinceById(1);
+        assert.deepStrictEqual(committedProvince, { id: 1, color: 101 });
+        dispatchWindowMessage(windowTarget, {
+            command: 'progress',
+            loadGeneration: 2,
+            data: 'Comparing changes...',
+        });
+        dispatchWindowMessage(windowTarget, {
+            command: 'provinces',
+            start: 1,
+            end: 2,
+            loadGeneration: 2,
+            data: [{ id: 1, color: 202 }],
+        });
+        assert.strictEqual(loader.worldMap.getProvinceById(1), committedProvince);
+        dispatchWindowMessage(windowTarget, {
+            command: 'mapupdatecomplete',
+            loadGeneration: 2,
+        });
+        assert.deepStrictEqual(loader.worldMap.getProvinceById(1), { id: 1, color: 202 });
+        loader.dispose();
     });
 
     it('applies current condition and bookmark updates while ignoring stale generations', () => {
@@ -127,6 +149,8 @@ describe('world map webview loader batching', () => {
 
         const { Loader } = require('../../webviewsrc/worldmap/loader') as typeof import('../../webviewsrc/worldmap/loader');
         const loader = new Loader();
+        let worldMapEmits = 0;
+        loader.worldMap$.subscribe(() => worldMapEmits++);
         dispatchWindowMessage(windowTarget, {
             command: 'provincemapsummary',
             loadGeneration: 2,
@@ -144,9 +168,19 @@ describe('world map webview loader batching', () => {
 
         const conditionExprs = [{ scopeName: '', nodeContent: '1936.1.1.0' }];
         dispatchWindowMessage(windowTarget, {
-            command: 'conditionexprs',
+            command: 'progress',
+            loadGeneration: 3,
+            data: 'Comparing changes...',
+        });
+        dispatchWindowMessage(windowTarget, {
+            command: 'provincemapsummary',
             loadGeneration: 2,
-            data: JSON.stringify(conditionExprs),
+            data: { ...emptyWorldMapSummary(), width: 99 },
+        });
+        dispatchWindowMessage(windowTarget, {
+            command: 'conditionexprs',
+            loadGeneration: 3,
+            data: conditionExprs,
             start: 0,
             end: 0,
         });
@@ -156,14 +190,33 @@ describe('world map webview loader batching', () => {
         }];
         dispatchWindowMessage(windowTarget, {
             command: 'bookmarks',
-            loadGeneration: 2,
+            loadGeneration: 3,
             data: JSON.stringify(bookmarks),
             start: 0,
             end: 0,
         });
 
+        assert.deepStrictEqual(loader.worldMap.conditionExprs, []);
+        assert.deepStrictEqual(loader.worldMap.bookmarks, []);
+        dispatchWindowMessage(windowTarget, {
+            command: 'mapupdatecomplete',
+            loadGeneration: 2,
+        });
+        assert.deepStrictEqual(loader.worldMap.conditionExprs, []);
+
+        dispatchWindowMessage(windowTarget, {
+            command: 'mapupdatecomplete',
+            loadGeneration: 3,
+        });
         assert.deepStrictEqual(loader.worldMap.conditionExprs, conditionExprs);
         assert.deepStrictEqual(loader.worldMap.bookmarks, bookmarks);
+        assert.strictEqual(loader.worldMap.width, 10);
+        assert.strictEqual(worldMapEmits, 2, 'one initial map and one committed diff');
+        assert.deepStrictEqual(postedMessages.filter(message => message.command === 'mapready'), [
+            { command: 'mapready', loadGeneration: 2 },
+            { command: 'mapready', loadGeneration: 3 },
+        ]);
+        loader.dispose();
     });
 
     it('accepts progress and errors from a new generation before receiving its summary', () => {
@@ -201,6 +254,7 @@ describe('world map webview loader batching', () => {
         });
         assert.strictEqual(loader.progressText, 'Failed to load world map');
         assert.strictEqual(loader.loading$.value, false);
+        loader.dispose();
     });
 });
 

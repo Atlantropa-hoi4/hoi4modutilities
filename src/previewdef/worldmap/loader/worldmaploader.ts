@@ -112,7 +112,7 @@ export class WorldMapLoader extends Loader<WorldMapData> {
         };
 
         delete (worldMap as unknown as Partial<ProvinceMap>)['colorByPosition'];
-        this.defaultMapLoader.releaseTransientCache();
+        this.defaultMapLoader.releaseTransientCache(provinceMap.result);
 
         const dependencies = mergeInLoadResult(subLoaderResults, 'dependencies');
         debug('World map dependencies', dependencies);

@@ -69,17 +69,13 @@ export abstract class Loader<T, E = {}> {
         if (cachedShouldReload === 'checking') {
             return false;
         }
-        if (cachedShouldReload) {
-            return true;
+        if (cachedShouldReload !== undefined) {
+            return cachedShouldReload;
         }
 
         session.checkingShouldReload(this);
         const result = await this.shouldReloadImpl(session);
-        if (result) {
-            session.setShouldReload(this);
-        } else {
-            session.clearShouldReload(this);
-        }
+        session.setShouldReload(this, result);
 
         return result;
     };
@@ -336,5 +332,16 @@ class LoaderDependencies {
 }
 
 export function mergeInLoadResult<K extends string, T extends { [k in K]: any[] }>(loadResults: T[], key: K): T[K] {
-    return loadResults.reduce<T[K]>((p, c) => (p as any).concat(c[key]), [] as unknown as T[K]);
+    const merged: any[] = [];
+    for (const loadResult of loadResults) {
+        const values = loadResult[key];
+        const offset = merged.length;
+        merged.length += values.length;
+        for (let i = 0; i < values.length; i++) {
+            if (i in values) {
+                merged[offset + i] = values[i];
+            }
+        }
+    }
+    return merged as T[K];
 }

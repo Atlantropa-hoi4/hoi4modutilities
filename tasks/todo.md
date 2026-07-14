@@ -618,3 +618,14 @@ Focus Tree preview/editor performance refactor 2026-07-14:
 - [x] Add focused regression coverage and run TypeScript, lint, webview build, UI smoke, and whitespace checks.
 
 Review note: Focus layout propagation now uses a dependency queue with a bounded per-tree LRU cache; the synthetic 2,000-focus reverse-order chain improved from 273.77 ms to 6.22 ms. The webview uses one delegated pointer-drag lifecycle, renders each focus once, and applies string-map patches in place. Prerequisite linking now keeps host and optimistic state aligned, broad text refreshes are narrowed, localisation configuration is captured once per batch, and disposed or stale preview work is cooperatively cancelled with bounded asset batches. `npm run verify` passed with 377 unit tests, 15 Extension Host smoke tests, production bundles, lint, and a packaged `hoi4modutilities-0.14.0.vsix`; `npm run build:dev` and `git diff --check` also succeeded.
+
+World Map preview performance refactor 2026-07-14:
+- [x] Remove duplicated summary collections and redundant chunk serialization/loader lookups.
+- [x] Pipeline bounded chunk requests and commit diff generations only once.
+- [x] Coalesce render, pan, hover, and persisted-state updates per animation frame.
+- [x] Index province hit testing, warning sources, and country colors used by render hot paths.
+- [x] Reduce province bitmap edge traversal and validation allocations while preserving geometry.
+- [x] Coalesce dependency refreshes and dispose pending map work deterministically.
+- [x] Add focused regression/performance coverage and run the complete verification pipeline.
+
+Review note: World Map payloads now use direct structured chunks with a four-request window and an acknowledged transactional refresh boundary. Rendering/state work is frame-coalesced, province/warning/country lookups are indexed, resource images are reused and detached on disposal, and map loading coalesces dependency bursts. Province/River bitmap traversal now uses bounded zero-copy parsing, enqueue-time visitation, linear edge assembly, and an approximately 1.4 MiB River visited bitset at 5632x2048 instead of an 11.5 MiB byte map. The synthetic warning aggregation benchmark improved from 130.27 ms to 3.01 ms. `npm run verify` passed with 404 unit tests, 15 Extension Host smoke tests, production bundles, lint, and VSIX packaging; the final image-cache detach follow-up passed webview type-check, lint, test compilation, and 8 focused tests. `git diff --check` also passed.

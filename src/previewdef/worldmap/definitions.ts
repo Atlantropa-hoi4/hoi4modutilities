@@ -260,11 +260,16 @@ export interface TokenInFile {
     token: Token | null;
 }
 
-export type WorldMapMessage = LoadedMessage | RequestMapItemMessage | MapItemMessage | ErrorMessage | ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage;
+export type WorldMapMessage = LoadedMessage | MapReadyMessage | RequestMapItemMessage | MapItemMessage | MapUpdateCompleteMessage | ErrorMessage | ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage;
 
 export interface LoadedMessage {
     command: 'loaded';
     force: boolean;
+}
+
+export interface MapReadyMessage {
+    command: 'mapready';
+    loadGeneration: number;
 }
 
 export interface RequestMapItemMessage {
@@ -276,9 +281,14 @@ export interface RequestMapItemMessage {
 
 export interface MapItemMessage {
     command: 'provinces' | 'states' | 'countries' | 'warnings' | 'continents' | 'terrains' | 'strategicregions' | 'supplyareas' | 'railways' | 'supplynodes' | 'resources' | 'rivers' | 'conditionexprs' | 'bookmarks';
-    data: string;
+    data: unknown[] | string;
     start: number;
     end: number;
+    loadGeneration?: number;
+}
+
+export interface MapUpdateCompleteMessage {
+    command: 'mapupdatecomplete';
     loadGeneration?: number;
 }
 

@@ -2,7 +2,8 @@ import { Subscriber } from "../util/event";
 import { FEWorldMap } from "./loader";
 import { Zone, Point } from "./definitions";
 import { bboxCenter } from "./graphutils";
-import { BehaviorSubject, fromEvent, Observable } from 'rxjs';
+import { BehaviorSubject, fromEvent, Observable, Subject } from 'rxjs';
+import { AnimationFrameScheduler } from './framescheduler';
 
 type ViewPointObj = { x: number; y: number; scale: number; };
 
@@ -11,6 +12,11 @@ export class ViewPoint extends Subscriber {
     public y: number;
     public scale: number;
     public observable$: Observable<ViewPointObj>;
+    public changed$: Observable<void>;
+
+    private writableObservable$: BehaviorSubject<ViewPointObj>;
+    private writableChanged$ = new Subject<void>();
+    private observableScheduler: AnimationFrameScheduler;
 
     constructor(
         private canvas: HTMLCanvasElement,
@@ -22,8 +28,20 @@ export class ViewPoint extends Subscriber {
         this.x = viewPointObj.x;
         this.y = viewPointObj.y;
         this.scale = viewPointObj.scale;
-        this.observable$ = new BehaviorSubject<ViewPointObj>(viewPointObj);
+        this.writableObservable$ = new BehaviorSubject<ViewPointObj>(viewPointObj);
+        this.observable$ = this.writableObservable$;
+        this.changed$ = this.writableChanged$;
+        this.observableScheduler = new AnimationFrameScheduler(() => {
+            this.writableObservable$.next(this.toJson());
+        });
         this.enableDragger();
+    }
+
+    public dispose(): void {
+        this.observableScheduler.dispose();
+        this.writableChanged$.complete();
+        this.writableObservable$.complete();
+        super.dispose();
     }
 
     public convertX(x: number) {
@@ -191,6 +209,7 @@ export class ViewPoint extends Subscriber {
     }
 
     private updateObservable() {
-        (this.observable$ as BehaviorSubject<ViewPointObj>).next(this.toJson());
+        this.writableChanged$.next();
+        this.observableScheduler.schedule();
     }
 }

@@ -10,6 +10,8 @@ import { max, padStart } from "lodash";
 import { combineLatest, fromEvent } from 'rxjs';
 import { distinctUntilChanged } from 'rxjs/operators';
 import { applyCondition, ConditionItem } from "../../src/hoiformat/condition";
+import { AnimationFrameScheduler } from './framescheduler';
+import { ResourceImageCache } from './resourceimagecache';
 
 const landWarning = 0xE02020;
 const landNoWarning = 0x7FFF7F;
@@ -31,7 +33,6 @@ interface RenderContext {
     provinceToStrategicRegion: Record<number, number | undefined>;
     renderedProvincesByOffset: Record<number, Province[]>;
     renderedProvincesById: Record<number, Province>;
-    renderedProvinces?: Province[];
     overwriteRenderPrecision?: number;
     preciseEdge?: boolean;
     extraState: any;
@@ -48,28 +49,29 @@ export class Renderer extends Subscriber {
     
     private cursorX = 0;
     private cursorY = 0;
+    private renderScheduler: AnimationFrameScheduler;
 
-    private static resourceImages: Record<string, HTMLImageElement | undefined> = {};
+    private static resourceImages = new ResourceImageCache();
 
     constructor(private mainCanvas: HTMLCanvasElement, private viewPoint: ViewPoint, private loader: Loader, private topBar: TopBar) {
         super();
-
-        this.addSubscription(fromEvent(window, 'resize').subscribe(this.resizeCanvas));
 
         this.mainCanvasContext = this.mainCanvas.getContext('2d')!;
         this.backCanvas = document.createElement('canvas');
         this.backCanvasContext = this.backCanvas.getContext('2d')!;
         this.mapCanvas = document.createElement('canvas');
+        this.renderScheduler = new AnimationFrameScheduler(this.renderCanvasNow);
 
+        this.addSubscription(fromEvent(window, 'resize').subscribe(this.resizeCanvas));
         this.registerCanvasEventHandlers();
         this.resizeCanvas();
 
         this.addSubscription(loader.worldMap$.subscribe(this.reloadImages));
-        this.addSubscription(loader.worldMap$.subscribe(this.renderCanvas));
+        this.addSubscription(loader.worldMap$.subscribe(this.invalidateMap));
+        this.addSubscription(viewPoint.changed$.subscribe(this.renderCanvas));
         this.addSubscription(
             combineLatest([
                 loader.progress$,
-                viewPoint.observable$,
                 topBar.viewMode$,
                 topBar.colorSet$,
                 topBar.hoverProvinceId$,
@@ -87,17 +89,21 @@ export class Renderer extends Subscriber {
         );
     }
 
-    private reloadImages = () => {
-        for (const resource of this.loader.worldMap.resources) {
-            const image = new Image();
-            image.onload = () => {
-                Renderer.resourceImages[resource.name] = image;
-            };
-            image.src = resource.imageUri;
-        }
+    public dispose(): void {
+        this.renderScheduler.dispose();
+        Renderer.resourceImages.clear();
+        super.dispose();
+    }
+
+    private reloadImages = (worldMap: FEWorldMap) => {
+        Renderer.resourceImages.sync(worldMap.resources, this.invalidateMap);
     };
 
     public renderCanvas = () => {
+        this.renderScheduler.schedule();
+    };
+
+    private renderCanvasNow = () => {
         if (this.canvasWidth <= 0 && this.canvasHeight <= 0) {
             return;
         }
@@ -142,6 +148,11 @@ export class Renderer extends Subscriber {
     };
 
     private oldMapState: any = undefined;
+    private invalidateMap = () => {
+        this.oldMapState = undefined;
+        this.renderCanvas();
+    };
+
     private renderMap() {
         const worldMap = this.loader.worldMap;
         const displayOptions = this.topBar.display.selectedValues$.value;
@@ -191,7 +202,6 @@ export class Renderer extends Subscriber {
         const mapZone: Zone = { x: 0, y: 0, w: worldMap.width, h: worldMap.height };
         Renderer.renderAllOffsets(viewPoint, mapZone, worldMap.width, xOffset => Renderer.renderMapBackground(worldMap, xOffset, renderContext));
 
-        renderContext.renderedProvinces = Object.values(renderContext.renderedProvincesById);
         Renderer.renderAllOffsets(viewPoint, mapZone, worldMap.width, xOffset => Renderer.renderMapForeground(worldMap, xOffset, renderContext));
     }
 
@@ -373,7 +383,7 @@ export class Renderer extends Subscriber {
         isRed: boolean,
         preciseEdge?: boolean,
     ) {
-        const { provinceToState, provinceToStrategicRegion, renderedProvinces, topBar, viewPoint } = renderContext;
+        const { provinceToState, provinceToStrategicRegion, renderedProvincesById, topBar, viewPoint } = renderContext;
         const scale = viewPoint.scale;
         const viewMode = topBar.viewMode$.value;
 
@@ -431,7 +441,7 @@ export class Renderer extends Subscriber {
             }
 
             if (paths.length === 0 && provinceEdge.type !== 'impassable') {
-                const toProvince = renderedProvinces?.find(p => p.id === provinceEdge.to);
+                const toProvince = renderedProvincesById[provinceEdge.to];
                 const [startPoint, endPoint] = findNearestPoints(provinceEdge.start, provinceEdge.stop, province, toProvince);
 
                 context.moveTo(viewPoint.convertX(startPoint.x + xOffset), viewPoint.convertY(startPoint.y));
@@ -699,7 +709,7 @@ ${worldMap.getProvinceWarnings(province, stateObject, strategicRegion).map(v => 
         }
         province = worldMap.getProvinceById(this.topBar.hoverProvinceId$.value);
         if (province) {
-            if (this.topBar.selectedProvinceId$ !== this.topBar.hoverProvinceId$ && this.isMouseHighlightVisible()) {
+            if (this.topBar.selectedProvinceId$.value !== this.topBar.hoverProvinceId$.value && this.isMouseHighlightVisible()) {
                 this.renderHoverProvince(province, worldMap);
             }
             if (this.isTooltipVisible()) {
@@ -891,7 +901,7 @@ ${worldMap.getStrategicRegionWarnings(strategicRegion).map(v => '|r|' + v).join(
             if (!state.resources[resource]) {
                 continue;
             }
-            const image = Renderer.resourceImages[resource];
+            const image = Renderer.getLoadedResourceImage(resource);
             if (image) {
                 maxHeight = Math.max(maxHeight, image.naturalHeight * scale);
                 fullWidth += image.naturalWidth * scale;
@@ -913,7 +923,7 @@ ${worldMap.getStrategicRegionWarnings(strategicRegion).map(v => '|r|' + v).join(
                 continue;
             }
 
-            const image = Renderer.resourceImages[resource];
+            const image = Renderer.getLoadedResourceImage(resource);
             if (image) {
                 context.drawImage(image, x, y, image.naturalWidth * scale, image.naturalHeight * scale);
                 context.fillText(resourceNumber.toString(), x + (image?.naturalWidth ?? 0) * scale + labelWidth / 2, y + Math.max(0, image?.naturalHeight ?? 0) * scale / 2);
@@ -925,6 +935,10 @@ ${worldMap.getStrategicRegionWarnings(strategicRegion).map(v => '|r|' + v).join(
                 x += 24 * scale + labelWidth;
             }
         }
+    }
+
+    private static getLoadedResourceImage(resource: string): HTMLImageElement | undefined {
+        return Renderer.resourceImages.getLoaded(resource);
     }
 }
 
@@ -999,7 +1013,7 @@ function getColorByColorSet(
             {
                 const stateId = provinceToState[province.id];
                 const owner = solveWithCondition(worldMap.getStateById(stateId)?.owner, renderContext.topBar.selectedConditions$.value);
-                return worldMap.countries.find(c => c && c.tag === owner)?.color ?? defaultColor(province);
+                return worldMap.getCountryByTag(owner)?.color ?? defaultColor(province);
             }
         case 'controller':
             {
@@ -1007,7 +1021,7 @@ function getColorByColorSet(
                 const state = worldMap.getStateById(stateId);
                 const controller = solveWithCondition(state?.controller, renderContext.topBar.selectedConditions$.value) ??
                     solveWithCondition(state?.owner, renderContext.topBar.selectedConditions$.value);
-                return worldMap.countries.find(c => c && c.tag === controller)?.color ?? defaultColor(province);
+                return worldMap.getCountryByTag(controller)?.color ?? defaultColor(province);
             }
         case 'terrain':
             {
