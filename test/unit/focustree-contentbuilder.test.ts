@@ -186,6 +186,18 @@ describe('focustree contentbuilder', () => {
         assert.match(html, /id="inlay-window-container"[^>]*style="display:none;"/);
     });
 
+    it('keeps the fixed toolbar above interactive focus and inlay layers', () => {
+        const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+        const html = contentbuilder.renderFocusTreeShellHtml(
+            { toString: () => 'file:///focus.txt' } as any,
+            {} as any,
+            1,
+            {},
+        );
+
+        assert.match(html, /\.st-toolbar-height\s*\{[^}]*z-index:\s*10;/);
+    });
+
     it('prevents warning entries from inheriting the global active button scale', async () => {
         const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
         const html = contentbuilder.renderFocusTreeShellHtml(

@@ -25,6 +25,7 @@ const {
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
     mergeLocalisationIndexes,
+    parseLocalisationFile,
     preprocessYamlContent,
     rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
@@ -182,5 +183,23 @@ describe('localisation index helpers', () => {
             'l_english:',
             ' TEST_HASH: "Keep # inside the value"',
         ].join('\n'));
+    });
+
+    it('recovers valid localisation entries when malformed prose makes the file invalid YAML', () => {
+        const processed = preprocessYamlContent([
+            'l_english:',
+            ' FOCUS_BEFORE:0 "Before the malformed line"',
+            ' CHARACTER_DESC:0 "He was known as "the expert" by his supporters."',
+            ' BROKEN_ENTRY:0 "Missing the closing quote',
+            ' FOCUS_AFTER:0 "After the malformed line\\nSecond line"',
+        ].join('\n'));
+
+        assert.deepStrictEqual(parseLocalisationFile(processed), {
+            l_english: {
+                FOCUS_BEFORE: 'Before the malformed line',
+                CHARACTER_DESC: 'He was known as "the expert" by his supporters.',
+                FOCUS_AFTER: 'After the malformed line\nSecond line',
+            },
+        });
     });
 });

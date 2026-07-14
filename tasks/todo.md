@@ -594,3 +594,17 @@ Upstream v0.14.0 merged-feature deep audit 2026-07-14:
 - [x] Add focused regression coverage and run the complete release verification pipeline.
 
 Review note: The deep audit found and fixed five additional regression classes beyond the earlier Focus Tree and World Map failures: nested Technology branch/XOR visibility, refresh-time World Map scenario loss, nested anonymous-block EOF recovery, recursive DLC ZIP omissions, and nondeterministic DLC/base localisation and shared-focus precedence. Focus conditional/alternate/overlay art, forced small Technology layouts, ID/name toggles, right-button panning, owner/controller colors, and feature-flag serialization were also rechecked without further defects. `npm run verify` passed with 349 unit tests, 15 Extension Host smoke tests, production bundles, lint, and a packaged `hoi4modutilities-0.14.0.vsix`.
+
+Focus Tree label toolbar stacking hardening 2026-07-14:
+- [x] Inspect the Focus toolbar and canvas stacking contexts after the reported label toggle failure.
+- [x] Keep the fixed Focus toolbar above interactive focus, inlay, and continuous-focus layers.
+- [x] Reverify focused markup coverage, TypeScript, lint, webview bundle, UI smoke, and whitespace.
+
+Review note: Focus Tree content layers use explicit stacking levels while its fixed toolbar previously remained at the default stacking level. The toolbar now stays at `z-index: 10`, matching the protected Technology toolbar behavior. The follow-up screenshot showed that Name was already active, so this hardening was not the root fix for the remaining ID fallback; malformed-localisation recovery below addresses that cause. Focused tests passed (40), and `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui` (15 passing), and `npm run package` succeeded.
+
+Focus Tree malformed-localisation recovery 2026-07-14:
+- [x] Confirm the active Name button still falls back to IDs because both TFR-Korea main localisation files fail YAML parsing.
+- [x] Recover valid line-oriented Paradox localisation entries when one malformed prose line invalidates the complete YAML document.
+- [x] Reverify the real TFR-Korea focus names, focused unit coverage, TypeScript, lint, webview bundle, UI smoke, packaging, and whitespace.
+
+Review note: Both TFR-Korea main localisation files contain malformed prose that makes strict YAML parsing fail and previously discarded every name in each file. The fallback now recovers valid Paradox line entries while skipping unrecoverable lines; direct checks recovered 11,712 Korean and 8,960 English entries, including all three `KOR_gwr_*` labels visible in the report. Focused tests passed (19), all 351 unit tests passed, and `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui` (15 passing), `npm run package`, and `git diff --check` succeeded.

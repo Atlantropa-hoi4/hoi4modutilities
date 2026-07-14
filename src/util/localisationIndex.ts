@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import { debounceByInput, mapWithConcurrency } from './common';
 import { isLocalisationIndexEnabled } from './featureflags';
 import { listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
@@ -9,6 +8,9 @@ import { Logger } from "./logger";
 import { YAMLException } from "js-yaml";
 import { IndexService } from '../services/indexService';
 import { getConfiguration } from './vsccommon';
+import { parseLocalisationFile, preprocessYamlContent } from './localisationparser';
+
+export { parseLocalisationFile, preprocessYamlContent } from './localisationparser';
 
 type LocalisationData = Record<string, Record<string, string>>;
 
@@ -287,8 +289,6 @@ async function fillLocalisationItems(localisationFile: string, localisationIndex
             }
         }
     } catch (e) {
-        console.log(localisationFile);
-        console.log(processedContent);
         console.error(e);
 
         const baseMessage = options.hoi4
@@ -303,55 +303,6 @@ async function fillLocalisationItems(localisationFile: string, localisationIndex
             Logger.error(`${baseMessage} ${localisationFile} ${failureMessage}`);
         }
     }
-}
-
-export function preprocessYamlContent(fileContent: string): string {
-    const lines = fileContent.split(/\r?\n/);
-
-    // Filter out any lines that start with #, regardless of leading spaces
-    const filteredLines = lines.filter(line =>
-        !/^\s*#/.test(line)
-    );
-
-    const header = filteredLines.length > 0 ? filteredLines[0].replace(/^\s+/, '') : '';
-    // Can't the goddamn Paradox employees and modders just write standard localization yml files?
-    const processedLines = filteredLines.slice(1).map(line => {
-        return ' ' + line
-            .replace(/\n/g, 'YAMLParsingLFReplacement')
-            .replace(
-                /^\s*([^:]+?)\s*:\s*\d*\s*"((?:[^"\\]|\\.)*)"(?:\s*#.*)?$/,
-                (match, p1, p2) => {
-                    // Replace unescaped quotes with escaped ones
-                    const escapedContent = p2.replace(/(?<!\\)"/g, '\\"');
-                    return `${p1.trim()}: "${escapedContent}"`;
-                }
-            )
-            .replace(/:(\d+)(?=[^"]*")/, ':')
-            .replace(/^\s+/, '');
-    }).filter(line =>
-        line.trim() !== ''
-    );
-
-    return [header, ...processedLines].join('\n');
-}
-
-function parseLocalisationFile(fileContent: string): Record<string, Record<string, string>> {
-    const result: Record<string, Record<string, string>> = {};
-
-    const parsed = yaml.load(fileContent, { schema: yaml.JSON_SCHEMA, json: true }) as Record<string, any>;
-
-    for (const langKey in parsed) {
-        if (langKey.startsWith('l_')) {
-            result[langKey] = result[langKey] || {};
-            const entries = parsed[langKey] as Record<string, string>;
-
-            for (const key in entries) {
-                result[langKey][key] = entries[key].replace(/YAMLParsingLFReplacement/g, '\n');
-            }
-        }
-    }
-
-    return result;
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
