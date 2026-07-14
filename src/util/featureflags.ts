@@ -24,8 +24,8 @@ export function isGfxIndexEnabled(): boolean {
     return !hasFeatureFlag('!gfxIndex');
 }
 
-export function isLocalisationIndexEnabled(): boolean {
-    return !hasFeatureFlag('!localisationIndex');
+export function isLocalisationIndexEnabled(featureFlags: readonly string[] = getFeatureFlags()): boolean {
+    return !featureFlags.includes('!localisationIndex');
 }
 
 export function isRightButtonDragEnabled(): boolean {

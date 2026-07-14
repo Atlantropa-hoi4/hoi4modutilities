@@ -22,6 +22,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const {
+    createLocalisedTextQuickIfReadyResolver,
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
     mergeLocalisationIndexes,
@@ -38,6 +39,23 @@ delete require.cache[require.resolve('../../src/util/modfile')];
 delete require.cache[require.resolve('../../src/util/vsccommon')];
 
 describe('localisation index helpers', () => {
+    it('captures preview localisation configuration once for a lookup batch', () => {
+        let configurationReadCount = 0;
+        const resolveText = createLocalisedTextQuickIfReadyResolver(() => {
+            configurationReadCount += 1;
+            return {
+                featureFlags: [],
+                previewLocalisation: 'English',
+            } as any;
+        });
+
+        for (let index = 0; index < 500; index += 1) {
+            resolveText(`FOCUS_${index}`);
+        }
+
+        assert.strictEqual(configurationReadCount, 1);
+    });
+
     it('prefers workspace overrides before vanilla in both requested-language and english fallback lookups', () => {
         const globalIndex = {
             l_korean: {

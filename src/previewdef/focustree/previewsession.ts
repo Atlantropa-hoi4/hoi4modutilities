@@ -51,7 +51,11 @@ export interface FocusTreeSnapshotBuilderLike {
     renderShell(documentVersion: number): string;
     renderDocument(document: vscode.TextDocument): Promise<string>;
     buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean): Promise<FocusTreeRenderBaseState>;
-    createFullSnapshot(baseState: FocusTreeRenderBaseState, previousCache: FocusTreePreviewSession['runtimeState']['lastRenderCache']): Promise<FocusTreeSnapshot>;
+    createFullSnapshot(
+        baseState: FocusTreeRenderBaseState,
+        previousCache: FocusTreePreviewSession['runtimeState']['lastRenderCache'],
+        isCancelled?: () => boolean,
+    ): Promise<FocusTreeSnapshot>;
 }
 
 export class FocusTreePreviewSession {
@@ -68,6 +72,7 @@ export class FocusTreePreviewSession {
     private readonly traceEvents: Array<Record<string, unknown>> = [];
     private deferredHydrationTimer: ReturnType<typeof setTimeout> | undefined;
     private pendingLocalisationRefreshDocumentVersion: number | undefined;
+    private disposed = false;
 
     constructor(options: FocusTreePreviewSessionOptions) {
         this.uri = options.uri;
@@ -106,7 +111,23 @@ export class FocusTreePreviewSession {
         };
     }
 
+    public dispose(): void {
+        if (this.disposed) {
+            return;
+        }
+
+        this.disposed = true;
+        beginFocusTreeRefresh(this.runtimeState);
+        this.resetSessionState();
+        this.runtimeState.pendingLocalEditDocumentVersions.clear();
+        this.latestDocument = undefined;
+    }
+
     public async initializePanel(document: vscode.TextDocument): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
         this.latestDocument = document;
         this.resetSessionState();
         this.webview.html = this.renderShell(document.version);
@@ -130,6 +151,10 @@ export class FocusTreePreviewSession {
         document: vscode.TextDocument,
         options?: FocusTreeRefreshOptions,
     ): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
         this.latestDocument = document;
         if (!options?.ignorePendingLocalEditDocumentVersion
             && consumePendingLocalEditVersion(this.runtimeState, document.version)) {
@@ -153,6 +178,10 @@ export class FocusTreePreviewSession {
     }
 
     public handleWebviewReady(): void {
+        if (this.disposed) {
+            return;
+        }
+
         markFocusTreeWebviewReady(this.runtimeState);
         this.trace('handleWebviewReady', {
             latestDocumentVersion: this.latestDocument?.version,
@@ -168,7 +197,7 @@ export class FocusTreePreviewSession {
             return;
         }
 
-        void this.applySnapshotUpdate(
+        void this.safeApplySnapshotUpdate(
             latestDocument,
             pendingBaseState,
             this.runtimeState.latestRefreshRequestId,
@@ -182,7 +211,7 @@ export class FocusTreePreviewSession {
     }
 
     public reconcileAfterLocalEdit(updatedDocument: vscode.TextDocument | undefined): number | undefined {
-        if (!updatedDocument) {
+        if (this.disposed || !updatedDocument) {
             return undefined;
         }
 
@@ -196,7 +225,7 @@ export class FocusTreePreviewSession {
     }
 
     public async reloadAfterStructuralEdit(updatedDocument: vscode.TextDocument | undefined): Promise<number | undefined> {
-        if (!updatedDocument) {
+        if (this.disposed || !updatedDocument) {
             return undefined;
         }
 
@@ -220,6 +249,10 @@ export class FocusTreePreviewSession {
             allowDeferredHydration: boolean;
         },
     ): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
         this.cancelDeferredHydrationTimer();
         storePendingReadyBaseStatePromise(this.runtimeState, undefined);
         const isCancelled = this.createRefreshCancellationPredicate(requestId, requestDocumentVersion);
@@ -281,6 +314,41 @@ export class FocusTreePreviewSession {
         }
     }
 
+    private async safeApplySnapshotUpdate(
+        document: vscode.TextDocument,
+        baseState: FocusTreeRenderBaseState,
+        requestId: number,
+        requestDocumentVersion: number,
+        assetLoadMode: FocusTreeAssetLoadMode,
+        options: {
+            source: FocusTreeRefreshSource;
+            allowDeferredHydration: boolean;
+        },
+    ): Promise<void> {
+        try {
+            await this.applySnapshotUpdate(
+                document,
+                baseState,
+                requestId,
+                requestDocumentVersion,
+                assetLoadMode,
+                options,
+            );
+        } catch (error) {
+            if (!(error instanceof UserError)) {
+                throw error;
+            }
+
+            this.trace('applySnapshotUpdateFailed', {
+                requestId,
+                requestDocumentVersion,
+                assetLoadMode,
+                source: options.source,
+                message: error.message,
+            });
+        }
+    }
+
     private async applySnapshotUpdate(
         document: vscode.TextDocument,
         baseState: FocusTreeRenderBaseState,
@@ -292,8 +360,13 @@ export class FocusTreePreviewSession {
             allowDeferredHydration: boolean;
         },
     ): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
+        const isCancelled = this.createRefreshCancellationPredicate(requestId, requestDocumentVersion);
         const patchPlanStart = Date.now();
-        const patchPlan = await this.patchPlanner.plan(this.runtimeState.lastRenderCache, baseState);
+        const patchPlan = await this.patchPlanner.plan(this.runtimeState.lastRenderCache, baseState, isCancelled);
         const patchPlanDurationMs = Date.now() - patchPlanStart;
         recordPerf('focustree.patchPlan', patchPlanDurationMs, {
             source: options.source,
@@ -322,7 +395,11 @@ export class FocusTreePreviewSession {
         let snapshotBuildDurationMs = 0;
         if (patchPlan.kind === 'full') {
             const snapshotBuildStart = Date.now();
-            const snapshot = await this.snapshotBuilder.createFullSnapshot(baseState, this.runtimeState.lastRenderCache);
+            const snapshot = await this.snapshotBuilder.createFullSnapshot(
+                baseState,
+                this.runtimeState.lastRenderCache,
+                isCancelled,
+            );
             snapshotBuildDurationMs = Date.now() - snapshotBuildStart;
             recordPerf('focustree.snapshotBuild', snapshotBuildDurationMs, { source: options.source, mode: assetLoadMode });
             const snapshotLatestDocumentVersion = this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
@@ -352,24 +429,28 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        if (isCancelled()) {
+            return;
+        }
+
+        const updateMessage: FocusTreeSnapshot['update'] & { command: 'focusTreeContentUpdated' } = {
+            command: 'focusTreeContentUpdated',
+            ...update,
+        };
+        const payloadBytes = getApproximateJsonByteLength(updateMessage);
+        updateMessage.perf = {
+            source: options.source,
+            assetLoadMode,
+            updateKind: patchPlan.kind,
+            changedSlotCount: update.changedSlots.length,
+            payloadBytes,
+            patchPlanDurationMs,
+            snapshotBuildDurationMs,
+            focusCount: snapshotMetrics?.focusCount ?? baseState.allFocuses.length,
+            inlayCount: snapshotMetrics?.inlayCount ?? baseState.allInlays.length,
+            deferredAssetLoad: baseState.deferredAssetLoad,
+        };
         try {
-            const updateMessage: FocusTreeSnapshot['update'] & { command: 'focusTreeContentUpdated' } = {
-                command: 'focusTreeContentUpdated',
-                ...update,
-            };
-            const payloadBytes = getApproximateJsonByteLength(updateMessage);
-            updateMessage.perf = {
-                source: options.source,
-                assetLoadMode,
-                updateKind: patchPlan.kind,
-                changedSlotCount: update.changedSlots.length,
-                payloadBytes,
-                patchPlanDurationMs,
-                snapshotBuildDurationMs,
-                focusCount: snapshotMetrics?.focusCount ?? baseState.allFocuses.length,
-                inlayCount: snapshotMetrics?.inlayCount ?? baseState.allInlays.length,
-                deferredAssetLoad: baseState.deferredAssetLoad,
-            };
             const postMessageStart = Date.now();
             await this.webview.postMessage(updateMessage);
             recordPerf('focustree.postMessage', Date.now() - postMessageStart, {
@@ -397,6 +478,10 @@ export class FocusTreePreviewSession {
             throw error;
         }
 
+        if (isCancelled()) {
+            return;
+        }
+
         this.runtimeState.lastRenderCache = cache;
         this.trace('applySnapshotUpdate', {
             requestId,
@@ -408,7 +493,7 @@ export class FocusTreePreviewSession {
             changedSlots: update.changedSlots,
             patchPlanDurationMs,
             snapshotBuildDurationMs,
-            payloadBytes: getApproximateJsonByteLength(update),
+            payloadBytes,
             renderMetrics: snapshotMetrics,
             changedTreeCount: patchPlan.kind === 'partial' ? patchPlan.changedTreeCount : update.changedTreeIds?.length,
             changedFocusCount: patchPlan.kind === 'partial' ? patchPlan.changedFocusCount : update.changedFocusIds?.length,
@@ -431,7 +516,9 @@ export class FocusTreePreviewSession {
         document: vscode.TextDocument,
         requestDocumentVersion: number,
     ): void {
-        if (isLocalisationIndexReady() || this.pendingLocalisationRefreshDocumentVersion === requestDocumentVersion) {
+        if (this.disposed
+            || isLocalisationIndexReady()
+            || this.pendingLocalisationRefreshDocumentVersion === requestDocumentVersion) {
             return;
         }
 
@@ -441,7 +528,7 @@ export class FocusTreePreviewSession {
         });
 
         void whenLocalisationIndexReady({ showStatusBar: false }).then(() => {
-            if (this.pendingLocalisationRefreshDocumentVersion !== requestDocumentVersion) {
+            if (this.disposed || this.pendingLocalisationRefreshDocumentVersion !== requestDocumentVersion) {
                 return;
             }
 
@@ -476,6 +563,10 @@ export class FocusTreePreviewSession {
         document: vscode.TextDocument,
         requestDocumentVersion: number,
     ): void {
+        if (this.disposed) {
+            return;
+        }
+
         this.cancelDeferredHydrationTimer();
         this.runtimeState.deferredHydrationDocumentVersion = requestDocumentVersion;
         this.trace('deferHydration', {
@@ -485,6 +576,10 @@ export class FocusTreePreviewSession {
 
         this.deferredHydrationTimer = setTimeout(() => {
             this.deferredHydrationTimer = undefined;
+            if (this.disposed) {
+                return;
+            }
+
             const latestDocumentVersion = this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
             if (latestDocumentVersion !== requestDocumentVersion) {
                 this.trace('deferredHydrationSkipped', {
@@ -503,6 +598,10 @@ export class FocusTreePreviewSession {
         document: vscode.TextDocument,
         requestDocumentVersion: number,
     ): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
         const hydrationRequestId = beginFocusTreeRefresh(this.runtimeState);
         const pendingBaseStatePromise = consumePendingReadyBaseStatePromise(this.runtimeState, requestDocumentVersion);
         this.trace('scheduleDeferredHydration', {
@@ -543,7 +642,8 @@ export class FocusTreePreviewSession {
     ): () => boolean {
         return () => {
             const latestDocumentVersion = this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
-            return !isCurrentFocusTreeRefresh(this.runtimeState, requestId)
+            return this.disposed
+                || !isCurrentFocusTreeRefresh(this.runtimeState, requestId)
                 || (latestDocumentVersion !== undefined && latestDocumentVersion !== requestDocumentVersion);
         };
     }

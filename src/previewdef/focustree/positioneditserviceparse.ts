@@ -1,5 +1,7 @@
 import { Node } from "../../hoiformat/hoiparser";
 import { ContinuousFocusPositionMeta, FocusTreeCreateMeta, ScalarFieldMeta, TextRange } from "./positioneditcommon";
+import { areFocusIdGroupsEqual, findBestMatchingFocusIdGroupIndex } from "./prerequisitelink";
+export { normalizeParentFocusIds } from "./prerequisitelink";
 import { FocusNodeMeta, FocusReferenceFieldMeta } from "./positioneditservicetypes";
 
 export function collectEditableFocuses(root: Node): FocusNodeMeta[] {
@@ -84,32 +86,19 @@ export function shiftContinuousFocusMeta(meta: ContinuousFocusPositionMeta, offs
     };
 }
 
-export function normalizeParentFocusIds(
-    parentFocusId: string,
-    parentFocusIds: readonly string[] | undefined,
-    childFocusId: string,
-): string[] {
-    return Array.from(new Set(
-        (parentFocusIds && parentFocusIds.length > 0 ? parentFocusIds : [parentFocusId])
-            .filter(focusId => focusId && focusId !== childFocusId),
-    ));
-}
-
 export function findMatchingPrerequisiteField(
     focus: FocusNodeMeta,
     parentFocusIds: readonly string[],
 ): FocusReferenceFieldMeta | undefined {
-    return focus.prerequisiteFields.find(field => areFocusIdSetsEqual(field.focusIds, parentFocusIds))
-        ?? focus.prerequisiteFields.find(field => parentFocusIds.some(parentFocusId => field.focusIds.includes(parentFocusId)));
+    const matchingIndex = findBestMatchingFocusIdGroupIndex(
+        focus.prerequisiteFields.map(field => field.focusIds),
+        parentFocusIds,
+    );
+    return matchingIndex === -1 ? undefined : focus.prerequisiteFields[matchingIndex];
 }
 
 export function areFocusIdSetsEqual(left: readonly string[], right: readonly string[]): boolean {
-    if (left.length !== right.length) {
-        return false;
-    }
-
-    const rightSet = new Set(right);
-    return left.every(focusId => rightSet.has(focusId));
+    return areFocusIdGroupsEqual(left, right);
 }
 
 function collectFocusMeta(node: Node): FocusNodeMeta | undefined {

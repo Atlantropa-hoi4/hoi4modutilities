@@ -15,6 +15,7 @@ import {
     FocusPositionEditMessage,
 } from './positioneditcommon';
 import { FocusTreePreviewSession } from './previewsession';
+import { shouldRefreshFocusTreeOnExternalFileChange } from './refreshpolicy';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 const focusTreeLiveRefreshExtensions = new Set(['.txt', '.gfx', '.gui', '.yml', '.dds', '.tga', '.png', '.mod']);
@@ -111,29 +112,12 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     public override shouldRefreshOnExternalFileChange(uri: vscode.Uri, changeKind: 'change' | 'create' | 'delete'): boolean {
-        const lowerPath = uri.path.toLowerCase();
-        const extension = lowerPath.slice(lowerPath.lastIndexOf('.'));
-        if (!focusTreeLiveRefreshExtensions.has(extension)) {
-            return false;
-        }
-
-        if (uri.toString() === this.uri.toString()) {
-            return true;
-        }
-
-        if (extension === '.txt') {
-            return changeKind !== 'delete'
-                || lowerPath.includes('/common/national_focus/')
-                || lowerPath.includes('\\common\\national_focus\\');
-        }
-
-        return lowerPath.includes('/common/national_focus/')
-            || lowerPath.includes('\\common\\national_focus\\')
-            || lowerPath.includes('/interface/')
-            || lowerPath.includes('\\interface\\')
-            || lowerPath.includes('/localisation/')
-            || lowerPath.includes('\\localisation\\')
-            || extension === '.mod';
+        return shouldRefreshFocusTreeOnExternalFileChange(
+            this.uri.toString(),
+            uri,
+            changeKind,
+            focusTreeLiveRefreshExtensions,
+        );
     }
 
     public override getDebugState(): unknown {
@@ -177,6 +161,7 @@ export class FocusTreePreview extends PreviewBase {
     }
 
     public dispose(): void {
+        this.session.dispose();
         super.dispose();
         this.configurationHandler.dispose();
     }

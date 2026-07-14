@@ -493,4 +493,46 @@ describe('focus tree render payload patching', () => {
 
         assert.strictEqual(result.kind, 'full');
     });
+
+    it('stops large signature planning at a cooperative cancellation checkpoint', async () => {
+        const focusTree = createTree('tree_cancel', 'FOCUS_0') as any;
+        focusTree.focuses = Object.fromEntries(Array.from({ length: 512 }, (_, index) => {
+            const id = `FOCUS_${index}`;
+            return [id, {
+                ...focusTree.focuses.FOCUS_0,
+                id,
+                layoutEditKey: id.toLowerCase(),
+                x: index,
+                icon: [],
+            }];
+        }));
+        let cancelled = false;
+        const isCancelled = () => cancelled;
+        setTimeout(() => {
+            cancelled = true;
+        }, 0);
+
+        await assert.rejects(
+            createFocusTreeRenderUpdate(undefined, {
+                focusTrees: [focusTree],
+                focusById: focusTree.focuses,
+                allFocuses: Object.values(focusTree.focuses),
+                allInlays: [],
+                gfxFiles: [],
+                focusIconGfxFileByName: {},
+                gridBox: { position: { x: 0, y: 0 } },
+                xGridSize: 96,
+                yGridSize: 130,
+                focusPositionDocumentVersion: 1,
+                focusPositionActiveFile: 'common/national_focus/test.txt',
+                conditionPresetsByTree: {},
+                hasFocusSelector: false,
+                hasWarningsButton: false,
+                loadDurationMs: 1,
+                deferredAssetLoad: true,
+                localisationIndexReady: true,
+            } as any, isCancelled),
+            /Focus tree render cancelled/,
+        );
+    });
 });

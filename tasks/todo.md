@@ -608,3 +608,13 @@ Focus Tree malformed-localisation recovery 2026-07-14:
 - [x] Reverify the real TFR-Korea focus names, focused unit coverage, TypeScript, lint, webview bundle, UI smoke, packaging, and whitespace.
 
 Review note: Both TFR-Korea main localisation files contain malformed prose that makes strict YAML parsing fail and previously discarded every name in each file. The fallback now recovers valid Paradox line entries while skipping unrecoverable lines; direct checks recovered 11,712 Korean and 8,960 English entries, including all three `KOR_gwr_*` labels visible in the report. Focused tests passed (19), all 351 unit tests passed, and `npm run compile-ts`, `npm run lint`, `npm run build:dev`, `npm run test-ui` (15 passing), `npm run package`, and `git diff --check` succeeded.
+
+Focus Tree preview/editor performance refactor 2026-07-14:
+- [x] Bound layout-plan caching and replace repeated branch-propagation scans with dependency-driven evaluation.
+- [x] Remove rebuild-time drag listener churn/leaks and avoid redundant webview render/map-copy work.
+- [x] Keep optimistic prerequisite edits consistent with host source edits.
+- [x] Reduce repeated localisation/payload work and unrelated dependency refreshes.
+- [x] Cancel pending Focus Tree work when its preview is disposed.
+- [x] Add focused regression coverage and run TypeScript, lint, webview build, UI smoke, and whitespace checks.
+
+Review note: Focus layout propagation now uses a dependency queue with a bounded per-tree LRU cache; the synthetic 2,000-focus reverse-order chain improved from 273.77 ms to 6.22 ms. The webview uses one delegated pointer-drag lifecycle, renders each focus once, and applies string-map patches in place. Prerequisite linking now keeps host and optimistic state aligned, broad text refreshes are narrowed, localisation configuration is captured once per batch, and disposed or stale preview work is cooperatively cancelled with bounded asset batches. `npm run verify` passed with 377 unit tests, 15 Extension Host smoke tests, production bundles, lint, and a packaged `hoi4modutilities-0.14.0.vsix`; `npm run build:dev` and `git diff --check` also succeeded.

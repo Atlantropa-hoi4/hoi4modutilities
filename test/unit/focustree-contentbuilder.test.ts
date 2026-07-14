@@ -35,23 +35,20 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
 
     if ((request.endsWith('/util/localisationIndex') || request === '../../util/localisationIndex')
         && parent?.filename?.includes('focusrender')) {
+        const resolveText = (key: string) => {
+            localisationCalls.push(key);
+            return key === 'FOCUS_A'
+                ? 'Localized focus A'
+                : key === 'FOCUS_DYNAMIC'
+                    ? 'Dynamic $COUNTRY$ [Root.GetName]'
+                    : undefined;
+        };
         return {
-            getLocalisedTextQuick: async (key: string) => {
-                localisationCalls.push(key);
-                return key === 'FOCUS_A'
-                    ? 'Localized focus A'
-                    : key === 'FOCUS_DYNAMIC'
-                        ? 'Dynamic $COUNTRY$ [Root.GetName]'
-                        : undefined;
-            },
-            getLocalisedTextQuickIfReady: (key: string) => {
-                localisationCalls.push(key);
-                return key === 'FOCUS_A'
-                    ? 'Localized focus A'
-                    : key === 'FOCUS_DYNAMIC'
-                        ? 'Dynamic $COUNTRY$ [Root.GetName]'
-                        : undefined;
-            },
+            getLocalisedTextQuick: async (key: string) => resolveText(key),
+            getLocalisedTextQuickIfReady: resolveText,
+            createLocalisedTextQuickIfReadyResolver: () => localisationIndexEnabled
+                ? resolveText
+                : (key: string) => key,
         };
     }
 
@@ -528,5 +525,212 @@ describe('focustree contentbuilder', () => {
             { name: 'GFX_INLAY', gfxFiles: ['interface/inlay_icons.gfx'] },
         ]);
         assert.deepStrictEqual(broadScanCalls, []);
+    });
+
+    it('stops a large focus payload build at a cooperative cancellation checkpoint', async () => {
+        localisationIndexEnabled = true;
+        const focuses = Array.from({ length: 512 }, (_, index) => ({
+            id: `FOCUS_${index}`,
+            layoutEditKey: `focus_${index}`,
+            x: index,
+            y: 0,
+            icon: [],
+            availableIfCapitulated: false,
+            hasAiWillDo: false,
+            hasCompletionReward: false,
+            prerequisite: [],
+            prerequisiteGroupCount: 0,
+            prerequisiteFocusCount: 0,
+            exclusive: [],
+            exclusiveCount: 0,
+            hasAllowBranch: false,
+            inAllowBranch: [],
+            offset: [],
+            file: 'common/national_focus/test.txt',
+            isInCurrentFile: true,
+            lintWarningCount: 0,
+            lintInfoCount: 0,
+        }));
+        const focusById = Object.fromEntries(focuses.map(focus => [focus.id, focus]));
+        const focusTree = {
+            id: 'tree_cancel',
+            kind: 'focus',
+            focuses: focusById,
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+        let cancelled = false;
+        const isCancelled = () => cancelled;
+        setTimeout(() => {
+            cancelled = true;
+        }, 0);
+
+        await assert.rejects(
+            buildFocusTreeRenderPayloadFromBaseState({
+                focusTrees: [focusTree],
+                allFocuses: focuses,
+                allInlays: [],
+                focusById,
+                gfxFiles: [],
+                focusIconGfxFileByName: {},
+                gridBox: { position: { x: 0, y: 0 } },
+                xGridSize: 96,
+                yGridSize: 130,
+                focusPositionDocumentVersion: 1,
+                focusPositionActiveFile: 'common/national_focus/test.txt',
+                conditionPresetsByTree: {},
+                hasFocusSelector: false,
+                hasWarningsButton: false,
+                loadDurationMs: 1,
+                deferredAssetLoad: true,
+                localisationIndexReady: true,
+            } as any, isCancelled),
+            /Focus tree render cancelled/,
+        );
+
+        assert.ok(localisationCalls.length < focuses.length);
+    });
+
+    it('bounds full icon asset work before observing cancellation', async () => {
+        const focuses = Array.from({ length: 96 }, (_, index) => ({
+            id: `FOCUS_ICON_${index}`,
+            x: index,
+            y: 0,
+            icon: [{ icon: `GFX_CANCEL_${index}`, condition: { _type: 'and', items: [] } }],
+            prerequisite: [],
+            exclusive: [],
+            inAllowBranch: [],
+            offset: [],
+            file: 'common/national_focus/test.txt',
+            isInCurrentFile: true,
+        }));
+        const focusById = Object.fromEntries(focuses.map(focus => [focus.id, focus]));
+        const gfxFileByIconName = Object.fromEntries(
+            focuses.map((focus, index) => [focus.icon[0].icon, `interface/cancel_${index}.gfx`]),
+        );
+        const focusTree = {
+            id: 'tree_icon_cancel',
+            kind: 'focus',
+            focuses: focusById,
+            inlayWindowRefs: [],
+            inlayWindows: [],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+        let cancelled = false;
+        setTimeout(() => {
+            cancelled = true;
+        }, 0);
+
+        await assert.rejects(
+            buildFocusTreeRenderPayloadFromBaseState({
+                focusTrees: [focusTree],
+                allFocuses: focuses,
+                allInlays: [],
+                focusById,
+                gfxFiles: Object.values(gfxFileByIconName),
+                focusIconGfxFileByName: gfxFileByIconName,
+                focusIconAssetResolution: {
+                    gfxFiles: Object.values(gfxFileByIconName),
+                    gfxFileByIconName,
+                    textureFiles: [],
+                    textureFileByIconName: {},
+                    textureExpiryTokenByIconName: {},
+                    unresolvedIconNames: [],
+                    styleSignature: 'cancel-icons',
+                },
+                focusIconStyleSignature: 'cancel-icons',
+                gridBox: { position: { x: 0, y: 0 } },
+                xGridSize: 96,
+                yGridSize: 130,
+                focusPositionDocumentVersion: 1,
+                focusPositionActiveFile: 'common/national_focus/test.txt',
+                conditionPresetsByTree: {},
+                hasFocusSelector: false,
+                hasWarningsButton: false,
+                loadDurationMs: 1,
+                deferredAssetLoad: false,
+                localisationIndexReady: false,
+            } as any, () => cancelled),
+            /Focus tree render cancelled/,
+        );
+
+        assert.strictEqual(resolvedFileCalls.length, 32);
+    });
+
+    it('bounds inlay asset work before observing cancellation', async () => {
+        const inlay = {
+            id: 'inlay_cancel',
+            file: 'common/focus_inlay_windows/cancel.txt',
+            visible: true,
+            internal: false,
+            conditionExprs: [],
+            scriptedImages: [{
+                id: 'slot_cancel',
+                gfxOptions: Array.from({ length: 64 }, (_, index) => ({
+                    gfxName: `GFX_INLAY_CANCEL_${index}`,
+                    gfxFile: `interface/inlay_cancel_${index}.gfx`,
+                    condition: { _type: 'and', items: [] },
+                })),
+            }],
+            scriptedButtons: [],
+            guiWindow: undefined,
+        };
+        const focusTree = {
+            id: 'tree_inlay_cancel',
+            kind: 'focus',
+            focuses: {},
+            inlayWindowRefs: [],
+            inlayWindows: [inlay],
+            allowBranchOptions: [],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+        };
+        let cancelled = false;
+        setTimeout(() => {
+            cancelled = true;
+        }, 0);
+
+        await assert.rejects(
+            buildFocusTreeRenderPayloadFromBaseState({
+                focusTrees: [focusTree],
+                allFocuses: [],
+                allInlays: [inlay],
+                focusById: {},
+                gfxFiles: [],
+                focusIconGfxFileByName: {},
+                focusIconAssetResolution: {
+                    gfxFiles: [],
+                    gfxFileByIconName: {},
+                    textureFiles: [],
+                    textureFileByIconName: {},
+                    textureExpiryTokenByIconName: {},
+                    unresolvedIconNames: [],
+                    styleSignature: 'cancel-inlays',
+                },
+                focusIconStyleSignature: 'cancel-inlays',
+                gridBox: { position: { x: 0, y: 0 } },
+                xGridSize: 96,
+                yGridSize: 130,
+                focusPositionDocumentVersion: 1,
+                focusPositionActiveFile: 'common/national_focus/test.txt',
+                conditionPresetsByTree: {},
+                hasFocusSelector: false,
+                hasWarningsButton: false,
+                loadDurationMs: 1,
+                deferredAssetLoad: false,
+                localisationIndexReady: false,
+            } as any, () => cancelled),
+            /Focus tree render cancelled/,
+        );
+
+        assert.strictEqual(resolvedFileCalls.length, 32);
     });
 });

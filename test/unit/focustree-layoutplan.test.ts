@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { ConditionItem } from '../../src/hoiformat/condition';
 import {
+    focusTreeLayoutPlanCacheLimit,
     getCachedFocusTreeLayoutPlan,
     invalidateCachedFocusTreeLayoutPlan,
     resolveFocusTreeLayoutPlan,
@@ -97,6 +98,85 @@ describe('focustree layout plan cache', () => {
         const secondPlan = getCachedFocusTreeLayoutPlan(focusTree, exprsB, true);
 
         assert.strictEqual(firstPlan, secondPlan);
+    });
+
+    it('bounds cached condition layouts per tree with least-recently-used eviction', () => {
+        const focusTree = createTree() as any;
+        const firstExprs: ConditionItem[] = [{ scopeName: '', nodeContent: 'custom_condition = 0' }];
+        const firstPlan = getCachedFocusTreeLayoutPlan(focusTree, firstExprs, true);
+        let mostRecentPlan = firstPlan;
+        let mostRecentExprs = firstExprs;
+
+        for (let index = 1; index <= focusTreeLayoutPlanCacheLimit; index += 1) {
+            mostRecentExprs = [{ scopeName: '', nodeContent: `custom_condition = ${index}` }];
+            mostRecentPlan = getCachedFocusTreeLayoutPlan(focusTree, mostRecentExprs, true);
+        }
+
+        assert.strictEqual(getCachedFocusTreeLayoutPlan(focusTree, mostRecentExprs, true), mostRecentPlan);
+        assert.notStrictEqual(getCachedFocusTreeLayoutPlan(focusTree, firstExprs, true), firstPlan);
+    });
+
+    it('propagates allow-branch state through a reverse-ordered dependency chain', () => {
+        const focusCount = 1000;
+        const focuses: Record<string, any> = {};
+        for (let index = focusCount - 1; index >= 0; index -= 1) {
+            focuses[`FOCUS_${index}`] = {
+                id: `FOCUS_${index}`,
+                x: index,
+                y: 0,
+                icon: [],
+                prerequisite: index === 0 ? [] : [[`FOCUS_${index - 1}`]],
+                exclusive: [],
+                inAllowBranch: [],
+                allowBranch: undefined,
+                relativePositionId: undefined,
+                offset: [],
+            };
+        }
+        const focusTree = {
+            id: 'focus_tree_chain',
+            allowBranchOptions: ['FOCUS_0'],
+            conditionExprs: [],
+            isSharedFocues: false,
+            warnings: [],
+            inlayWindows: [],
+            focuses,
+        } as any;
+
+        const plan = getCachedFocusTreeLayoutPlan(focusTree, [], true);
+
+        assert.strictEqual(plan.focusGridBoxItems.length, focusCount);
+        assert.deepStrictEqual(plan.focusPosition.FOCUS_999, { x: 999, y: 0 });
+    });
+
+    it('preserves mixed false and unresolved prerequisite propagation', () => {
+        const focusTree = createTree() as any;
+        focusTree.focuses.FOCUS_GATE.allowBranch = {
+            scopeName: '',
+            nodeContent: 'required_condition = yes',
+        };
+        focusTree.focuses.FOCUS_FALSE = {
+            ...focusTree.focuses.FOCUS_ROOT,
+            id: 'FOCUS_FALSE',
+            prerequisite: [['FOCUS_GATE']],
+        };
+        focusTree.focuses.FOCUS_LATE_FALSE = {
+            ...focusTree.focuses.FOCUS_ROOT,
+            id: 'FOCUS_LATE_FALSE',
+            prerequisite: [['UNKNOWN'], ['FOCUS_FALSE']],
+        };
+        focusTree.focuses.FOCUS_UNRESOLVED = {
+            ...focusTree.focuses.FOCUS_ROOT,
+            id: 'FOCUS_UNRESOLVED',
+            prerequisite: [['FOCUS_GATE', 'UNKNOWN']],
+        };
+
+        const plan = getCachedFocusTreeLayoutPlan(focusTree, [], true);
+
+        assert.ok(!plan.focusGridBoxItems.some(item => item.id === 'FOCUS_GATE'));
+        assert.ok(!plan.focusGridBoxItems.some(item => item.id === 'FOCUS_FALSE'));
+        assert.ok(!plan.focusGridBoxItems.some(item => item.id === 'FOCUS_LATE_FALSE'));
+        assert.ok(plan.focusGridBoxItems.some(item => item.id === 'FOCUS_UNRESOLVED'));
     });
 
     it('recomputes positions after cache invalidation on a mutated tree', () => {

@@ -28,6 +28,12 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const { FocusTreePreviewSession } = require('../../src/previewdef/focustree/previewsession') as typeof import('../../src/previewdef/focustree/previewsession');
 const { createFocusTreeRuntimeState } = require('../../src/previewdef/focustree/runtime') as typeof import('../../src/previewdef/focustree/runtime');
 const { UserError } = require('../../src/util/common') as typeof import('../../src/util/common');
+const localisationIndex = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
+const featureFlags = require('../../src/util/featureflags') as typeof import('../../src/util/featureflags');
+const originalIsLocalisationIndexReady = localisationIndex.isLocalisationIndexReady;
+const originalWhenLocalisationIndexReady = localisationIndex.whenLocalisationIndexReady;
+const originalIsLocalisationIndexEnabled = featureFlags.isLocalisationIndexEnabled;
+const pendingLocalisationReady = new Promise<void>(() => undefined);
 
 function createDocument(version: number): vscode.TextDocument {
     return {
@@ -58,10 +64,18 @@ function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
     };
 }
 
+async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
+    const deadline = Date.now() + 1000;
+    while (!predicate() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.ok(predicate(), message);
+}
+
 function createSession(overrides?: {
     runtimeState?: ReturnType<typeof createFocusTreeRuntimeState>;
     buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean) => Promise<any>;
-    createFullSnapshot?: (baseState: any, previousCache: any) => Promise<any>;
+    createFullSnapshot?: (baseState: any, previousCache: any, isCancelled?: () => boolean) => Promise<any>;
     renderShell?: (documentVersion: number) => string;
     latestDocument?: vscode.TextDocument | undefined;
     deferredHydrationDelayMs?: number;
@@ -140,6 +154,18 @@ function createSession(overrides?: {
 }
 
 describe('focustree preview session', () => {
+    beforeEach(() => {
+        (localisationIndex as any).isLocalisationIndexReady = () => false;
+        (localisationIndex as any).whenLocalisationIndexReady = () => pendingLocalisationReady;
+        (featureFlags as any).isLocalisationIndexEnabled = () => true;
+    });
+
+    afterEach(() => {
+        (localisationIndex as any).isLocalisationIndexReady = originalIsLocalisationIndexReady;
+        (localisationIndex as any).whenLocalisationIndexReady = originalWhenLocalisationIndexReady;
+        (featureFlags as any).isLocalisationIndexEnabled = originalIsLocalisationIndexEnabled;
+    });
+
     after(() => {
         nodeModule._load = originalLoad;
     });
@@ -186,12 +212,32 @@ describe('focustree preview session', () => {
 
         await session.initializePanel(document);
         session.handleWebviewReady();
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            'Expected a snapshot update after the webview became ready.',
+        );
 
         assert.strictEqual(webview.html, 'shell:6');
         assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
         assert.strictEqual(sessionState.lastRenderCache?.snapshotVersion, 1);
         assert.strictEqual(sessionState.webviewReady, true);
+    });
+
+    it('catches cancellation when a pending-ready snapshot is disposed during planning', async () => {
+        const document = createDocument(29);
+        const runtimeState = createFocusTreeRuntimeState();
+        const { session, postMessages } = createSession({ runtimeState });
+
+        await session.initializePanel(document);
+        await waitForCondition(
+            () => runtimeState.pendingReadyBaseState !== undefined,
+            'Expected a pending base state before webview ready.',
+        );
+        session.handleWebviewReady();
+        session.dispose();
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        assert.deepStrictEqual(postMessages, []);
     });
 
     it('adds timing metadata to content update messages', async () => {
@@ -201,7 +247,10 @@ describe('focustree preview session', () => {
 
         await session.initializePanel(document);
         session.handleWebviewReady();
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            'Expected a snapshot update with timing metadata.',
+        );
 
         const contentUpdate = postMessages.find(message => (message as any).command === 'focusTreeContentUpdated') as any;
         assert.ok(contentUpdate);
@@ -256,6 +305,42 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
     });
 
+    it('does not let a stale postMessage completion overwrite the latest render cache', async () => {
+        const firstDocument = createDocument(27);
+        const secondDocument = createDocument(28);
+        const runtimeState = createFocusTreeRuntimeState();
+        runtimeState.webviewReady = true;
+        let resolveFirstPostStarted: (() => void) | undefined;
+        const firstPostStarted = new Promise<void>(resolve => {
+            resolveFirstPostStarted = resolve;
+        });
+        let releaseFirstPost: (() => void) | undefined;
+        const firstPostGate = new Promise<void>(resolve => {
+            releaseFirstPost = resolve;
+        });
+        const { session, webview, postMessages, latestDocument } = createSession({
+            runtimeState,
+            latestDocument: firstDocument,
+        });
+        webview.postMessage = async message => {
+            postMessages.push(message);
+            if ((message as any).documentVersion === firstDocument.version) {
+                resolveFirstPostStarted?.();
+                await firstPostGate;
+            }
+            return true;
+        };
+
+        const firstRefresh = session.refreshDocument(firstDocument);
+        await firstPostStarted;
+        latestDocument.current = secondDocument;
+        const secondRefresh = session.refreshDocument(secondDocument);
+        releaseFirstPost?.();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.strictEqual(runtimeState.lastRenderCache?.focusPositionDocumentVersion, secondDocument.version);
+    });
+
     it('signals cancellation to stale refresh base-state builds', async () => {
         const firstDocument = createDocument(20);
         const secondDocument = createDocument(21);
@@ -299,6 +384,74 @@ describe('focustree preview session', () => {
         assert.ok(!postMessages.some(message => (message as any).documentVersion === firstDocument.version));
     });
 
+    it('signals cancellation to an in-flight base-state build when disposed', async () => {
+        const document = createDocument(24);
+        const runtimeState = createFocusTreeRuntimeState();
+        runtimeState.webviewReady = true;
+        let resolveBuildStarted: (() => void) | undefined;
+        const buildStarted = new Promise<void>(resolve => {
+            resolveBuildStarted = resolve;
+        });
+        let observedCancellation = false;
+        const { session, postMessages } = createSession({
+            runtimeState,
+            latestDocument: document,
+            buildBaseState: async (_document, _assetLoadMode, isCancelled) => {
+                resolveBuildStarted?.();
+                while (!isCancelled?.()) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                observedCancellation = true;
+                throw new UserError('cancelled disposed build');
+            },
+        });
+
+        const refresh = session.refreshDocument(document);
+        await buildStarted;
+        session.dispose();
+        session.dispose();
+        await refresh;
+
+        assert.strictEqual(observedCancellation, true);
+        assert.strictEqual(runtimeState.latestRefreshRequestId, 2);
+        assert.strictEqual(runtimeState.webviewReady, false);
+        assert.deepStrictEqual(postMessages, []);
+    });
+
+    it('signals cancellation to an in-flight full snapshot build when disposed', async () => {
+        const document = createDocument(26);
+        const runtimeState = createFocusTreeRuntimeState();
+        runtimeState.webviewReady = true;
+        let resolveSnapshotStarted: (() => void) | undefined;
+        const snapshotStarted = new Promise<void>(resolve => {
+            resolveSnapshotStarted = resolve;
+        });
+        let observedCancellation = false;
+        const { session, postMessages } = createSession({
+            runtimeState,
+            latestDocument: document,
+            createFullSnapshot: async (_baseState, _previousCache, isCancelled) => {
+                resolveSnapshotStarted?.();
+                while (!isCancelled?.()) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
+                observedCancellation = true;
+                throw new UserError('cancelled disposed snapshot');
+            },
+        });
+
+        const refresh = session.refreshDocument(document);
+        await snapshotStarted;
+        session.dispose();
+        await refresh;
+
+        assert.strictEqual(observedCancellation, true);
+        assert.strictEqual(runtimeState.lastRenderCache, undefined);
+        assert.deepStrictEqual(postMessages, []);
+    });
+
     it('reconciles local edits through deferred snapshot updates before hydration', async () => {
         const document = createDocument(12);
         const requestedModes: Array<'full' | 'deferred'> = [];
@@ -313,7 +466,10 @@ describe('focustree preview session', () => {
 
         const updatedVersion = session.reconcileAfterLocalEdit(document);
         latestDocument.current = document;
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            'Expected the local edit reconciliation snapshot.',
+        );
 
         assert.strictEqual(updatedVersion, 12);
         assert.strictEqual(webview.html, '');
@@ -430,20 +586,72 @@ describe('focustree preview session', () => {
 
         session.handleWebviewReady();
         resolveDeferred?.(createBaseState(document.version, true));
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length === 1,
+            'Expected the deferred snapshot before hydration.',
+        );
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => requestedModes.length === 2,
+            'Expected full hydration to start after the deferred snapshot.',
+        );
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
 
         await new Promise(resolve => setTimeout(resolve, 0));
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
         resolveFull?.(createBaseState(document.version, false));
-        await new Promise(resolve => setTimeout(resolve, 0));
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length === 2,
+            'Expected the hydrated snapshot update.',
+        );
 
         assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 2);
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
+    });
+
+    it('cancels scheduled hydration and localisation-ready refresh when disposed', async () => {
+        const originalIsLocalisationIndexReady = localisationIndex.isLocalisationIndexReady;
+        const originalWhenLocalisationIndexReady = localisationIndex.whenLocalisationIndexReady;
+        let resolveLocalisationReady: (() => void) | undefined;
+        const localisationReady = new Promise<void>(resolve => {
+            resolveLocalisationReady = resolve;
+        });
+        (localisationIndex as any).isLocalisationIndexReady = () => false;
+        (localisationIndex as any).whenLocalisationIndexReady = () => localisationReady;
+
+        try {
+            const document = createDocument(25);
+            const requestedModes: Array<'full' | 'deferred'> = [];
+            const { session, postMessages } = createSession({
+                deferredHydrationDelayMs: 20,
+                buildBaseState: async (_document, assetLoadMode) => {
+                    requestedModes.push(assetLoadMode);
+                    return createBaseState(document.version, assetLoadMode === 'deferred');
+                },
+            });
+
+            await session.initializePanel(document);
+            session.handleWebviewReady();
+            await waitForCondition(
+                () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+                'Expected the deferred snapshot before disposal.',
+            );
+
+            assert.deepStrictEqual(requestedModes, ['deferred']);
+            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+
+            session.dispose();
+            session.dispose();
+            resolveLocalisationReady?.();
+            await new Promise(resolve => setTimeout(resolve, 40));
+
+            assert.deepStrictEqual(requestedModes, ['deferred']);
+            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+        } finally {
+            (localisationIndex as any).isLocalisationIndexReady = originalIsLocalisationIndexReady;
+            (localisationIndex as any).whenLocalisationIndexReady = originalWhenLocalisationIndexReady;
+        }
     });
 
     it('still applies later IDE document refreshes while the initial hydration promise is pending', async () => {
@@ -485,7 +693,10 @@ describe('focustree preview session', () => {
         session.handleWebviewReady();
 
         resolveDeferredInitial?.(createBaseState(initialDocument.version, true));
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await waitForCondition(
+            () => postMessages.some(message => (message as any).documentVersion === initialDocument.version),
+            'Expected the initial deferred snapshot before the later IDE refresh.',
+        );
 
         latestDocument.current = updatedDocument;
         const refreshPromise = session.refreshDocument(updatedDocument);

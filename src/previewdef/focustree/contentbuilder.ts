@@ -31,9 +31,15 @@ import {
 } from './focusrender';
 import { sortFocusWarnings } from './focuslint';
 import { isLocalisationIndexReady } from '../../util/localisationIndex';
+import {
+    focusTreeRenderCancellationBatchSize,
+    throwIfFocusTreeRenderCancelled,
+    yieldToFocusTreeRenderCancellation,
+} from './rendercancellation';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
+const focusTreeAssetRenderBatchSize = 32;
 
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTree[];
@@ -227,7 +233,9 @@ export async function buildFocusTreeRenderBaseState(
 
 export async function buildFocusTreeRenderPayloadFromBaseState(
     baseState: FocusTreeRenderBaseState,
+    isCancelled?: () => boolean,
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
+    throwIfFocusTreeRenderCancelled(isCancelled);
     const focusIconAssetResolution = baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution();
     const focusIconStyleSignature = baseState.focusIconStyleSignature ?? focusIconAssetResolution.styleSignature;
     const styleTable = new StyleTable();
@@ -237,7 +245,13 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const focusRenderStart = Date.now();
     const focusIconStyleStart = Date.now();
     if (baseState.deferredAssetLoad) {
-        prepareDeferredFocusIconStyles(baseState.allFocuses, styleTable, baseState.xGridSize, baseState.yGridSize);
+        await prepareDeferredFocusIconStyles(
+            baseState.allFocuses,
+            styleTable,
+            baseState.xGridSize,
+            baseState.yGridSize,
+            isCancelled,
+        );
     } else {
         await prepareFocusIconStyles(
             baseState.allFocuses,
@@ -245,16 +259,28 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             focusIconAssetResolution,
             baseState.xGridSize,
             baseState.yGridSize,
+            isCancelled,
         );
     }
+    throwIfFocusTreeRenderCancelled(isCancelled);
     const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
     const localisationResolveStart = Date.now();
-    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses);
+    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(
+        baseState.allFocuses,
+        undefined,
+        isCancelled,
+    );
     refreshUnsupportedLocalisationWarnings(baseState.focusTrees, focusLocalizationTextById);
+    throwIfFocusTreeRenderCancelled(isCancelled);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
     const focusTemplateRenderStart = Date.now();
     const renderedFocus: Record<string, string> = {};
-    for (const focus of baseState.allFocuses) {
+    for (let index = 0; index < baseState.allFocuses.length; index += 1) {
+        if (index > 0 && index % focusTreeRenderCancellationBatchSize === 0) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+
+        const focus = baseState.allFocuses[index];
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,
             styleTable,
@@ -272,13 +298,23 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const renderedInlayWindows: Record<string, string> = {};
     if (!baseState.deferredAssetLoad) {
         const inlayStyleStart = Date.now();
-        await prepareInlayGfxStyles(baseState.focusTrees, styleTable);
+        await prepareInlayGfxStyles(baseState.focusTrees, styleTable, isCancelled);
+        throwIfFocusTreeRenderCancelled(isCancelled);
         inlayStyleDurationMs = Date.now() - inlayStyleStart;
-        await Promise.all(baseState.allInlays.map(async (inlay) => {
-            renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
-        }));
+        for (let start = 0; start < baseState.allInlays.length; start += focusTreeAssetRenderBatchSize) {
+            const inlays = baseState.allInlays.slice(start, start + focusTreeAssetRenderBatchSize);
+            await Promise.all(inlays.map(async inlay => {
+                renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
+            }));
+            if (start + focusTreeAssetRenderBatchSize < baseState.allInlays.length) {
+                await yieldToFocusTreeRenderCancellation(isCancelled);
+            } else {
+                throwIfFocusTreeRenderCancelled(isCancelled);
+            }
+        }
     }
     const inlayRenderDurationMs = Date.now() - inlayRenderStart;
+    throwIfFocusTreeRenderCancelled(isCancelled);
 
     return {
         payload: {
@@ -722,8 +758,13 @@ function getInlayGfxStyleKey(gfxName: string | undefined, gfxFile: string | unde
     return 'inlay-gfx-' + normalizeForStyle((gfxFile ?? 'missing') + '-' + (gfxName ?? 'missing'));
 }
 
-async function prepareInlayGfxStyles(focusTrees: FocusTree[], styleTable: StyleTable): Promise<void> {
+async function prepareInlayGfxStyles(
+    focusTrees: FocusTree[],
+    styleTable: StyleTable,
+    isCancelled?: () => boolean,
+): Promise<void> {
     const processed = new Set<string>();
+    const options: Array<{ key: string; gfxName: string; gfxFile: string | undefined }> = [];
     for (const focusTree of focusTrees) {
         for (const inlay of focusTree.inlayWindows) {
             for (const slot of inlay.scriptedImages) {
@@ -733,39 +774,51 @@ async function prepareInlayGfxStyles(focusTrees: FocusTree[], styleTable: StyleT
                         continue;
                     }
                     processed.add(key);
-
-                    if (!option.gfxFile) {
-                        styleTable.style(key, () => `
-                            width: 96px;
-                            height: 96px;
-                            background: rgba(127, 127, 127, 0.35);
-                            border: 1px dashed var(--vscode-panel-border);
-                        `);
-                        continue;
-                    }
-
-                    const sprite = await getSpriteByGfxNameFromResolvedFiles(option.gfxName, [option.gfxFile]);
-                    const frame = sprite?.frames[0];
-                    if (!frame) {
-                        styleTable.style(key, () => `
-                            width: 96px;
-                            height: 96px;
-                            background: rgba(127, 127, 127, 0.35);
-                            border: 1px dashed var(--vscode-panel-border);
-                        `);
-                        continue;
-                    }
-
-                    styleTable.style(key, () => `
-                        width: ${Math.min(frame.width, 144)}px;
-                        height: ${Math.min(frame.height, 144)}px;
-                        background-image: url(${frame.uri});
-                        background-repeat: no-repeat;
-                        background-position: center;
-                        background-size: contain;
-                    `);
+                    options.push({ key, gfxName: option.gfxName, gfxFile: option.gfxFile });
                 }
             }
+        }
+    }
+
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const applyMissingStyle = (key: string) => {
+        styleTable.style(key, () => `
+            width: 96px;
+            height: 96px;
+            background: rgba(127, 127, 127, 0.35);
+            border: 1px dashed var(--vscode-panel-border);
+        `);
+    };
+
+    for (let start = 0; start < options.length; start += focusTreeAssetRenderBatchSize) {
+        const optionBatch = options.slice(start, start + focusTreeAssetRenderBatchSize);
+        await Promise.all(optionBatch.map(async option => {
+            if (!option.gfxFile) {
+                applyMissingStyle(option.key);
+                return;
+            }
+
+            const sprite = await getSpriteByGfxNameFromResolvedFiles(option.gfxName, [option.gfxFile]);
+            const frame = sprite?.frames[0];
+            if (!frame) {
+                applyMissingStyle(option.key);
+                return;
+            }
+
+            styleTable.style(option.key, () => `
+                width: ${Math.min(frame.width, 144)}px;
+                height: ${Math.min(frame.height, 144)}px;
+                background-image: url(${frame.uri});
+                background-repeat: no-repeat;
+                background-position: center;
+                background-size: contain;
+            `);
+        }));
+
+        if (start + focusTreeAssetRenderBatchSize < options.length) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        } else {
+            throwIfFocusTreeRenderCancelled(isCancelled);
         }
     }
 }
@@ -878,6 +931,7 @@ async function prepareFocusIconStyles(
     focusIconAssetResolution: FocusIconAssetResolution,
     xGridSize: number,
     yGridSize: number,
+    isCancelled?: () => boolean,
 ): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
@@ -892,41 +946,57 @@ async function prepareFocusIconStyles(
         unresolvedGfxNames: [] as string[],
     };
 
-    await Promise.all(uniqueIconNames.map(async iconName => {
-        const iconResolution = await resolveFocusIcon(
-            iconName,
-            focusIconAssetResolution.gfxFileByIconName[iconName],
-            unresolvedIconNames.has(iconName),
-        );
-        if (iconResolution.kind === 'resolved-files') {
-            iconDiagnostics.resolvedFromResolvedFilesCount += 1;
+    for (let start = 0; start < uniqueIconNames.length; start += focusTreeAssetRenderBatchSize) {
+        const iconNames = uniqueIconNames.slice(start, start + focusTreeAssetRenderBatchSize);
+        await Promise.all(iconNames.map(async iconName => {
+            const iconResolution = await resolveFocusIcon(
+                iconName,
+                focusIconAssetResolution.gfxFileByIconName[iconName],
+                unresolvedIconNames.has(iconName),
+            );
+            if (iconResolution.kind === 'resolved-files') {
+                iconDiagnostics.resolvedFromResolvedFilesCount += 1;
+            } else {
+                iconDiagnostics.defaultFallbackCount += 1;
+                iconDiagnostics.unresolvedGfxNames.push(iconName);
+            }
+
+            const displaySize = iconResolution.image
+                ? fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
+                : { width: focusPlaceholderSize, height: focusPlaceholderSize };
+
+            styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+                width: ${displaySize.width}px;
+                height: ${displaySize.height}px;
+                ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
+            `);
+        }));
+        if (start + focusTreeAssetRenderBatchSize < uniqueIconNames.length) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
         } else {
-            iconDiagnostics.defaultFallbackCount += 1;
-            iconDiagnostics.unresolvedGfxNames.push(iconName);
+            throwIfFocusTreeRenderCancelled(isCancelled);
         }
-
-        const displaySize = iconResolution.image
-            ? fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
-            : { width: focusPlaceholderSize, height: focusPlaceholderSize };
-
-        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
-            width: ${displaySize.width}px;
-            height: ${displaySize.height}px;
-            ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
-        `);
-    }));
+    }
 
     const uniqueOverlayNames = Array.from(new Set(
         focuses.map(focus => focus.overlay).filter((overlayName): overlayName is string => !!overlayName),
     ));
-    await Promise.all(uniqueOverlayNames.map(async overlayName => {
-        const gfxFile = focusIconAssetResolution.gfxFileByIconName[overlayName];
-        const overlaySprite = gfxFile
-            ? await getSpriteByGfxNameFromResolvedFiles(overlayName, [gfxFile])
-            : undefined;
-        styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () =>
-            overlaySprite ? `background-image: url(${overlaySprite.image.uri});` : '');
-    }));
+    for (let start = 0; start < uniqueOverlayNames.length; start += focusTreeAssetRenderBatchSize) {
+        const overlayNames = uniqueOverlayNames.slice(start, start + focusTreeAssetRenderBatchSize);
+        await Promise.all(overlayNames.map(async overlayName => {
+            const gfxFile = focusIconAssetResolution.gfxFileByIconName[overlayName];
+            const overlaySprite = gfxFile
+                ? await getSpriteByGfxNameFromResolvedFiles(overlayName, [gfxFile])
+                : undefined;
+            styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () =>
+                overlaySprite ? `background-image: url(${overlaySprite.image.uri});` : '');
+        }));
+        if (start + focusTreeAssetRenderBatchSize < uniqueOverlayNames.length) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        } else {
+            throwIfFocusTreeRenderCancelled(isCancelled);
+        }
+    }
 
     debug('Focus tree icon diagnostics', {
         resolvedFromResolvedFilesCount: iconDiagnostics.resolvedFromResolvedFilesCount,
@@ -941,12 +1011,13 @@ async function prepareFocusIconStyles(
     `);
 }
 
-function prepareDeferredFocusIconStyles(
+async function prepareDeferredFocusIconStyles(
     focuses: readonly Focus[],
     styleTable: StyleTable,
     xGridSize: number,
     yGridSize: number,
-): void {
+    isCancelled?: () => boolean,
+): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
@@ -954,19 +1025,38 @@ function prepareDeferredFocusIconStyles(
         focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
     ));
 
-    uniqueIconNames.forEach(iconName => {
-        styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
-            width: ${focusPlaceholderSize}px;
-            height: ${focusPlaceholderSize}px;
-            background: grey;
-        `);
-    });
+    for (let start = 0; start < uniqueIconNames.length; start += focusTreeRenderCancellationBatchSize) {
+        uniqueIconNames
+            .slice(start, start + focusTreeRenderCancellationBatchSize)
+            .forEach(iconName => {
+                styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+                    width: ${focusPlaceholderSize}px;
+                    height: ${focusPlaceholderSize}px;
+                    background: grey;
+                `);
+            });
+        if (start + focusTreeRenderCancellationBatchSize < uniqueIconNames.length) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        } else {
+            throwIfFocusTreeRenderCancelled(isCancelled);
+        }
+    }
 
-    Array.from(new Set(
+    const uniqueOverlayNames = Array.from(new Set(
         focuses.map(focus => focus.overlay).filter((overlayName): overlayName is string => !!overlayName),
-    )).forEach(overlayName => {
-        styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () => '');
-    });
+    ));
+    for (let start = 0; start < uniqueOverlayNames.length; start += focusTreeRenderCancellationBatchSize) {
+        uniqueOverlayNames
+            .slice(start, start + focusTreeRenderCancellationBatchSize)
+            .forEach(overlayName => {
+                styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () => '');
+            });
+        if (start + focusTreeRenderCancellationBatchSize < uniqueOverlayNames.length) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        } else {
+            throwIfFocusTreeRenderCancelled(isCancelled);
+        }
+    }
 
     styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
         width: ${focusPlaceholderSize}px;

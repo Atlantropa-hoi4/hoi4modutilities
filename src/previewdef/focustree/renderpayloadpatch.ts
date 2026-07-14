@@ -5,6 +5,11 @@ import { recordPerf } from "../../util/perf";
 import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
 import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
+import {
+    focusTreeRenderCancellationBatchSize,
+    throwIfFocusTreeRenderCancelled,
+    yieldToFocusTreeRenderCancellation,
+} from "./rendercancellation";
 import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
 
 export interface FocusTreeRenderCache {
@@ -56,15 +61,15 @@ const fullRenderChangedSlots: FocusTreeContentSlot[] = [
 export function createFocusTreeRenderCache(
     payload: FocusTreeRenderPayload,
     previousVersion: number = 0,
-): FocusTreeRenderCache {
-    const metadata = deriveRenderStateMetadata(
+    metadata: DerivedRenderStateMetadata = deriveRenderStateMetadata(
         payload.focusTrees,
         payload.xGridSize,
         payload.yGridSize,
         payload.gfxFiles,
         payload.focusIconGfxFileByName,
         payload.focusIconStyleSignature,
-    );
+    ),
+): FocusTreeRenderCache {
     return {
         snapshotVersion: previousVersion + 1,
         selectedTreeId: payload.focusTrees[0]?.id,
@@ -91,7 +96,34 @@ export function createFullFocusTreeRenderUpdate(
     payload: FocusTreeRenderPayload,
     previousCache?: FocusTreeRenderCache,
 ): { update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache } {
-    const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion);
+    return createFullFocusTreeRenderUpdateWithMetadata(payload, previousCache);
+}
+
+export async function createFullFocusTreeRenderUpdateWithCancellation(
+    payload: FocusTreeRenderPayload,
+    previousCache: FocusTreeRenderCache | undefined,
+    isCancelled?: () => boolean,
+): Promise<{ update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache }> {
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const metadata = await deriveRenderStateMetadataWithCancellation(
+        payload.focusTrees,
+        payload.xGridSize,
+        payload.yGridSize,
+        payload.gfxFiles,
+        payload.focusIconGfxFileByName,
+        payload.focusIconStyleSignature,
+        isCancelled,
+    );
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    return createFullFocusTreeRenderUpdateWithMetadata(payload, previousCache, metadata);
+}
+
+function createFullFocusTreeRenderUpdateWithMetadata(
+    payload: FocusTreeRenderPayload,
+    previousCache?: FocusTreeRenderCache,
+    metadata?: DerivedRenderStateMetadata,
+): { update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache } {
+    const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion, metadata);
     recordFocusTreePayloadSize('full', payload.deferredAssetLoad, {
         focusTrees: payload.focusTrees,
         renderedFocus: payload.renderedFocus,
@@ -126,17 +158,21 @@ export function createFullFocusTreeRenderUpdate(
 export async function createFocusTreeRenderUpdate(
     previous: FocusTreeRenderCache | undefined,
     nextBaseState: FocusTreeRenderBaseState,
+    isCancelled?: () => boolean,
 ): Promise<FocusTreeRenderUpdatePlan> {
-    const nextMetadata = deriveRenderStateMetadata(
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const nextMetadata = await deriveRenderStateMetadataWithCancellation(
         nextBaseState.focusTrees,
         nextBaseState.xGridSize,
         nextBaseState.yGridSize,
         nextBaseState.gfxFiles,
         nextBaseState.focusIconGfxFileByName,
         nextBaseState.focusIconStyleSignature,
+        isCancelled,
     );
 
     if (!previous || shouldUseFullRender(previous, nextBaseState, nextMetadata)) {
+        throwIfFocusTreeRenderCancelled(isCancelled);
         return { kind: 'full' };
     }
 
@@ -149,11 +185,16 @@ export async function createFocusTreeRenderUpdate(
 
     const focusSignatureDiff = diffSignatureMap(previous.focusRenderSignatures, nextMetadata.focusRenderSignatures);
     const inlaySignatureDiff = diffSignatureMap(previous.inlayRenderSignatures, nextMetadata.inlayRenderSignatures);
+    throwIfFocusTreeRenderCancelled(isCancelled);
     if (inlaySignatureDiff.changedKeys.length > 0 || inlaySignatureDiff.removedKeys.length > 0) {
         return { kind: 'full' };
     }
 
-    const renderedFocusPatch = await renderChangedFocusHtmlMap(nextBaseState, focusSignatureDiff.changedKeys);
+    const renderedFocusPatch = await renderChangedFocusHtmlMap(
+        nextBaseState,
+        focusSignatureDiff.changedKeys,
+        isCancelled,
+    );
 
     const changedSlots = new Set<FocusTreeContentSlot>();
     if (changedTreeIds.length > 0) {
@@ -192,6 +233,7 @@ export async function createFocusTreeRenderUpdate(
         focusCount: focusSignatureDiff.changedKeys.length,
         inlayCount: 0,
     });
+    throwIfFocusTreeRenderCancelled(isCancelled);
 
     return {
         kind: 'partial',
@@ -333,6 +375,84 @@ function deriveRenderStateMetadata(
         focusRenderSignatures,
         inlayRenderSignatures,
         styleDependencySignature: JSON.stringify(styleDependencyInput),
+    };
+}
+
+async function deriveRenderStateMetadataWithCancellation(
+    focusTrees: FocusTree[],
+    xGridSize: number,
+    yGridSize: number,
+    gfxFiles: readonly string[] = [],
+    focusIconGfxFileByName: Readonly<Record<string, string>> = {},
+    focusIconStyleSignature: string = '',
+    isCancelled?: () => boolean,
+): Promise<DerivedRenderStateMetadata> {
+    const treePatchSignatures: Record<string, string> = {};
+    const treeStructureSignatures: Record<string, string> = {};
+    const focusRenderSignatures: Record<string, string> = {};
+    const inlayRenderSignatures: Record<string, string> = {};
+    const styleDependencyInput: unknown[] = [
+        xGridSize,
+        yGridSize,
+        [...gfxFiles].sort(),
+        Object.entries(focusIconGfxFileByName).sort(([left], [right]) => left.localeCompare(right)),
+        focusIconStyleSignature,
+    ];
+    let processedItemCount = 0;
+
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    for (const tree of focusTrees) {
+        const treeFocusCount = Object.keys(tree.focuses).length;
+        if (treeFocusCount >= focusTreeRenderCancellationBatchSize) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+        treePatchSignatures[tree.id] = JSON.stringify(toTreePatchComparable(tree));
+        if (treeFocusCount >= focusTreeRenderCancellationBatchSize) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+        treeStructureSignatures[tree.id] = JSON.stringify(toTreeStructureComparable(tree));
+        throwIfFocusTreeRenderCancelled(isCancelled);
+
+        const sortedFocuses = Object.values(tree.focuses).sort((left, right) => left.id.localeCompare(right.id));
+        for (const focus of sortedFocuses) {
+            if (processedItemCount > 0 && processedItemCount % focusTreeRenderCancellationBatchSize === 0) {
+                await yieldToFocusTreeRenderCancellation(isCancelled);
+            }
+            processedItemCount += 1;
+
+            focusRenderSignatures[focus.id] = JSON.stringify(toFocusRenderComparable(focus));
+            styleDependencyInput.push([
+                'focus',
+                focus.id,
+                focus.icon.map(icon => [icon.icon, icon.condition]),
+                focus.overlay,
+            ]);
+        }
+
+        for (const inlay of tree.inlayWindows) {
+            if (processedItemCount > 0 && processedItemCount % focusTreeRenderCancellationBatchSize === 0) {
+                await yieldToFocusTreeRenderCancellation(isCancelled);
+            }
+            processedItemCount += 1;
+
+            inlayRenderSignatures[inlay.id] = JSON.stringify(toInlayRenderComparable(inlay));
+            styleDependencyInput.push([
+                'inlay',
+                inlay.id,
+                inlay.scriptedImages.map(slot => slot.gfxOptions.map(option => [option.gfxFile, option.gfxName, option.condition])),
+            ]);
+        }
+    }
+
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const styleDependencySignature = JSON.stringify(styleDependencyInput);
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    return {
+        treePatchSignatures,
+        treeStructureSignatures,
+        focusRenderSignatures,
+        inlayRenderSignatures,
+        styleDependencySignature,
     };
 }
 
@@ -529,14 +649,24 @@ function mergeStringMap(
 async function renderChangedFocusHtmlMap(
     baseState: FocusTreeRenderBaseState,
     focusIds: readonly string[],
+    isCancelled?: () => boolean,
 ): Promise<Record<string, string>> {
     const styleTable = new StyleTable();
     const renderedFocus: Record<string, string> = {};
     const focuses = focusIds
         .map(focusId => baseState.focusById[focusId])
         .filter((focus): focus is Focus => !!focus);
-    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(focuses);
-    for (const focus of focuses) {
+    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(
+        focuses,
+        undefined,
+        isCancelled,
+    );
+    for (let index = 0; index < focuses.length; index += 1) {
+        if (index > 0 && index % focusTreeRenderCancellationBatchSize === 0) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+
+        const focus = focuses[index];
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,
             styleTable,
@@ -547,5 +677,6 @@ async function renderChangedFocusHtmlMap(
         ).replace(/\s\s+/g, ' ');
     }
 
+    throwIfFocusTreeRenderCancelled(isCancelled);
     return renderedFocus;
 }

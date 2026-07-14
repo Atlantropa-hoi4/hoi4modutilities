@@ -102,9 +102,29 @@ describe('focustree focus render', () => {
         });
     });
 
-    it('exposes a ready-only localization resolver for preview rendering', async () => {
-        const result = await resolveFocusLocalizationTextByIdIfReady([{ id: 'FOCUS_A', text: undefined }] as any);
+    it('omits unresolved keys from ready-only preview localization', async () => {
+        const result = await resolveFocusLocalizationTextByIdIfReady(
+            [{ id: 'FOCUS_A', text: undefined }] as any,
+            key => key,
+        );
 
         assert.deepStrictEqual(result, {});
     });
+
+    it('resolves a ready localization batch without per-focus async fan-out', async () => {
+        const focuses = Array.from({ length: 500 }, (_, index) => ({
+            id: `FOCUS_${index}`,
+            text: undefined,
+        }));
+        let resolveCount = 0;
+
+        const result = await resolveFocusLocalizationTextByIdIfReady(focuses as any, key => {
+            resolveCount += 1;
+            return key === 'FOCUS_499' ? 'Last focus' : key;
+        });
+
+        assert.strictEqual(resolveCount, focuses.length);
+        assert.deepStrictEqual(result, { FOCUS_499: 'Last focus' });
+    });
+
 });

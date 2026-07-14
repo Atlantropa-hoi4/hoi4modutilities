@@ -23,6 +23,7 @@ export interface FocusTreeResolvedLayoutPlan {
 }
 
 const focusTreeLayoutPlanCache = new WeakMap<FocusTree, Map<string, FocusTreeLayoutPlan>>();
+export const focusTreeLayoutPlanCacheLimit = 16;
 
 export function getCachedFocusTreeLayoutPlan(
     focusTree: FocusTree,
@@ -33,6 +34,8 @@ export function getCachedFocusTreeLayoutPlan(
     const cachedPlans = focusTreeLayoutPlanCache.get(focusTree);
     const cachedPlan = cachedPlans?.get(cacheKey);
     if (cachedPlan) {
+        cachedPlans!.delete(cacheKey);
+        cachedPlans!.set(cacheKey, cachedPlan);
         return cachedPlan;
     }
 
@@ -43,6 +46,12 @@ export function getCachedFocusTreeLayoutPlan(
         focusTreeLayoutPlanCache.set(focusTree, nextCachedPlans);
     }
     nextCachedPlans.set(cacheKey, nextPlan);
+    if (nextCachedPlans.size > focusTreeLayoutPlanCacheLimit) {
+        const leastRecentlyUsedKey = nextCachedPlans.keys().next().value;
+        if (leastRecentlyUsedKey !== undefined) {
+            nextCachedPlans.delete(leastRecentlyUsedKey);
+        }
+    }
     return nextPlan;
 }
 
@@ -128,38 +137,64 @@ function buildAllowBranchOptionsValue(
     }
 
     const focuses = focusTree.focuses;
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const key in focuses) {
-            const focus = focuses[key];
-            if (focus.prerequisite.length === 0 || focus.id in allowBranchOptionsValue) {
+    const dependentFocusIdsByPrerequisite = new Map<string, Set<string>>();
+    for (const focus of Object.values(focuses)) {
+        for (const prerequisiteId of new Set(focus.prerequisite.flat())) {
+            const dependentFocusIds = dependentFocusIdsByPrerequisite.get(prerequisiteId) ?? new Set<string>();
+            dependentFocusIds.add(focus.id);
+            dependentFocusIdsByPrerequisite.set(prerequisiteId, dependentFocusIds);
+        }
+    }
+
+    const resolvedFocusIds = Object.keys(allowBranchOptionsValue);
+    for (const focus of Object.values(focuses)) {
+        if (focus.id in allowBranchOptionsValue || focus.prerequisite.length === 0) {
+            continue;
+        }
+
+        const resolvedValue = evaluateAllowBranchPrerequisites(focus, allowBranchOptionsValue);
+        if (resolvedValue !== undefined) {
+            allowBranchOptionsValue[focus.id] = resolvedValue;
+            resolvedFocusIds.push(focus.id);
+        }
+    }
+
+    for (let resolvedIndex = 0; resolvedIndex < resolvedFocusIds.length; resolvedIndex += 1) {
+        const resolvedFocusId = resolvedFocusIds[resolvedIndex];
+        for (const dependentFocusId of dependentFocusIdsByPrerequisite.get(resolvedFocusId) ?? []) {
+            const dependentFocus = focuses[dependentFocusId];
+            if (!dependentFocus || dependentFocusId in allowBranchOptionsValue) {
                 continue;
             }
 
-            let allow = true;
-            for (const andPrerequests of focus.prerequisite) {
-                if (andPrerequests.length === 0) {
-                    continue;
-                }
-
-                allow = allow && andPrerequests.some(prerequisiteId => allowBranchOptionsValue[prerequisiteId] === true);
-                const deny = andPrerequests.every(prerequisiteId => allowBranchOptionsValue[prerequisiteId] === false);
-                if (deny) {
-                    allowBranchOptionsValue[focus.id] = false;
-                    changed = true;
-                    break;
-                }
-            }
-
-            if (allow) {
-                allowBranchOptionsValue[focus.id] = true;
-                changed = true;
+            const resolvedValue = evaluateAllowBranchPrerequisites(dependentFocus, allowBranchOptionsValue);
+            if (resolvedValue !== undefined) {
+                allowBranchOptionsValue[dependentFocusId] = resolvedValue;
+                resolvedFocusIds.push(dependentFocusId);
             }
         }
     }
 
     return allowBranchOptionsValue;
+}
+
+function evaluateAllowBranchPrerequisites(
+    focus: Focus,
+    allowBranchOptionsValue: Readonly<Record<string, boolean>>,
+): boolean | undefined {
+    let everyGroupAllowed = true;
+    for (const prerequisiteGroup of focus.prerequisite) {
+        if (prerequisiteGroup.length === 0 || prerequisiteGroup.some(id => allowBranchOptionsValue[id] === true)) {
+            continue;
+        }
+
+        everyGroupAllowed = false;
+        if (prerequisiteGroup.every(id => allowBranchOptionsValue[id] === false)) {
+            return false;
+        }
+    }
+
+    return everyGroupAllowed ? true : undefined;
 }
 
 function focusToGridItem(

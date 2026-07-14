@@ -100,13 +100,38 @@ export async function getLocalisedTextQuick(localisationKey: string | undefined)
 }
 
 export function getLocalisedTextQuickIfReady(localisationKey: string | undefined): string | undefined {
-    const previewLocalisation = getConfiguration().previewLocalisation;
-    if (previewLocalisation) {
-        return getLocalisedTextIfReady(localisationKey, localeISOMapping[previewLocalisation] ?? vscode.env.language, {
-            allowAvailableWorkspaceLanguageFallback: false,
-        });
+    const resolveText = createLocalisedTextQuickIfReadyResolver();
+    return resolveText ? resolveText(localisationKey) : localisationKey;
+}
+
+export function createLocalisedTextQuickIfReadyResolver(
+    getCurrentConfiguration: typeof getConfiguration = getConfiguration,
+): (localisationKey: string | undefined) => string | undefined {
+    const configuration = getCurrentConfiguration();
+    if (!isLocalisationIndexEnabled(configuration.featureFlags)) {
+        return localisationKey => localisationKey;
     }
-    return getLocalisedTextIfReady(localisationKey, vscode.env.language);
+
+    const previewLocalisation = configuration.previewLocalisation;
+    if (previewLocalisation) {
+        const language = localeISOMapping[previewLocalisation] ?? vscode.env.language;
+        const options = { allowAvailableWorkspaceLanguageFallback: false };
+        return localisationKey => resolveLocalisedTextFromIndex(
+            localisationKey,
+            language,
+            globalLocalisationIndex,
+            workspaceLocalisationIndex,
+            options,
+        );
+    }
+
+    const language = vscode.env.language;
+    return localisationKey => resolveLocalisedTextFromIndex(
+        localisationKey,
+        language,
+        globalLocalisationIndex,
+        workspaceLocalisationIndex,
+    );
 }
 
 export async function getLocalisedText(

@@ -1,4 +1,9 @@
 import { Focus } from './schema';
+import {
+    focusTreeRenderCancellationBatchSize,
+    throwIfFocusTreeRenderCancelled,
+    yieldToFocusTreeRenderCancellation,
+} from './rendercancellation';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
 import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 
@@ -37,6 +42,17 @@ async function tryGetLocalizedTextAsync(key: string): Promise<string | null | un
         return getLocalisedTextQuick(key);
     } catch {
         return null;
+    }
+}
+
+function tryCreateReadyFocusLocalizationResolver(): ((key: string) => string | null | undefined) | undefined {
+    try {
+        const { createLocalisedTextQuickIfReadyResolver } = require('../../util/localisationIndex') as {
+            createLocalisedTextQuickIfReadyResolver: () => (text: string) => string | null | undefined;
+        };
+        return createLocalisedTextQuickIfReadyResolver();
+    } catch {
+        return undefined;
     }
 }
 
@@ -96,11 +112,28 @@ export async function resolveFocusLocalizationTextById(
 
 export async function resolveFocusLocalizationTextByIdIfReady(
     focuses: readonly Pick<Focus, 'id' | 'text'>[],
+    resolveText: ((key: string) => string | null | undefined) | undefined = tryCreateReadyFocusLocalizationResolver(),
+    isCancelled?: () => boolean,
 ): Promise<Record<string, string>> {
-    return resolveFocusLocalizationTextById(
-        focuses,
-        key => Promise.resolve(tryGetLocalizedText(key)),
-    );
+    if (!resolveText) {
+        return {};
+    }
+
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const textById: Record<string, string> = {};
+    for (let index = 0; index < focuses.length; index += 1) {
+        if (index > 0 && index % focusTreeRenderCancellationBatchSize === 0) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+
+        const focus = focuses[index];
+        const text = resolveFocusLocalizationText(focus, resolveText);
+        if (text) {
+            textById[focus.id] = text;
+        }
+    }
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    return textById;
 }
 
 export function renderFocusHtmlTemplate(
