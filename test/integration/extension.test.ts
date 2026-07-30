@@ -149,12 +149,24 @@ suite('extension smoke', () => {
         await vscode.window.showTextDocument(document);
         const metadata = collectTechnologyFileMetadata(parseHoi4File(original), 'common/technologies/undo.txt');
         const folder = metadata.technologies[0].folders[0];
-        const result = buildTechnologyPositionTextChanges(original, 'common/technologies/undo.txt', [{
+        const result = buildTechnologyPositionTextChanges(original, 'common/technologies/undo.txt', 'infantry', [{
             technologyId: 'root',
             editKey: folder.editKey,
             x: 4,
             y: 5,
-        }]);
+        }], {
+            availableTreeRootsByFolder: { infantry: ['root'] },
+            gridLayoutsByFolder: {
+                infantry: {
+                    root: {
+                        format: 'up',
+                        gridSize: { width: 500, height: 500 },
+                        slotSize: { width: 50, height: 50 },
+                        positionsByTechnologyId: { root: { x: 1, y: 2 } },
+                    },
+                },
+            },
+        });
         const workspaceEdit = buildTechnologyWorkspaceEdit(document, result);
         assert.ifError(workspaceEdit.error);
         assert.ok(workspaceEdit.edit);

@@ -64,6 +64,14 @@ export type TechnologyEditMessage =
 
 export interface TechnologyEditRenderContext {
     availableTreeRootsByFolder: Record<string, string[]>;
+    gridLayoutsByFolder: Record<string, Record<string, TechnologyGridEditLayout>>;
+}
+
+export interface TechnologyGridEditLayout {
+    format: 'up' | 'down' | 'left' | 'right' | 'center';
+    gridSize: { width: number; height: number };
+    slotSize: { width: number; height: number };
+    positionsByTechnologyId: Record<string, { x: number; y: number }>;
 }
 
 export function createTechnologyFolderEditKey(

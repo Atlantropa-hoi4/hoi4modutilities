@@ -7,10 +7,11 @@ import { StyleTable } from "../src/util/styletable";
 import { ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
 import { DivDropdown } from "./util/dropdown";
 import { findTechnologyXorGroups, getAllowedTechnologies, TechnologyXorGroups } from "./technology/conditionfilter";
-import { getMovedTechnologyPosition, getTechnologyDoubleClickCreateParent, getTechnologyGridDelta, hasTechnologyDragPassedThreshold } from "../src/previewdef/technology/draginteraction";
+import { getMovedTechnologyPosition, getTechnologyDoubleClickCreateParent, getTechnologyGridDelta, getTechnologyGridGeometry, hasTechnologyDragPassedThreshold, registerTechnologyPointerGesture } from "../src/previewdef/technology/draginteraction";
 import type { TechnologyPositionEdit } from "../src/previewdef/technology/editcommon";
 import { normalizePreviewScale } from "../src/util/previewscale";
 import { vscode } from "./util/vscode";
+import { feLocalize } from "./util/i18n";
 
 type TechnologyLinkType = 'path' | 'xor';
 
@@ -81,13 +82,15 @@ function updateTechnologyEditStatus(message?: string) {
     }
     status.textContent = message
         ?? (activeRequestId
-            ? 'Applying…'
+            ? feLocalize('TODO', 'Applying…')
             : pendingLink
-                ? `Select ${pendingLink.type === 'path' ? 'Path' : 'XOR'} target`
+                ? pendingLink.type === 'path'
+                    ? feLocalize('TODO', 'Select Path target')
+                    : feLocalize('TODO', 'Select XOR target')
                 : pendingCreate
-                    ? 'Select an empty grid position'
+                    ? feLocalize('TODO', 'Select an empty grid position')
                     : technologyEditMode
-                        ? `${selectedTechnologyIds.size} selected`
+                        ? feLocalize('TODO', '{0} selected', selectedTechnologyIds.size)
                         : '');
 }
 
@@ -223,22 +226,22 @@ function ensureTechnologyContextMenu(): HTMLDivElement {
         });
         menu!.appendChild(button);
     };
-    addButton('Link Path', technologyId => {
+    addButton(feLocalize('TODO', 'Link Path'), technologyId => {
         pendingLink = { type: 'path', sourceId: technologyId };
         pendingCreate = undefined;
         updateTechnologyEditStatus();
     });
-    addButton('Link XOR', technologyId => {
+    addButton(feLocalize('TODO', 'Link XOR'), technologyId => {
         pendingLink = { type: 'xor', sourceId: technologyId };
         pendingCreate = undefined;
         updateTechnologyEditStatus();
     });
-    addButton('Create Child', (technologyId, item) => {
+    addButton(feLocalize('TODO', 'Create Child'), (technologyId, item) => {
         pendingLink = undefined;
         pendingCreate = { parentId: technologyId, treeRoot: item.dataset.treeRoot ?? '' };
         updateTechnologyEditStatus();
     });
-    addButton('Delete', technologyId => {
+    addButton(feLocalize('TODO', 'Delete'), technologyId => {
         const ids = selectedTechnologyIds.has(technologyId) ? Array.from(selectedTechnologyIds) : [technologyId];
         postTechnologyEdit('deleteTechnologies', { technologyIds: ids });
     });
@@ -523,18 +526,18 @@ function setupTechnologyEditHandlers() {
             event.preventDefault();
             event.stopPropagation();
             if (item) {
-                updateTechnologyEditStatus('Select an empty grid position');
+                updateTechnologyEditStatus(feLocalize('TODO', 'Select an empty grid position'));
                 return;
             }
             const gridbox = getTechnologyGridboxAtPoint(event.clientX, event.clientY);
             const create = pendingCreate;
             if (!gridbox || gridbox.dataset.treeRoot !== create.treeRoot) {
-                updateTechnologyEditStatus('Select an empty position in the parent tree');
+                updateTechnologyEditStatus(feLocalize('TODO', 'Select an empty position in the parent tree'));
                 return;
             }
             const position = getTechnologyGridPositionAtPoint(gridbox, event.clientX, event.clientY);
             if (!position || hasTechnologyAtGridPosition(gridbox, position.x, position.y)) {
-                updateTechnologyEditStatus('That grid position is not available');
+                updateTechnologyEditStatus(feLocalize('TODO', 'That grid position is not available'));
                 return;
             }
             pendingCreate = undefined;
@@ -700,7 +703,9 @@ function startTechnologyDrag(item: HTMLDivElement, event: PointerEvent) {
             info.item.style.outlineColor = valid ? 'var(--vscode-focusBorder)' : 'var(--vscode-errorForeground)';
             info.item.style.zIndex = '20';
         }
-        updateTechnologyEditStatus(valid ? `${targetEdits.length} moving` : 'Position is occupied or outside the grid');
+        updateTechnologyEditStatus(valid
+            ? feLocalize('TODO', '{0} moving', targetEdits.length)
+            : feLocalize('TODO', 'Position is occupied or outside the grid'));
         moveEvent.preventDefault();
     };
 
@@ -799,9 +804,9 @@ function setupTechnologyMarqueeSelection() {
             overlay.style.height = `${Math.abs(moveEvent.clientY - startY)}px`;
             moveEvent.preventDefault();
         };
+        let cleanup = () => overlay.remove();
         const finish = (upEvent: PointerEvent) => {
-            window.removeEventListener('pointermove', move, true);
-            window.removeEventListener('pointerup', finish, true);
+            cleanup();
             overlay.remove();
             const selectionRect = {
                 left: Math.min(startX, upEvent.clientX), right: Math.max(startX, upEvent.clientX),
@@ -817,8 +822,11 @@ function setupTechnologyMarqueeSelection() {
             suppressNextTechnologyClick = true;
             persistTechnologySelection();
         };
-        window.addEventListener('pointermove', move, true);
-        window.addEventListener('pointerup', finish, true);
+        const cancel = () => {
+            cleanup();
+            overlay.remove();
+        };
+        cleanup = registerTechnologyPointerGesture(window, move, finish, cancel);
         event.preventDefault();
         event.stopPropagation();
     }, true);
@@ -840,17 +848,18 @@ function getTechnologyGridboxAtPoint(clientX: number, clientY: number): HTMLDivE
 function getTechnologyGridPositionAtPoint(gridbox: HTMLDivElement, clientX: number, clientY: number): { x: number; y: number } | undefined {
     const rect = gridbox.getBoundingClientRect();
     const scale = normalizePreviewScale(getState().scale);
-    const info = getTechnologyGridInfo(gridbox.querySelector<HTMLDivElement>('.technology-grid-item[data-technology-id]')!);
-    if (!info) {
+    const geometry = getTechnologyGridGeometry(gridbox.dataset);
+    if (!geometry) {
         return undefined;
     }
-    const origin = getGridBoxItemPosition(0, 0, info.format, info.slotSize, info.gridSize);
+    const { format, slotSize, gridSize } = geometry;
+    const origin = getGridBoxItemPosition(0, 0, format, slotSize, gridSize);
     return getTechnologyGridDelta(
         (clientX - rect.left) / scale - origin.x,
         (clientY - rect.top) / scale - origin.y,
         1,
-        info.format,
-        info.slotSize,
+        format,
+        slotSize,
     );
 }
 

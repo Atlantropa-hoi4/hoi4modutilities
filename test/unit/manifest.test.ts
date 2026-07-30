@@ -1,5 +1,9 @@
 import * as assert from 'assert';
 import manifest from '../../package.json';
+import defaultBundle from '../../l10n/bundle.l10n.json';
+import koreanBundle from '../../l10n/bundle.l10n.ko.json';
+import russianBundle from '../../l10n/bundle.l10n.ru.json';
+import chineseBundle from '../../l10n/bundle.l10n.zh-cn.json';
 
 describe('extension manifest', () => {
     it('uses contextual activation with runtime l10n metadata', () => {
@@ -98,5 +102,31 @@ describe('extension manifest', () => {
         const featureFlags = manifest.contributes.configuration[0].properties['hoi4ModUtilities.featureFlags'];
 
         assert.deepStrictEqual(featureFlags.default, []);
+    });
+
+    it('localises the technology graph editor controls in every maintained bundle', () => {
+        const messages = [
+            'Toggle technology graph editing',
+            'Applying…',
+            'Select Path target',
+            'Select XOR target',
+            'Select an empty grid position',
+            '{0} selected',
+            'Link Path',
+            'Link XOR',
+            'Create Child',
+            'Delete',
+            'Position is occupied or outside the grid',
+            'Technology ID',
+            'VS Code refused the technology edit.',
+        ] as const;
+        const translatedBundles = [koreanBundle, russianBundle, chineseBundle];
+        for (const message of messages) {
+            assert.strictEqual(defaultBundle[message], message);
+            for (const bundle of translatedBundles) {
+                assert.ok(bundle[message]);
+                assert.notStrictEqual(bundle[message], message);
+            }
+        }
     });
 });

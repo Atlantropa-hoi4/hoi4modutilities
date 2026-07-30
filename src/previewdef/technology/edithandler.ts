@@ -70,7 +70,13 @@ export class TechnologyEditCommandHandler {
 
         const editContext = this.options.getEditContext();
         const result = message.command === 'applyTechnologyPositionEdits'
-            ? buildTechnologyPositionTextChanges(document.getText(), this.options.relativeFilePath, message.edits)
+            ? buildTechnologyPositionTextChanges(
+                document.getText(),
+                this.options.relativeFilePath,
+                message.folder,
+                message.edits,
+                editContext,
+            )
             : message.command === 'toggleTechnologyPath'
                 ? buildTechnologyPathTextChanges(
                     document.getText(),
@@ -121,6 +127,7 @@ export class TechnologyEditCommandHandler {
             message.folder,
             message.x,
             message.y,
+            this.options.getEditContext(),
         );
         await this.applyResult(latestDocument, message, result, { technologyId });
     }

@@ -657,3 +657,12 @@ Technology Preview real-workspace edit and startup repair 2026-07-30:
 - [ ] Rerun Extension Host UI smoke after the user's normal VS Code instance is closed.
 
 Review note: Faith-in-Steel `infantry.txt` previously exposed only 3 of 44 folder positions as editable because constants such as `@1936` were treated as dynamic; all 44 are now statically resolved and editable. Initial Technology asset lookup uses the loader's resolved GFX dependencies and ready-only localisation instead of waiting for workspace-wide indexes, and local drags no longer trigger a full preview rebuild. The UI runner could not start alongside the user's open stable VS Code window; no attempt was made to close that workspace.
+
+Repository-wide audit remediation 2026-07-30:
+- [x] Update vulnerable production ZIP, YAML, and telemetry-transitive dependencies and synchronize the clean install with the lockfile.
+- [x] Validate Technology edit coordinates, GUI grid bounds, and collisions again in the extension host.
+- [x] Remove empty filtered-tree coordinate handling from rendered-item assumptions and clean up cancelled marquee gestures.
+- [x] Localise Technology graph editor controls, status text, prompts, and confirmations in every maintained runtime bundle.
+- [x] Reverify targeted coverage, the full release pipeline under Node 20, production dependency audit, and whitespace.
+
+Review note: Production dependencies now resolve to `adm-zip` 0.6.0, `js-yaml` 4.3.0, and `@nevware21/ts-utils` 0.16.0 with a clean `npm ci`; `npm audit --omit=dev` reports zero vulnerabilities. Technology edits are checked against host-rendered grid geometry and current document occupancy before one `WorkspaceEdit` is created. Empty filtered grids no longer require a rendered technology item, cancelled marquee gestures remove all listeners, and every maintained l10n bundle covers the editor UI. Verification passed 29 focused tests, all 424 unit tests, TypeScript, lint, production bundles, 16 Extension Host smoke tests, VSIX packaging, and `git diff --check` under Node 20.20.2.

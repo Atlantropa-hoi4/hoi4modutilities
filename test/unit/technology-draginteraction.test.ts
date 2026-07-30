@@ -3,7 +3,9 @@ import {
     getMovedTechnologyPosition,
     getTechnologyDoubleClickCreateParent,
     getTechnologyGridDelta,
+    getTechnologyGridGeometry,
     hasTechnologyDragPassedThreshold,
+    registerTechnologyPointerGesture,
 } from '../../src/previewdef/technology/draginteraction';
 
 describe('technology drag interaction', () => {
@@ -26,5 +28,39 @@ describe('technology drag interaction', () => {
         assert.strictEqual(getTechnologyDoubleClickCreateParent(['child'], 'root', roots), 'child');
         assert.strictEqual(getTechnologyDoubleClickCreateParent(['child', 'root'], 'root', roots), 'root');
         assert.strictEqual(getTechnologyDoubleClickCreateParent(['other'], 'root', roots), 'root');
+    });
+
+    it('reads grid geometry without depending on a rendered technology item', () => {
+        assert.deepStrictEqual(getTechnologyGridGeometry({
+            gridFormat: 'left',
+            slotWidth: '100',
+            slotHeight: '50',
+            gridWidth: '800',
+            gridHeight: '600',
+        }), {
+            format: 'left',
+            slotSize: { width: 100, height: 50 },
+            gridSize: { width: 800, height: 600 },
+        });
+        assert.strictEqual(getTechnologyGridGeometry({ gridWidth: '800' }), undefined);
+    });
+
+    it('registers and removes pointercancel with the marquee gesture listeners', () => {
+        const listeners = new Map<string, (event: PointerEvent) => void>();
+        const removed: string[] = [];
+        const target = {
+            addEventListener: (type: string, listener: (event: PointerEvent) => void) => listeners.set(type, listener),
+            removeEventListener: (type: string) => removed.push(type),
+        };
+        const cleanup = registerTechnologyPointerGesture(
+            target,
+            () => undefined,
+            () => undefined,
+            () => undefined,
+        );
+
+        assert.deepStrictEqual(Array.from(listeners.keys()), ['pointermove', 'pointerup', 'pointercancel']);
+        cleanup();
+        assert.deepStrictEqual(removed, ['pointermove', 'pointerup', 'pointercancel']);
     });
 });

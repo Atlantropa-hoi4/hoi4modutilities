@@ -142,7 +142,10 @@ function createHandler(): InstanceType<typeof TechnologyEditCommandHandler> {
                 return true;
             },
         } as any,
-        getEditContext: () => ({ availableTreeRootsByFolder: { infantry: ['root'] } }),
+        getEditContext: () => ({
+            availableTreeRootsByFolder: { infantry: ['root'] },
+            gridLayoutsByFolder: {},
+        }),
         refreshDocument: async document => {
             refreshedDocuments.push(document);
         },

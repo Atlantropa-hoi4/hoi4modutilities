@@ -1,5 +1,6 @@
 import { Node, parseHoi4File } from '../../hoiformat/hoiparser';
-import { TechnologyPositionEdit, TextRange } from './editcommon';
+import { getGridBoxItemPosition } from '../../util/hoi4gui/gridboxcommon';
+import { TechnologyEditRenderContext, TechnologyGridEditLayout, TechnologyPositionEdit, TextRange } from './editcommon';
 import {
     TechnologyFileMetadata,
     TechnologyFolderSourceMeta,
@@ -13,9 +14,7 @@ export interface TechnologyTextChange {
     text: string;
 }
 
-export interface TechnologyEditOptions {
-    availableTreeRootsByFolder: Record<string, readonly string[]>;
-}
+export type TechnologyEditOptions = TechnologyEditRenderContext;
 
 export interface TechnologyTextChangeResult {
     changes?: TechnologyTextChange[];
@@ -28,10 +27,21 @@ interface ParsedTechnologyContext {
     metadata: TechnologyFileMetadata;
 }
 
+interface ValidatedTechnologyPositionTarget {
+    technology: TechnologySourceMeta;
+    folder: TechnologyFolderSourceMeta;
+    layout: TechnologyGridEditLayout;
+    treeRoot: string;
+    x: number;
+    y: number;
+}
+
 export function buildTechnologyPositionTextChanges(
     content: string,
     filePath: string,
+    folderName: string,
     edits: readonly TechnologyPositionEdit[],
+    options: TechnologyEditOptions,
 ): TechnologyTextChangeResult {
     if (edits.length === 0) {
         return {};
@@ -39,8 +49,12 @@ export function buildTechnologyPositionTextChanges(
     const context = parseTechnologyContext(content, filePath);
     const changes: TechnologyTextChange[] = [];
     const seen = new Set<string>();
+    const targets: ValidatedTechnologyPositionTarget[] = [];
 
     for (const requestedEdit of edits) {
+        if (!Number.isFinite(requestedEdit.x) || !Number.isFinite(requestedEdit.y)) {
+            return { error: 'Technology positions must use finite numeric coordinates.' };
+        }
         if (seen.has(requestedEdit.editKey)) {
             return { error: `Technology position ${requestedEdit.editKey} was requested more than once.` };
         }
@@ -49,18 +63,30 @@ export function buildTechnologyPositionTextChanges(
         if (technologyResult.error) {
             return { error: technologyResult.error };
         }
-        const folder = technologyResult.technology!.folders.find(candidate => candidate.editKey === requestedEdit.editKey);
-        if (!folder || !folder.editable) {
+        const technology = technologyResult.technology!;
+        const folder = technology.folders.find(candidate => candidate.editKey === requestedEdit.editKey);
+        if (!folder || folder.name !== folderName || !folder.editable) {
             return { error: `Technology ${requestedEdit.technologyId} does not have an editable position for the selected folder.` };
         }
-        changes.push(...buildFolderPositionChanges(
-            content,
-            folder,
-            Math.round(requestedEdit.x),
-            Math.round(requestedEdit.y),
-        ));
+        const grid = findTechnologyGrid(options, folderName, requestedEdit.technologyId);
+        if (grid.error) {
+            return { error: grid.error };
+        }
+        const x = Math.round(requestedEdit.x);
+        const y = Math.round(requestedEdit.y);
+        if (!isTechnologyPositionWithinGrid(grid.layout!, x, y)) {
+            return { error: `Technology ${requestedEdit.technologyId} position (${x}, ${y}) is outside the selected GUI grid.` };
+        }
+        targets.push({ technology, folder, layout: grid.layout!, treeRoot: grid.treeRoot!, x, y });
     }
 
+    const collisionError = validateTechnologyPositionCollisions(context.metadata, folderName, targets, options);
+    if (collisionError) {
+        return { error: collisionError };
+    }
+    for (const target of targets) {
+        changes.push(...buildFolderPositionChanges(content, target.folder, target.x, target.y));
+    }
     return { changes: dedupeChanges(changes) };
 }
 
@@ -169,7 +195,11 @@ export function buildCreateChildTechnologyTextChanges(
     folder: string,
     x: number,
     y: number,
+    options: TechnologyEditOptions,
 ): TechnologyTextChangeResult {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return { error: 'Technology positions must use finite numeric coordinates.' };
+    }
     if (!isValidTechnologyId(technologyId)) {
         return { error: 'Technology ID must be a non-empty Clausewitz symbol without whitespace or syntax characters.' };
     }
@@ -185,6 +215,19 @@ export function buildCreateChildTechnologyTextChanges(
     if (!hasFolder(parent, folder)) {
         return { error: `Technology ${parentTechnologyId} is not in folder ${folder}.` };
     }
+    const grid = findTechnologyGrid(options, folder, parentTechnologyId);
+    if (grid.error) {
+        return { error: grid.error };
+    }
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    if (!isTechnologyPositionWithinGrid(grid.layout!, roundedX, roundedY)) {
+        return { error: `Technology ${technologyId} position (${roundedX}, ${roundedY}) is outside the selected GUI grid.` };
+    }
+    const occupied = getOccupiedTechnologyPositions(context.metadata, folder, options);
+    if (occupied.has(positionKey(grid.treeRoot!, roundedX, roundedY))) {
+        return { error: `Technology position (${roundedX}, ${roundedY}) is already occupied in the selected tree.` };
+    }
 
     return {
         changes: [
@@ -194,8 +237,8 @@ export function buildCreateChildTechnologyTextChanges(
                 parent,
                 technologyId,
                 folder,
-                Math.round(x),
-                Math.round(y),
+                roundedX,
+                roundedY,
             ),
         ],
     };
@@ -375,6 +418,92 @@ function removeReferenceChanges(content: string, references: readonly Technology
             : expandNodeRemovalRange(content, reference.nodeRange),
         text: '',
     })));
+}
+
+function findTechnologyGrid(
+    options: TechnologyEditOptions,
+    folder: string,
+    technologyId: string,
+): { treeRoot?: string; layout?: TechnologyGridEditLayout; error?: string } {
+    const matches = Object.entries(options.gridLayoutsByFolder[folder] ?? {})
+        .filter(([, layout]) => Object.prototype.hasOwnProperty.call(layout.positionsByTechnologyId, technologyId));
+    if (matches.length === 0) {
+        return { error: `Technology ${technologyId} is not assigned to an editable GUI grid in folder ${folder}.` };
+    }
+    if (matches.length > 1) {
+        return { error: `Technology ${technologyId} is assigned to more than one GUI grid in folder ${folder}.` };
+    }
+    return { treeRoot: matches[0][0], layout: matches[0][1] };
+}
+
+function isTechnologyPositionWithinGrid(layout: TechnologyGridEditLayout, x: number, y: number): boolean {
+    if (layout.gridSize.width <= 0 || layout.gridSize.height <= 0
+        || layout.slotSize.width <= 0 || layout.slotSize.height <= 0) {
+        return false;
+    }
+    const position = getGridBoxItemPosition(x, y, layout.format, layout.slotSize, layout.gridSize);
+    return Number.isFinite(position.x)
+        && Number.isFinite(position.y)
+        && position.x >= 0
+        && position.y >= 0
+        && position.x + layout.slotSize.width <= layout.gridSize.width
+        && position.y + layout.slotSize.height <= layout.gridSize.height;
+}
+
+function validateTechnologyPositionCollisions(
+    metadata: TechnologyFileMetadata,
+    folder: string,
+    targets: readonly ValidatedTechnologyPositionTarget[],
+    options: TechnologyEditOptions,
+): string | undefined {
+    const movingTechnologyIds = new Set(targets.map(target => target.technology.id));
+    const occupied = getOccupiedTechnologyPositions(metadata, folder, options, movingTechnologyIds);
+    const targetKeys = new Set<string>();
+    for (const target of targets) {
+        const key = positionKey(target.treeRoot, target.x, target.y);
+        if (occupied.has(key) || targetKeys.has(key)) {
+            return `Technology position (${target.x}, ${target.y}) is already occupied in the selected tree.`;
+        }
+        targetKeys.add(key);
+    }
+    return undefined;
+}
+
+function getOccupiedTechnologyPositions(
+    metadata: TechnologyFileMetadata,
+    folder: string,
+    options: TechnologyEditOptions,
+    excludedTechnologyIds: ReadonlySet<string> = new Set(),
+): Set<string> {
+    const occupied = new Set<string>();
+    const technologiesById = new Map<string, TechnologySourceMeta[]>();
+    for (const technology of metadata.technologies) {
+        const values = technologiesById.get(technology.id) ?? [];
+        values.push(technology);
+        technologiesById.set(technology.id, values);
+    }
+
+    for (const [treeRoot, layout] of Object.entries(options.gridLayoutsByFolder[folder] ?? {})) {
+        for (const [technologyId, renderedPosition] of Object.entries(layout.positionsByTechnologyId)) {
+            if (excludedTechnologyIds.has(technologyId)) {
+                continue;
+            }
+            const matches = technologiesById.get(technologyId) ?? [];
+            const folderMeta = matches.length === 1
+                ? matches[0].folders.find(candidate => candidate.name === folder)
+                : undefined;
+            const x = folderMeta?.xValue ?? renderedPosition.x;
+            const y = folderMeta?.yValue ?? renderedPosition.y;
+            if (Number.isFinite(x) && Number.isFinite(y)) {
+                occupied.add(positionKey(treeRoot, Math.round(x), Math.round(y)));
+            }
+        }
+    }
+    return occupied;
+}
+
+function positionKey(treeRoot: string, x: number, y: number): string {
+    return `${treeRoot}\u0000${x}\u0000${y}`;
 }
 
 function getOrphanError(

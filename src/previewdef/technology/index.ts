@@ -29,7 +29,10 @@ class TechnologyTreePreview extends PreviewBase {
     private content: string | undefined;
     private readonly relativeFilePath: string;
     private readonly editCommandHandler: TechnologyEditCommandHandler;
-    private editContext: TechnologyEditRenderContext = { availableTreeRootsByFolder: {} };
+    private editContext: TechnologyEditRenderContext = {
+        availableTreeRootsByFolder: {},
+        gridLayoutsByFolder: {},
+    };
     private renderGeneration = 0;
     private renderQueue: Promise<void> = Promise.resolve();
     private locallyAppliedPositionVersions = new Set<number>();

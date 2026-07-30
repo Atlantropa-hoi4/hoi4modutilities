@@ -5,7 +5,7 @@ import { getSpriteByGfxNameFromResolvedFiles, Sprite } from '../../util/image/im
 import { forceError, randomString, UserError } from '../../util/common';
 import { HOIPartial } from '../../hoiformat/schema';
 import { renderContainerWindow, renderContainerWindowChildren } from '../../util/hoi4gui/containerwindow';
-import { ParentInfo, RenderCommonOptions } from '../../util/hoi4gui/common';
+import { calculateBBox, getHeight, getWidth, normalizeNumberLike, ParentInfo, RenderCommonOptions } from '../../util/hoi4gui/common';
 import { getGridBoxCommonChildParentInfo } from '../../util/hoi4gui/gridbox';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 import { renderIcon } from '../../util/hoi4gui/icon';
@@ -37,7 +37,10 @@ export async function renderTechnologyFile(
     documentVersion: number,
 ): Promise<RenderTechnologyFileResult> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
-    const editContext: TechnologyEditRenderContext = { availableTreeRootsByFolder: {} };
+    const editContext: TechnologyEditRenderContext = {
+        availableTreeRootsByFolder: {},
+        gridLayoutsByFolder: {},
+    };
     try {
         const session = new LoaderSession(false);
         const loadResult = await loader.load(session);
@@ -105,6 +108,7 @@ async function renderTechnologyFolders(
         const rendered = await renderTechnologyFolder(technologyTrees, folder, techTreeViews, containerWindowTypes, styleTable, guiFiles, gfxFiles);
         techFolders[folder] = rendered.folder;
         editContext.availableTreeRootsByFolder[folder] = rendered.availableTreeRoots;
+        editContext.gridLayoutsByFolder[folder] = rendered.gridLayouts;
     }));
 
     jsCodes.push(`window.technologyTrees = ${JSON.stringify(technologyTrees)};`);
@@ -205,13 +209,18 @@ async function renderTechnologyFolder(
     allContainerWindowTypes: HOIPartial<ContainerWindowType>[],
     styleTable: StyleTable,
     guiFiles: string[],
-    gfxFiles: string[]): Promise<{ folder: RenderedTechnologyFolder; availableTreeRoots: string[] }> {
+    gfxFiles: string[]): Promise<{
+        folder: RenderedTechnologyFolder;
+        availableTreeRoots: string[];
+        gridLayouts: TechnologyEditRenderContext['gridLayoutsByFolder'][string];
+    }> {
     const folderTreeView = flatMap(techTreeViews, tv => tv.containerwindowtype).find(c => c.name === folder);
     const gridboxes: Record<string, RenderedTechnologyFolderGridBox> = {};
     const renderedTechnologies: Record<string, string> = {};
     const renderedXor = { upDown: '', leftRight: '' };
     const renderedLines: string[] = [];
     const availableTreeRoots = new Set<string>();
+    const gridLayouts: TechnologyEditRenderContext['gridLayoutsByFolder'][string] = {};
 
     let children: string;
     if (!folderTreeView) {
@@ -254,6 +263,21 @@ async function renderTechnologyFolder(
                         const tree = technologyTrees.find(t => t.startTechnology + '_tree' === child.name);
                         if (tree) {
                             const gridboxType = child as HOIPartial<GridBoxType>;
+                            const format = gridboxType.format?._name ?? 'up';
+                            const [, , gridWidth, gridHeight] = calculateBBox(gridboxType, parentInfo);
+                            const slotWidth = normalizeNumberLike(getWidth(gridboxType.slotsize), 0) ?? 50;
+                            const slotHeight = normalizeNumberLike(getHeight(gridboxType.slotsize), 0) ?? 50;
+                            gridLayouts[tree.startTechnology] = {
+                                format,
+                                gridSize: { width: gridWidth, height: gridHeight },
+                                slotSize: { width: slotWidth, height: slotHeight },
+                                positionsByTechnologyId: Object.fromEntries(tree.technologies
+                                    .filter(technology => technology.folders[folder] !== undefined)
+                                    .map(technology => [technology.id, {
+                                        x: technology.folders[folder].x,
+                                        y: technology.folders[folder].y,
+                                    }])),
+                            };
                             gridboxes[tree.startTechnology] = {
                                 gridbox: gridboxType,
                                 parentInfo,
@@ -302,6 +326,7 @@ async function renderTechnologyFolder(
     return {
         folder: { template, gridboxes, renderedTechnologies, renderedXor, renderedLines },
         availableTreeRoots: Array.from(availableTreeRoots),
+        gridLayouts,
     };
 }
 
