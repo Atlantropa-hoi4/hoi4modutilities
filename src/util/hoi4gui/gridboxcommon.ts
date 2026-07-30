@@ -22,6 +22,7 @@ export interface GridBoxItem {
     isJoint?: boolean;
     htmlId?: string;
     classNames?: string;
+    dataAttributes?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface GridBoxConnectionItemDirection {
@@ -44,10 +45,22 @@ export interface RenderGridBoxCommonOptions extends RenderCommonOptions {
     onRenderLineBox?(item: GridBoxConnectionItem, parentInfo: ParentInfo): Promise<string>;
     lineRenderMode?: 'line' | 'control';
     cornerPosition?: number;
+    dataAttributes?: Record<string, string | number | boolean | undefined>;
 }
 
 function attributeEscape(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+function renderDataAttributes(attributes: Record<string, string | number | boolean | undefined> | undefined): string {
+    if (!attributes) {
+        return '';
+    }
+
+    return Object.entries(attributes)
+        .filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined)
+        .map(([name, value]) => `data-${name}="${attributeEscape(String(value))}"`)
+        .join(' ');
 }
 
 function getConnectionPresentation(connection: GridBoxConnection | undefined): { classNames: string; dataAttrs: string } {
@@ -66,7 +79,7 @@ const offsetMap: Record<Format['_name'], { x: number, y: number }> = {
     center: { x: 0.5, y: 0.5 },
 };
 
-function getLeftUpPosition(gridX: number, gridY: number, format: Format['_name'], slotSize: NumberSize, gridSize: NumberSize): NumberPosition {
+export function getGridBoxItemPosition(gridX: number, gridY: number, format: Format['_name'], slotSize: NumberSize, gridSize: NumberSize): NumberPosition {
     if (format === 'down') {
         gridY *= -1;
     } else if (format === 'left') {
@@ -86,8 +99,32 @@ function getLeftUpPosition(gridX: number, gridY: number, format: Format['_name']
     };
 }
 
+export function getGridBoxGridDelta(
+    deltaPageX: number,
+    deltaPageY: number,
+    scale: number,
+    format: Format['_name'],
+    slotSize: NumberSize,
+): NumberPosition {
+    const renderedX = deltaPageX / scale;
+    const renderedY = deltaPageY / scale;
+    const xSteps = Math.round(renderedX / slotSize.width);
+    const ySteps = Math.round(renderedY / slotSize.height);
+
+    switch (format) {
+        case 'down':
+            return { x: xSteps, y: -ySteps };
+        case 'left':
+            return { x: ySteps, y: xSteps };
+        case 'right':
+            return { x: ySteps, y: -xSteps };
+        default:
+            return { x: xSteps, y: ySteps };
+    }
+}
+
 function getCenterPosition(gridX: number, gridY: number, format: Format['_name'], slotSize: NumberSize, gridSize: NumberSize): NumberPosition {
-    const position = getLeftUpPosition(gridX, gridY, format, slotSize, gridSize);
+    const position = getGridBoxItemPosition(gridX, gridY, format, slotSize, gridSize);
     position.x += slotSize.width / 2;
     position.y += slotSize.height / 2;
     return position;
@@ -121,9 +158,10 @@ export async function renderGridBoxCommon(
 
     const renderedItems = await Promise.all(Object.values(options.items).map(async (item) => {
         const children = options.onRenderItem ? await options.onRenderItem(item, childrenParentInfo) : '';
-        const position = getLeftUpPosition(item.gridX, item.gridY, format, slotSize, size);
+        const position = getGridBoxItemPosition(item.gridX, item.gridY, format, slotSize, size);
         return `<div
             ${item.htmlId ? `id="${item.htmlId}"` : ''}
+            ${renderDataAttributes(item.dataAttributes)}
             class="
                 ${item.classNames ? item.classNames : ''}
                 ${options.styleTable.style('positionAbsolute', () => `position: absolute;`)}
@@ -144,6 +182,7 @@ export async function renderGridBoxCommon(
 
     return `<div
     ${options.id ? `id="${options.id}"` : ''}
+    ${renderDataAttributes(options.dataAttributes)}
     start="${gridBox._token?.start}"
     end="${gridBox._token?.end}"
     class="
@@ -356,7 +395,7 @@ async function renderControlConnections(
         flatMap(controlMatrix, m => 
             map(m, async (item) => {
                 const children = onRenderLineBox ? await onRenderLineBox(item, childrenParentInfo) : '';
-                const position = getLeftUpPosition(item.x, item.y, format, slotSize, size);
+                const position = getGridBoxItemPosition(item.x, item.y, format, slotSize, size);
                 return `<div
                     class="
                         ${styleTable.style('positionAbsolute', () => `position: absolute;`)}

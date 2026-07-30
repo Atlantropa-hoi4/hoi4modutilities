@@ -1,6 +1,10 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { Commands, ViewType, WebviewType } from '../../src/constants';
+import { parseHoi4File } from '../../src/hoiformat/hoiparser';
+import { collectTechnologyFileMetadata } from '../../src/previewdef/technology/editmetadata';
+import { buildTechnologyPositionTextChanges } from '../../src/previewdef/technology/editservice';
+import { buildTechnologyWorkspaceEdit } from '../../src/previewdef/technology/editworkspace';
 import { waitFor } from '../testUtils';
 
 function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
@@ -133,6 +137,33 @@ suite('extension smoke', () => {
 
         await vscode.commands.executeCommand(Commands.Preview);
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_technology.txt'), 30000);
+    });
+
+    test('applies a technology position edit as one undoable workspace edit', async () => {
+        const original = `technologies = {
+    root = {
+        folder = { name = infantry position = { x = 1 y = 2 } }
+    }
+}`;
+        const document = await vscode.workspace.openTextDocument({ language: 'hoi4', content: original });
+        await vscode.window.showTextDocument(document);
+        const metadata = collectTechnologyFileMetadata(parseHoi4File(original), 'common/technologies/undo.txt');
+        const folder = metadata.technologies[0].folders[0];
+        const result = buildTechnologyPositionTextChanges(original, 'common/technologies/undo.txt', [{
+            technologyId: 'root',
+            editKey: folder.editKey,
+            x: 4,
+            y: 5,
+        }]);
+        const workspaceEdit = buildTechnologyWorkspaceEdit(document, result);
+        assert.ifError(workspaceEdit.error);
+        assert.ok(workspaceEdit.edit);
+        assert.strictEqual(await vscode.workspace.applyEdit(workspaceEdit.edit!), true);
+        assert.match(document.getText(), /position = \{ x = 4 y = 5 \}/);
+
+        await vscode.commands.executeCommand('undo');
+        await waitFor(() => document.getText() === original, 5000);
+        assert.strictEqual(document.getText(), original);
     });
 
     test('opens a character preview webview for a representative fixture', async () => {

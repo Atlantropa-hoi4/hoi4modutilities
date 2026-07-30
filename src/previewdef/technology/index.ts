@@ -6,6 +6,8 @@ import { PreviewBase } from '../previewbase';
 import { TechnologyTreeLoader } from './loader';
 import { getRelativePathInWorkspace } from '../../util/vsccommon';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
+import { TechnologyEditCommandHandler } from './edithandler';
+import { TechnologyEditMessage, TechnologyEditRenderContext } from './editcommon';
 
 function canPreviewTechnology(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -25,18 +27,65 @@ function canPreviewTechnology(document: vscode.TextDocument) {
 class TechnologyTreePreview extends PreviewBase {
     private technologyTreeLoader: TechnologyTreeLoader;
     private content: string | undefined;
+    private readonly relativeFilePath: string;
+    private readonly editCommandHandler: TechnologyEditCommandHandler;
+    private editContext: TechnologyEditRenderContext = { availableTreeRootsByFolder: {} };
+    private renderGeneration = 0;
+    private renderQueue: Promise<void> = Promise.resolve();
+    private locallyAppliedPositionVersions = new Set<number>();
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
-        this.technologyTreeLoader = new TechnologyTreeLoader(getRelativePathInWorkspace(this.uri), () => Promise.resolve(this.content ?? ''));
+        this.relativeFilePath = getRelativePathInWorkspace(this.uri);
+        this.technologyTreeLoader = new TechnologyTreeLoader(this.relativeFilePath, () => Promise.resolve(this.content ?? ''));
         this.technologyTreeLoader.onLoadDone(r => this.updateDependencies(r.dependencies));
+        this.editCommandHandler = new TechnologyEditCommandHandler({
+            uri: this.uri,
+            relativeFilePath: this.relativeFilePath,
+            webview: this.panel.webview,
+            getEditContext: () => this.editContext,
+            refreshDocument: document => this.onDocumentChange(document),
+            recordLocallyAppliedVersion: (command, version) => {
+                if (command === 'applyTechnologyPositionEdits') {
+                    this.locallyAppliedPositionVersions.add(version);
+                }
+            },
+        });
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
         this.content = document.getText();
-        const result = await renderTechnologyFile(this.technologyTreeLoader, document.uri, this.panel.webview);
+        const result = await renderTechnologyFile(this.technologyTreeLoader, document.uri, this.panel.webview, document.version);
         this.content = undefined;
-        return result;
+        this.editContext = result.editContext;
+        return result.html;
+    }
+
+    public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
+        if (this.locallyAppliedPositionVersions.delete(document.version)) {
+            return;
+        }
+        const generation = ++this.renderGeneration;
+        this.renderQueue = this.renderQueue
+            .catch(() => undefined)
+            .then(async () => {
+                if (this.isDisposed || generation !== this.renderGeneration) {
+                    return;
+                }
+                const html = await this.getContent(document);
+                if (!this.isDisposed && generation === this.renderGeneration) {
+                    this.panel.webview.html = html;
+                }
+            });
+        await this.renderQueue;
+    }
+
+    public override getDocumentChangeDebounceMs(): number {
+        return 75;
+    }
+
+    protected async onDidReceiveMessage(message: TechnologyEditMessage): Promise<boolean> {
+        return this.editCommandHandler.handleMessage(message);
     }
 }
 

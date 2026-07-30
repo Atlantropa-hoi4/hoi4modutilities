@@ -629,3 +629,31 @@ World Map preview performance refactor 2026-07-14:
 - [x] Add focused regression/performance coverage and run the complete verification pipeline.
 
 Review note: World Map payloads now use direct structured chunks with a four-request window and an acknowledged transactional refresh boundary. Rendering/state work is frame-coalesced, province/warning/country lookups are indexed, resource images are reused and detached on disposal, and map loading coalesces dependency bursts. Province/River bitmap traversal now uses bounded zero-copy parsing, enqueue-time visitation, linear edge assembly, and an approximately 1.4 MiB River visited bitset at 5632x2048 instead of an 11.5 MiB byte map. The synthetic warning aggregation benchmark improved from 130.27 ms to 3.01 ms. `npm run verify` passed with 404 unit tests, 15 Extension Host smoke tests, production bundles, lint, and VSIX packaging; the final image-cache detach follow-up passed webview type-check, lint, test compilation, and 8 focused tests. `git diff --check` also passed.
+
+Technology Preview graph editor 2026-07-30:
+- [x] Add token-derived edit metadata and atomic text patches for folder positions, Path/XOR links, child creation, and deletion cleanup.
+- [x] Add a version-checked serialized preview host that applies one `WorkspaceEdit` per request and reports applied/rejected results.
+- [x] Add edit-mode selection, marquee, drag/snap validation, graph actions, confirmation, and persisted view state to the Technology webview.
+- [x] Add format-aware grid coordinate helpers and focused unit/integration coverage, including VS Code Undo.
+- [x] Reverify Technology tests, TypeScript, lint, development bundles, Extension Host smoke tests, and whitespace.
+
+Review note: Technology Preview now edits uniquely identifiable technologies in the selected folder while preserving source formatting and using the normal VS Code document dirty/Undo model. Unsafe duplicate/dynamic positions are read-only, graph edits reject invalid cycles, XOR pairs, collisions, bounds, and orphan roots, and deletion warns that references outside the current file are not changed. Verification passed 417 unit tests, 17 focused Technology tests, TypeScript, lint, development and production bundles, and the Extension Host smoke suite including the new Undo scenario.
+
+Technology Preview edit interaction follow-up 2026-07-30:
+- [x] Prevent stale overlapping Technology renders from restoring pre-edit positions.
+- [x] Apply drag coordinates optimistically by stable edit key and roll them back only on host rejection.
+- [x] Create a child by double-clicking an empty grid slot, using the single selected local parent or the tree root.
+- [x] Add focused parent-selection coverage and rerun TypeScript, lint, build, unit, UI smoke, and whitespace checks.
+
+Review note: Technology document renders are now serialized and generation-checked like the protected Focus edit lifecycle. A completed drag updates the local graph immediately while the versioned `WorkspaceEdit` is pending, and a rejected request restores the exact prior coordinates. Empty-slot double-click creation follows the Focus editor shortcut without bypassing Technology Path and orphan constraints.
+
+Technology Preview real-workspace edit and startup repair 2026-07-30:
+- [x] Reproduce the narrow split-editor toolbar and inspect Faith-in-Steel numeric coordinate constants.
+- [x] Resolve unique file-local numeric constants as editable coordinates while preserving unchanged symbolic axes.
+- [x] Keep the edit toggle visible at the leading edge of narrow Technology toolbars.
+- [x] Reconcile local position edits without an immediate full HTML and asset rebuild.
+- [x] Avoid blocking initial Technology rendering on global GFX and localisation index construction.
+- [x] Reverify the real infantry metadata, focused/full tests, TypeScript, lint, bundles, and whitespace.
+- [ ] Rerun Extension Host UI smoke after the user's normal VS Code instance is closed.
+
+Review note: Faith-in-Steel `infantry.txt` previously exposed only 3 of 44 folder positions as editable because constants such as `@1936` were treated as dynamic; all 44 are now statically resolved and editable. Initial Technology asset lookup uses the loader's resolved GFX dependencies and ready-only localisation instead of waiting for workspace-wide indexes, and local drags no longer trigger a full preview rebuild. The UI runner could not start alongside the user's open stable VS Code window; no attempt was made to close that workspace.

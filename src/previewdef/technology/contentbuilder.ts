@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { i18nTableAsScript, localize } from '../../util/i18n';
 import { Technology, TechnologyTree, TechnologyFolder, RenderedTechnologyFolder, RenderedTechnologyFolderGridBox } from './schema';
-import { getSpriteByGfxName, Sprite } from '../../util/image/imagecache';
+import { getSpriteByGfxNameFromResolvedFiles, Sprite } from '../../util/image/imagecache';
 import { forceError, randomString, UserError } from '../../util/common';
 import { HOIPartial } from '../../hoiformat/schema';
 import { renderContainerWindow, renderContainerWindowChildren } from '../../util/hoi4gui/containerwindow';
@@ -17,14 +17,27 @@ import { debug } from '../../util/debug';
 import { flatMap, uniq, range } from 'lodash';
 import { StyleTable } from '../../util/styletable';
 import { renderBackground, RenderNodeCommonOptions } from '../../util/hoi4gui/nodecommon';
-import { getLocalisedTextQuick } from "../../util/localisationIndex";
+import { getLocalisedTextQuickIfReady } from "../../util/localisationIndex";
 import { featureFlagsAsScript, isLocalisationIndexEnabled, isTechnologyShowIdEnabled } from "../../util/featureflags";
+import { TechnologyEditRenderContext } from './editcommon';
+import { tryGetGfxContainerFile } from '../../util/gfxindex';
 
 const techTreeViewName = 'countrytechtreeview';
 const doctrineTreeViewName = 'countrydoctrineview';
 
-export async function renderTechnologyFile(loader: TechnologyTreeLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
+export interface RenderTechnologyFileResult {
+    html: string;
+    editContext: TechnologyEditRenderContext;
+}
+
+export async function renderTechnologyFile(
+    loader: TechnologyTreeLoader,
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+): Promise<RenderTechnologyFileResult> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
+    const editContext: TechnologyEditRenderContext = { availableTreeRootsByFolder: {} };
     try {
         const session = new LoaderSession(false);
         const loadResult = await loader.load(session);
@@ -35,19 +48,20 @@ export async function renderTechnologyFile(loader: TechnologyTreeLoader, uri: vs
 
         if (folders.length === 0) {
             const baseContent = localize('techtree.notechtree', 'No technology tree.');
-            return html(webview, baseContent, [ setPreviewFileUriScript ], []);
+            return { html: html(webview, baseContent, [ setPreviewFileUriScript ], []), editContext };
         }
 
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = randomString(32);
-        const baseContent = await renderTechnologyFolders(technologyTrees, folders, styleTable, loadResult.result, jsCodes);
+        const baseContent = await renderTechnologyFolders(technologyTrees, folders, styleTable, loadResult.result, jsCodes, editContext);
         jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
+        jsCodes.push('window.technologyDocumentVersion = ' + JSON.stringify(documentVersion));
         jsCodes.push('window.technologyDefaultLabelMode = ' + JSON.stringify(isTechnologyShowIdEnabled() ? 'id' : 'name'));
         jsCodes.push(i18nTableAsScript());
         jsCodes.push(featureFlagsAsScript());
 
-        return html(
+        return { html: html(
             webview,
             baseContent,
             [
@@ -61,11 +75,11 @@ export async function renderTechnologyFile(loader: TechnologyTreeLoader, uri: vs
                 styleTable,
                 { nonce: styleNonce },
             ],
-        );
+        ), editContext };
 
     } catch (e) {
         const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
-        return html(webview, baseContent, [ setPreviewFileUriScript ], []);
+        return { html: html(webview, baseContent, [ setPreviewFileUriScript ], []), editContext };
     }
 }
 
@@ -74,7 +88,8 @@ async function renderTechnologyFolders(
     folders: string[],
     styleTable: StyleTable,
     loadResult: TechnologyTreeLoaderResult,
-    jsCodes: string[]): Promise<string> {
+    jsCodes: string[],
+    editContext: TechnologyEditRenderContext): Promise<string> {
     const guiFiles = loadResult.guiFiles.map(f => f.file);
     const guiTypes = flatMap(loadResult.guiFiles, f => f.data.guitypes);
 
@@ -87,7 +102,9 @@ async function renderTechnologyFolders(
     const gfxFiles = loadResult.gfxFiles;
     const techFolders: Record<string, RenderedTechnologyFolder> = {};
     await Promise.all(folders.map(async folder => {
-        techFolders[folder] = await renderTechnologyFolder(technologyTrees, folder, techTreeViews, containerWindowTypes, styleTable, guiFiles, gfxFiles);
+        const rendered = await renderTechnologyFolder(technologyTrees, folder, techTreeViews, containerWindowTypes, styleTable, guiFiles, gfxFiles);
+        techFolders[folder] = rendered.folder;
+        editContext.availableTreeRootsByFolder[folder] = rendered.availableTreeRoots;
     }));
 
     jsCodes.push(`window.technologyTrees = ${JSON.stringify(technologyTrees)};`);
@@ -122,7 +139,7 @@ async function renderTechnologyFolders(
 async function renderToolbar(folders: string[], styleTable: StyleTable): Promise<string> {
     const folderOptions = await Promise.all(
         folders.map(async (folder) => {
-            const localizedText = isLocalisationIndexEnabled() ? `${await getLocalisedTextQuick(folder)} (${folder})` : folder;
+            const localizedText = isLocalisationIndexEnabled() ? `${getLocalisedTextQuickIfReady(folder)} (${folder})` : folder;
             return `<option value="${folder}">${localizedText}</option>`;
         })
     );
@@ -151,8 +168,21 @@ async function renderToolbar(folders: string[], styleTable: StyleTable): Promise
             </div>
         </div>`;
 
+    const editToggle = `
+        <div class="${styleTable.style('toolbarIconGroup', () => `display:flex; flex:0 0 auto; align-items:center; gap:6px; margin-right:10px;`)}">
+            <button
+                id="technology-edit-toggle"
+                type="button"
+                aria-pressed="false"
+                title="${localize('TODO', 'Toggle technology graph editing')}"
+                class="${styleTable.oneTimeStyle('technologyEditButton', () => `display:inline-flex; align-items:center; justify-content:center; height:20px; width:20px; padding:0;`)}"
+            ><i class="codicon codicon-edit"></i></button>
+            <span id="technology-edit-status" aria-live="polite" class="${styleTable.oneTimeStyle('technologyEditStatus', () => `max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`)}"></span>
+        </div>`;
+
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px; z-index: 10;`)}">
         <div class="toolbar">
+            ${editToggle}
             ${isLocalisationIndexEnabled() ? renderPreviewLabelModeControl(styleTable) : ''}
             ${folderSelect}
             ${conditions}
@@ -175,12 +205,13 @@ async function renderTechnologyFolder(
     allContainerWindowTypes: HOIPartial<ContainerWindowType>[],
     styleTable: StyleTable,
     guiFiles: string[],
-    gfxFiles: string[]): Promise<RenderedTechnologyFolder> {
+    gfxFiles: string[]): Promise<{ folder: RenderedTechnologyFolder; availableTreeRoots: string[] }> {
     const folderTreeView = flatMap(techTreeViews, tv => tv.containerwindowtype).find(c => c.name === folder);
     const gridboxes: Record<string, RenderedTechnologyFolderGridBox> = {};
     const renderedTechnologies: Record<string, string> = {};
     const renderedXor = { upDown: '', leftRight: '' };
     const renderedLines: string[] = [];
+    const availableTreeRoots = new Set<string>();
 
     let children: string;
     if (!folderTreeView) {
@@ -207,7 +238,7 @@ async function renderTechnologyFolder(
                 onRenderChild: async (type, child, parentInfo) => {
                     if (type === 'instanttextbox' && isTechnologyStaticTitleTextBox(child as HOIPartial<InstantTextBoxType>)) {
                         const text = child as HOIPartial<InstantTextBoxType>;
-                        const localisedText = await getLocalisedTextQuick(text.text);
+                        const localisedText = getLocalisedTextQuickIfReady(text.text);
                         return await renderInstantTextBox(
                             { ...text, text: getLocalisationLabelContent(text.text ?? '', localisedText) },
                             parentInfo,
@@ -216,6 +247,10 @@ async function renderTechnologyFolder(
                     }
 
                     if (type === 'gridbox') {
+                        const gridboxName = child.name ?? '';
+                        if (gridboxName.endsWith('_tree')) {
+                            availableTreeRoots.add(gridboxName.slice(0, -'_tree'.length));
+                        }
                         const tree = technologyTrees.find(t => t.startTechnology + '_tree' === child.name);
                         if (tree) {
                             const gridboxType = child as HOIPartial<GridBoxType>;
@@ -264,7 +299,10 @@ async function renderTechnologyFolder(
         ${children}
     </div>`;
 
-    return { template, gridboxes, renderedTechnologies, renderedXor, renderedLines };
+    return {
+        folder: { template, gridboxes, renderedTechnologies, renderedXor, renderedLines },
+        availableTreeRoots: Array.from(availableTreeRoots),
+    };
 }
 
 async function renderXorItem(xorItem: HOIPartial<ContainerWindowType>, format: Format['_name'], parentInfo: ParentInfo, commonOptions: RenderCommonOptions): Promise<string> {
@@ -319,7 +357,7 @@ async function renderTechnology(
                 if (childname === 'bonus') {
                     return '';
                 } else if (isTechnologyLabelTextBox(childname)) {
-                    const localisedText = await getLocalisedTextQuick(technology.id);
+                    const localisedText = getLocalisedTextQuickIfReady(technology.id);
                     return await renderInstantTextBox(
                         { ...text, text: getTechnologyLabelContent(technology.id, localisedText) },
                         parentInfo,
@@ -343,6 +381,10 @@ async function renderTechnology(
     return `<div
         start="${technology.token?.start}"
         end="${technology.token?.end}"
+        data-technology-id="${htmlEscape(technology.id)}"
+        data-technology-folder="${htmlEscape(folder.name)}"
+        data-technology-edit-key="${htmlEscape(folder.edit?.editKey ?? '')}"
+        data-technology-editable="${folder.edit?.editable === true ? 'true' : 'false'}"
         ${await getTechnologyTitleAttributes(technology.id, folder)}
         class="
             navigator
@@ -455,7 +497,7 @@ function getTechnologyLabelContent(technologyId: string, localisedText: string |
 }
 
 async function getTechnologyTitleAttributes(technologyId: string, folder: TechnologyFolder): Promise<string> {
-    const localisedText = await getLocalisedTextQuick(technologyId);
+    const localisedText = getLocalisedTextQuickIfReady(technologyId);
     const name = localisedText && localisedText !== technologyId ? localisedText : technologyId;
     const idTitle = `${technologyId}\n(${folder.x}, ${folder.y})`;
     const nameTitle = `${name}\n(${folder.x}, ${folder.y})`;
@@ -519,7 +561,7 @@ async function renderLineItem(
 async function getSpriteFromTryList(tryList: string[], gfxFiles: string[]): Promise<Sprite | undefined> {
     let background: Sprite | undefined = undefined;
     for (const imageName of tryList) {
-        background = await getSpriteByGfxName(imageName, gfxFiles);
+        background = await getTechnologySpriteByName(imageName, gfxFiles);
         if (background !== undefined) {
             break;
         }
@@ -529,16 +571,24 @@ async function getSpriteFromTryList(tryList: string[], gfxFiles: string[]): Prom
 }
 
 async function getTechnologyIcon(name: string, gfxFiles: string[], defaultIcon?: string): Promise<Sprite | undefined> {
-    const result = await getSpriteByGfxName(name, gfxFiles);
+    const result = await getTechnologySpriteByName(name, gfxFiles);
     if (result !== undefined || !defaultIcon) {
         return result;
     }
 
-    return await getSpriteByGfxName(defaultIcon, gfxFiles);
+    return await getTechnologySpriteByName(defaultIcon, gfxFiles);
 }
 
 function defaultGetSprite(gfxFiles: string[]) {
     return (sprite: string) => {
-        return getSpriteByGfxName(sprite, gfxFiles);
+        return getTechnologySpriteByName(sprite, gfxFiles);
     };
+}
+
+function getTechnologySpriteByName(name: string, gfxFiles: string[]): Promise<Sprite | undefined> {
+    const indexedFile = tryGetGfxContainerFile(name);
+    const resolvedFiles = indexedFile
+        ? [indexedFile, ...gfxFiles.filter(file => file !== indexedFile)]
+        : gfxFiles;
+    return getSpriteByGfxNameFromResolvedFiles(name, resolvedFiles);
 }

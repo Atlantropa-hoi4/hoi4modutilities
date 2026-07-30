@@ -5,6 +5,8 @@ import { ConditionComplexExpr, ConditionItem, extractConditionValues, extractCon
 import { countryScope } from "../../hoiformat/scope";
 import { GridBoxType } from "../../hoiformat/gui";
 import { ParentInfo } from "../../util/hoi4gui/common";
+import { TechnologyFolderEditMeta } from "./editcommon";
+import { collectTechnologyFileMetadata, getTechnologyFolderEditMetadata } from "./editmetadata";
 
 export interface RenderedTechnologyFolder {
     template: string; // html
@@ -24,6 +26,7 @@ export interface TechnologyFolder {
     name: string;
     x: number;
     y: number;
+    edit?: TechnologyFolderEditMeta;
 }
 
 export interface Technology {
@@ -108,9 +111,10 @@ const technologyFileSchema: SchemaDef<TechnologyFile> = {
     technologies: technologiesSchema,
 };
 
-export function getTechnologyTrees(node: Node): TechnologyTree[] {
+export function getTechnologyTrees(node: Node, filePath = ''): TechnologyTree[] {
     const file = convertNodeToJson<TechnologyFile>(node, technologyFileSchema);
-    const allTechnologies = getTechnologies(file.technologies._map);
+    const folderEditMetadata = getTechnologyFolderEditMetadata(collectTechnologyFileMetadata(node, filePath));
+    const allTechnologies = getTechnologies(file.technologies._map, folderEditMetadata);
 
     const result: TechnologyTree[] = [];
     const technologiesByFolder = getTechnologiesByFolder(allTechnologies);
@@ -202,7 +206,10 @@ function getTechnologiesByTree(technologiesInOneFolder: Technology[]): Record<st
     return trees;
 }
 
-function getTechnologies(technologies: HOIPartial<TechnologiesDef>['_map']): Record<string, Technology> {
+function getTechnologies(
+    technologies: HOIPartial<TechnologiesDef>['_map'],
+    folderEditMetadata: Record<string, Record<string, TechnologyFolderEditMeta>>,
+): Record<string, Technology> {
     const result: Record<string, Technology> = {};
 
     for (const { _key, _value } of Object.values(technologies)) {
@@ -226,7 +233,7 @@ function getTechnologies(technologies: HOIPartial<TechnologiesDef>['_map']): Rec
 
             const folderName = folder.name;
             if (folderName) {
-                folders[folderName] = { name: folderName, x, y };
+                folders[folderName] = { name: folderName, x, y, edit: folderEditMetadata[id]?.[folderName] };
             }
         }
 
