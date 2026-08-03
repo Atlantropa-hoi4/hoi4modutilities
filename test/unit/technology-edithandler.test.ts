@@ -13,6 +13,8 @@ const appliedEdits: any[] = [];
 const refreshedDocuments: any[] = [];
 const errorMessages: string[] = [];
 const locallyAppliedVersions: Array<{ command: string; version: number }> = [];
+const applySequence: string[] = [];
+let applyEditResult = true;
 let currentDocument: MockDocument | undefined;
 let nextDocumentAfterApply: MockDocument | undefined;
 let inputValue: string | undefined;
@@ -23,9 +25,12 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         return {
             workspace: {
                 applyEdit: async (edit: unknown) => {
+                    applySequence.push('apply');
                     appliedEdits.push(edit);
-                    currentDocument = nextDocumentAfterApply ?? currentDocument;
-                    return true;
+                    if (applyEditResult) {
+                        currentDocument = nextDocumentAfterApply ?? currentDocument;
+                    }
+                    return applyEditResult;
                 },
             },
             window: {
@@ -66,6 +71,8 @@ describe('technology edit command handler', () => {
         refreshedDocuments.length = 0;
         errorMessages.length = 0;
         locallyAppliedVersions.length = 0;
+        applySequence.length = 0;
+        applyEditResult = true;
         currentDocument = { version: 3, getText: () => 'before' };
         nextDocumentAfterApply = { version: 4, getText: () => 'after' };
         inputValue = 'new_child';
@@ -88,6 +95,22 @@ describe('technology edit command handler', () => {
             documentVersion: 4,
         });
         assert.deepStrictEqual(locallyAppliedVersions, [{ command: 'applyTechnologyPositionEdits', version: 4 }]);
+        assert.deepStrictEqual(applySequence, ['record:4', 'apply']);
+    });
+
+    it('discards the pre-recorded version when VS Code refuses the edit', async () => {
+        applyEditResult = false;
+        const handler = createHandler();
+        await handler.handleMessage({
+            command: 'applyTechnologyPositionEdits',
+            requestId: 'request-refused',
+            documentVersion: 3,
+            folder: 'infantry',
+            edits: [{ technologyId: 'root', editKey: 'key', x: 2, y: 3 }],
+        });
+
+        assert.deepStrictEqual(applySequence, ['record:4', 'apply', 'discard:4']);
+        assert.strictEqual(postedMessages[0].command, 'technologyEditRejected');
     });
 
     it('rejects stale requests and refreshes the latest document', async () => {
@@ -150,7 +173,11 @@ function createHandler(): InstanceType<typeof TechnologyEditCommandHandler> {
             refreshedDocuments.push(document);
         },
         recordLocallyAppliedVersion: (command, version) => {
+            applySequence.push(`record:${version}`);
             locallyAppliedVersions.push({ command, version });
+            return () => {
+                applySequence.push(`discard:${version}`);
+            };
         },
     });
 }

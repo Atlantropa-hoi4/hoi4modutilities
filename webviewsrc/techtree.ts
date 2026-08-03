@@ -730,7 +730,6 @@ function startTechnologyDrag(item: HTMLDivElement, event: PointerEvent) {
         }));
         applyTechnologyPositionsLocally(targetEdits);
         postTechnologyEdit('applyTechnologyPositionEdits', { edits: targetEdits }, { edits: targetEdits, rollback });
-        void buildContent();
     };
     const cancel = () => {
         window.removeEventListener('pointermove', move, true);

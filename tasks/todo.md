@@ -673,3 +673,11 @@ Repository-wide audit remediation 2026-07-30:
 - [x] Reverify targeted coverage, the full release pipeline under Node 20, production dependency audit, and whitespace.
 
 Review note: Production dependencies now resolve to `adm-zip` 0.6.0, `js-yaml` 4.3.0, and `@nevware21/ts-utils` 0.16.0 with a clean `npm ci`; `npm audit --omit=dev` reports zero vulnerabilities. Technology edits are checked against host-rendered grid geometry and current document occupancy before one `WorkspaceEdit` is created. Empty filtered grids no longer require a rendered technology item, cancelled marquee gestures remove all listeners, and every maintained l10n bundle covers the editor UI. Verification passed 29 focused tests, all 424 unit tests, TypeScript, lint, production bundles, 16 Extension Host smoke tests, VSIX packaging, and `git diff --check` under Node 20.20.2.
+
+Technology Preview label and drag repair 2026-08-04:
+- [x] Refresh an initially deferred Technology preview once localisation data is ready so ID/Name labels do not remain identical.
+- [x] Register the expected local position-edit document version before applying the `WorkspaceEdit`, with rollback when VS Code refuses it.
+- [x] Keep the optimistic dragged DOM in place until the host acknowledgement instead of rebuilding it immediately.
+- [x] Run focused tests, TypeScript, lint, development/production bundles, UI smoke, and whitespace checks.
+
+Review note: Technology labels now refresh once the deferred localisation index becomes ready without blocking first paint. Position edits reserve their expected document version before `WorkspaceEdit` can emit a change event, discard that reservation on refusal, and keep the optimistic dragged node in place until the host acknowledgement. Verification passed 20 focused tests, all 427 unit tests, TypeScript, lint, development and production bundles, 16 Extension Host smoke tests, and `git diff --check` under Node 24.14.0; direct pointer/label interaction in a real mod workspace was not automated.

@@ -22,7 +22,10 @@ interface TechnologyEditCommandHandlerOptions {
     webview: vscode.Webview;
     getEditContext: () => TechnologyEditRenderContext;
     refreshDocument: (document: vscode.TextDocument) => Promise<void>;
-    recordLocallyAppliedVersion?: (command: TechnologyEditMessage['command'], documentVersion: number) => void;
+    recordLocallyAppliedVersion?: (
+        command: TechnologyEditMessage['command'],
+        documentVersion: number,
+    ) => (() => void) | void;
 }
 
 export class TechnologyEditCommandHandler {
@@ -186,13 +189,29 @@ export class TechnologyEditCommandHandler {
             await this.applied(message, document.version, payload);
             return;
         }
-        if (!await vscode.workspace.applyEdit(workspaceResult.edit)) {
+        const expectedVersion = document.version + 1;
+        const discardRecordedVersion = this.options.recordLocallyAppliedVersion?.(
+            message.command,
+            expectedVersion,
+        );
+        let editApplied: boolean;
+        try {
+            editApplied = await vscode.workspace.applyEdit(workspaceResult.edit);
+        } catch (error) {
+            discardRecordedVersion?.();
+            throw error;
+        }
+        if (!editApplied) {
+            discardRecordedVersion?.();
             await this.reportError(message, localize('TODO', 'VS Code refused the technology edit.'));
             return;
         }
         const updatedDocument = getDocumentByUri(this.options.uri);
         const updatedVersion = updatedDocument?.version ?? document.version + 1;
-        this.options.recordLocallyAppliedVersion?.(message.command, updatedVersion);
+        if (updatedVersion !== expectedVersion) {
+            discardRecordedVersion?.();
+            this.options.recordLocallyAppliedVersion?.(message.command, updatedVersion);
+        }
         await this.applied(message, updatedVersion, payload);
     }
 

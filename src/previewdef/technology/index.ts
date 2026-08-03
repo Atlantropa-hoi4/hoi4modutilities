@@ -4,10 +4,11 @@ import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewDescriptor } from '../descriptor';
 import { PreviewBase } from '../previewbase';
 import { TechnologyTreeLoader } from './loader';
-import { getRelativePathInWorkspace } from '../../util/vsccommon';
+import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { TechnologyEditCommandHandler } from './edithandler';
 import { TechnologyEditMessage, TechnologyEditRenderContext } from './editcommon';
+import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
 
 function canPreviewTechnology(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -36,6 +37,7 @@ class TechnologyTreePreview extends PreviewBase {
     private renderGeneration = 0;
     private renderQueue: Promise<void> = Promise.resolve();
     private locallyAppliedPositionVersions = new Set<number>();
+    private pendingLocalisationRefreshVersion: number | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -51,6 +53,7 @@ class TechnologyTreePreview extends PreviewBase {
             recordLocallyAppliedVersion: (command, version) => {
                 if (command === 'applyTechnologyPositionEdits') {
                     this.locallyAppliedPositionVersions.add(version);
+                    return () => this.locallyAppliedPositionVersions.delete(version);
                 }
             },
         });
@@ -61,7 +64,33 @@ class TechnologyTreePreview extends PreviewBase {
         const result = await renderTechnologyFile(this.technologyTreeLoader, document.uri, this.panel.webview, document.version);
         this.content = undefined;
         this.editContext = result.editContext;
+        this.scheduleLocalisationReadyRefresh(document.version);
         return result.html;
+    }
+
+    private scheduleLocalisationReadyRefresh(documentVersion: number): void {
+        if (this.isDisposed
+            || isLocalisationIndexReady()
+            || this.pendingLocalisationRefreshVersion === documentVersion) {
+            return;
+        }
+
+        this.pendingLocalisationRefreshVersion = documentVersion;
+        void whenLocalisationIndexReady({ showStatusBar: false }).then(() => {
+            if (this.isDisposed || this.pendingLocalisationRefreshVersion !== documentVersion) {
+                return;
+            }
+
+            this.pendingLocalisationRefreshVersion = undefined;
+            const latestDocument = getDocumentByUri(this.uri);
+            if (latestDocument?.version === documentVersion) {
+                void this.onDocumentChange(latestDocument);
+            }
+        }, () => {
+            if (this.pendingLocalisationRefreshVersion === documentVersion) {
+                this.pendingLocalisationRefreshVersion = undefined;
+            }
+        });
     }
 
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
