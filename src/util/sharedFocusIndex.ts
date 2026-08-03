@@ -124,6 +124,19 @@ export async function prewarmSharedFocusIndex(): Promise<void> {
     ]);
 }
 
+export function isSharedFocusIndexReady(): boolean {
+    return !isSharedFocusIndexEnabled()
+        || (sharedFocusIndexService.isReady('global') && sharedFocusIndexService.isReady('workspace'));
+}
+
+export function tryFindFileByFocusKey(key: string): string | undefined {
+    if (!isSharedFocusIndexReady()) {
+        return undefined;
+    }
+
+    return findFileByFocusKeyInLayeredIndexes([workspaceFocusIndex, dlcFocusIndex, globalFocusIndex], key);
+}
+
 async function fillFocusItems(
     focusFile: string,
     focusIndex: FocusIndexState,
@@ -165,7 +178,7 @@ async function fillFocusItems(
 // Function to find the file name containing the specified focus key
 export async function findFileByFocusKey(key: string): Promise<string | undefined> {
     await Promise.all([ensureGlobalFocusIndex(), ensureWorkspaceFocusIndex()]);
-    return findFileByFocusKeyInLayeredIndexes([workspaceFocusIndex, dlcFocusIndex, globalFocusIndex], key);
+    return tryFindFileByFocusKey(key);
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {

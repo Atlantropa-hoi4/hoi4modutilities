@@ -619,6 +619,13 @@ Focus Tree preview/editor performance refactor 2026-07-14:
 
 Review note: Focus layout propagation now uses a dependency queue with a bounded per-tree LRU cache; the synthetic 2,000-focus reverse-order chain improved from 273.77 ms to 6.22 ms. The webview uses one delegated pointer-drag lifecycle, renders each focus once, and applies string-map patches in place. Prerequisite linking now keeps host and optimistic state aligned, broad text refreshes are narrowed, localisation configuration is captured once per batch, and disposed or stale preview work is cooperatively cancelled with bounded asset batches. `npm run verify` passed with 377 unit tests, 15 Extension Host smoke tests, production bundles, lint, and a packaged `hoi4modutilities-0.14.0.vsix`; `npm run build:dev` and `git diff --check` also succeeded.
 
+Focus Tree cold-open index decoupling 2026-08-03:
+- [x] Keep deferred first paint from waiting for unfinished shared-focus indexes.
+- [x] Require localisation, GFX, and shared-focus indexes to be ready before selecting a full initial snapshot.
+- [x] Reverify focused loader/session coverage, TypeScript, lint, development bundle, Extension Host smoke, and whitespace.
+
+Review note: Cold Focus Tree opens now use only already-ready shared-focus data, suppress transient missing-shared-focus warnings for work intentionally deferred, and remain on the deferred structural path while any required preview index is still building. The existing full hydration pass fills shared focuses and assets after first paint. Reverified with 25 focused tests, all 426 unit tests, TypeScript, lint, development/production bundles, 16 Extension Host smoke tests, and `git diff --check` under Node 24.14.0; the repository recommendation remains Node 20 LTS.
+
 World Map preview performance refactor 2026-07-14:
 - [x] Remove duplicated summary collections and redundant chunk serialization/loader lookups.
 - [x] Pipeline bounded chunk requests and commit diff generations only once.

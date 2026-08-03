@@ -36,6 +36,9 @@ const fileContents: Record<string, string> = {
 const focusIconResolutionCalls: string[][] = [];
 const gfxIndexLookups: string[] = [];
 const focusIconFallbackLimits: Array<number | undefined> = [];
+const blockingSharedFocusIndexLookups: string[] = [];
+const readySharedFocusIndexLookups: string[] = [];
+let sharedFocusIndexReady = true;
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -81,7 +84,15 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         || request.endsWith('/sharedFocusIndex')
         || request === '../../util/sharedFocusIndex') {
         return {
-            findFileByFocusKey: async (focusId: string) => focusId === 'SHARED_EXT' ? sharedFocusFile : undefined,
+            findFileByFocusKey: async (focusId: string) => {
+                blockingSharedFocusIndexLookups.push(focusId);
+                return focusId === 'SHARED_EXT' ? sharedFocusFile : undefined;
+            },
+            tryFindFileByFocusKey: (focusId: string) => {
+                readySharedFocusIndexLookups.push(focusId);
+                return sharedFocusIndexReady && focusId === 'SHARED_EXT' ? sharedFocusFile : undefined;
+            },
+            isSharedFocusIndexReady: () => sharedFocusIndexReady,
         };
     }
 
@@ -149,6 +160,9 @@ describe('focustree loader', () => {
         focusIconResolutionCalls.length = 0;
         gfxIndexLookups.length = 0;
         focusIconFallbackLimits.length = 0;
+        blockingSharedFocusIndexLookups.length = 0;
+        readySharedFocusIndexLookups.length = 0;
+        sharedFocusIndexReady = true;
     });
 
     it('propagates deferred asset loading to shared focus dependencies', async () => {
@@ -158,6 +172,21 @@ describe('focustree loader', () => {
         assert.strictEqual(result.result.deferredAssetLoad, true);
         assert.ok(result.dependencies.includes(sharedFocusFile));
         assert.deepStrictEqual(focusIconResolutionCalls, []);
+        assert.deepStrictEqual(blockingSharedFocusIndexLookups, []);
+        assert.deepStrictEqual(readySharedFocusIndexLookups, ['SHARED_EXT']);
+    });
+
+    it('does not block a deferred first render on an unfinished shared focus index', async () => {
+        sharedFocusIndexReady = false;
+        const loader = new FocusTreeLoader(mainFocusFile, undefined, 'deferred');
+        const result = await loader.load(new LoaderSession(true));
+
+        assert.strictEqual(result.result.deferredAssetLoad, true);
+        assert.ok(!result.dependencies.includes(sharedFocusFile));
+        assert.deepStrictEqual(blockingSharedFocusIndexLookups, []);
+        assert.deepStrictEqual(readySharedFocusIndexLookups, []);
+        assert.ok(result.result.focusTrees.every(tree =>
+            tree.warnings.every(warning => warning.code !== 'shared-focus-target-missing')));
     });
 
     it('keeps full asset loading for full shared focus dependency hydration', async () => {
@@ -166,6 +195,7 @@ describe('focustree loader', () => {
 
         assert.ok(focusIconResolutionCalls.length >= 1);
         assert.ok(focusIconResolutionCalls.flat().includes('GFX_SHARED'));
+        assert.deepStrictEqual(blockingSharedFocusIndexLookups, ['SHARED_EXT']);
     });
 
     it('uses the GFX index during full asset loading so icons do not require explicit dependency headers', async () => {

@@ -26,6 +26,8 @@ import { measureAsync, recordPerf } from '../../util/perf';
 import { UserError } from '../../util/common';
 import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
 import { isLocalisationIndexEnabled } from '../../util/featureflags';
+import { isGfxIndexReady } from '../../util/gfxindex';
+import { isSharedFocusIndexReady } from '../../util/sharedFocusIndex';
 
 export interface FocusTreeRefreshOptions {
     ignorePendingLocalEditDocumentVersion?: boolean;
@@ -45,6 +47,7 @@ export interface FocusTreePreviewSessionOptions {
     runtimeState?: FocusTreeRuntimeState;
     snapshotBuilder?: FocusTreeSnapshotBuilderLike;
     deferredHydrationDelayMs?: number;
+    isInitialFullLoadReady?: () => boolean;
 }
 
 export interface FocusTreeSnapshotBuilderLike {
@@ -65,6 +68,7 @@ export class FocusTreePreviewSession {
     private readonly getConditionPresetsByTree: () => FocusConditionPresetsByTree;
     private readonly getLatestDocument: (uri: vscode.Uri) => vscode.TextDocument | undefined;
     private readonly snapshotBuilder: FocusTreeSnapshotBuilderLike;
+    private readonly isInitialFullLoadReady: () => boolean;
     private readonly runtimeState: FocusTreeRuntimeState;
     private readonly deferredHydrationDelayMs: number;
     private readonly patchPlanner = new FocusTreePatchPlanner();
@@ -95,6 +99,7 @@ export class FocusTreePreviewSession {
         }
         this.runtimeState = options.runtimeState ?? createFocusTreeRuntimeState();
         this.deferredHydrationDelayMs = options.deferredHydrationDelayMs ?? FocusTreePreviewSession.defaultDeferredHydrationDelayMs;
+        this.isInitialFullLoadReady = options.isInitialFullLoadReady ?? areFocusTreePreviewIndexesReady;
     }
 
     public renderShell(documentVersion: number): string {
@@ -132,7 +137,7 @@ export class FocusTreePreviewSession {
         this.resetSessionState();
         this.webview.html = this.renderShell(document.version);
         const requestId = beginFocusTreeRefresh(this.runtimeState);
-        const initialAssetLoadMode: FocusTreeAssetLoadMode = isLocalisationIndexEnabled() && isLocalisationIndexReady()
+        const initialAssetLoadMode: FocusTreeAssetLoadMode = this.isInitialFullLoadReady()
             ? 'full'
             : 'deferred';
         this.trace('initializePanel', {
@@ -684,6 +689,13 @@ export class FocusTreePreviewSession {
             debug('focustree.session', entry);
         }
     }
+}
+
+function areFocusTreePreviewIndexesReady(): boolean {
+    return isLocalisationIndexEnabled()
+        && isLocalisationIndexReady()
+        && isGfxIndexReady()
+        && isSharedFocusIndexReady();
 }
 
 function getApproximateJsonByteLength(value: unknown): number {

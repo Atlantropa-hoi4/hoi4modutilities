@@ -153,6 +153,11 @@ export async function prewarmGfxIndex(): Promise<void> {
     ]);
 }
 
+export function isGfxIndexReady(): boolean {
+    return !isGfxIndexEnabled()
+        || (gfxIndexService.isReady('global') && gfxIndexService.isReady('workspace'));
+}
+
 async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean, dlc?: boolean }, estimatedSize?: [number]): Promise<void> {
     try {
         if (estimatedSize) {

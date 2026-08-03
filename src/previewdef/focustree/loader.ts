@@ -5,7 +5,7 @@ import { localize } from "../../util/i18n";
 import { uniq, flatten } from "lodash";
 import { getGfxContainerFile } from "../../util/gfxindex";
 import { isSharedFocusIndexEnabled } from "../../util/featureflags";
-import { findFileByFocusKey } from "../../util/sharedFocusIndex";
+import { findFileByFocusKey, isSharedFocusIndexReady, tryFindFileByFocusKey } from "../../util/sharedFocusIndex";
 import {
     addInlayGfxWarnings,
     getCachedInterfaceGfxFiles,
@@ -73,15 +73,23 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         session.throwIfCancelled();
         const file = convertFocusFileNodeToJson(parsedNode, constants);
 
+        const deferredSharedFocusIds = new Set<string>();
         if (isSharedFocusIndexEnabled()) {
             const dependencyPaths = new Set(dependencies.map(d => d.path));
+            const canResolveSharedFocusImmediately = !deferAssetLoad || isSharedFocusIndexReady();
             for (const focusTree of file.focus_tree) {
                 for (const sharedFocus of focusTree.shared_focus) {
                     session.throwIfCancelled();
                     if (!sharedFocus) {
                         continue;
                     }
-                    const filePath = await findFileByFocusKey(sharedFocus);
+                    if (!canResolveSharedFocusImmediately) {
+                        deferredSharedFocusIds.add(sharedFocus);
+                        continue;
+                    }
+                    const filePath = deferAssetLoad
+                        ? tryFindFileByFocusKey(sharedFocus)
+                        : await findFileByFocusKey(sharedFocus);
                     if (filePath && !dependencyPaths.has(filePath)) {
                         dependencyPaths.add(filePath);
                         dependencies.push({ type: 'focus', path: filePath });
@@ -101,6 +109,12 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const importedFocusTrees = focusTreeDepFiles.flatMap(f => f.result.focusTrees);
 
         const focusTrees = getFocusTree(parsedNode, importedFocusTrees, this.file);
+        if (deferredSharedFocusIds.size > 0) {
+            for (const focusTree of focusTrees) {
+                focusTree.warnings = focusTree.warnings.filter(warning =>
+                    warning.code !== 'shared-focus-target-missing' || !deferredSharedFocusIds.has(warning.source));
+            }
+        }
         focusTrees.push(...importedFocusTrees.filter(tree => tree.kind === 'joint' && !focusTrees.some(localTree => localTree.id === tree.id)));
 
         const hasInlayRefs = !deferAssetLoad && focusTrees.some(focusTree => focusTree.inlayWindowRefs.length > 0);

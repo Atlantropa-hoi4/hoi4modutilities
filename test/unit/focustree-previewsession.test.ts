@@ -79,6 +79,7 @@ function createSession(overrides?: {
     renderShell?: (documentVersion: number) => string;
     latestDocument?: vscode.TextDocument | undefined;
     deferredHydrationDelayMs?: number;
+    isInitialFullLoadReady?: () => boolean;
 }) {
     const postMessages: any[] = [];
     const webview = {
@@ -99,6 +100,7 @@ function createSession(overrides?: {
         getLatestDocument: () => latestDocument.current,
         runtimeState,
         deferredHydrationDelayMs: overrides?.deferredHydrationDelayMs ?? 0,
+        isInitialFullLoadReady: overrides?.isInitialFullLoadReady,
         snapshotBuilder: {
             renderShell: overrides?.renderShell ?? (documentVersion => `shell:${documentVersion}`),
             renderDocument: async document => `full:${document.version}`,
@@ -179,6 +181,34 @@ describe('focustree preview session', () => {
         assert.strictEqual(webview.html, '');
         assert.strictEqual(runtimeState.lastRenderCache, undefined);
         assert.strictEqual(runtimeState.webviewReady, false);
+    });
+
+    it('uses a full initial snapshot only when the preview index readiness gate passes', async () => {
+        const requestedModes: Array<'full' | 'deferred'> = [];
+        const first = createSession({
+            isInitialFullLoadReady: () => false,
+            buildBaseState: async (document, assetLoadMode) => {
+                requestedModes.push(assetLoadMode);
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
+        });
+
+        await first.session.initializePanel(createDocument(40));
+        assert.deepStrictEqual(requestedModes, ['deferred']);
+        first.session.dispose();
+
+        requestedModes.length = 0;
+        const second = createSession({
+            isInitialFullLoadReady: () => true,
+            buildBaseState: async (document, assetLoadMode) => {
+                requestedModes.push(assetLoadMode);
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
+        });
+
+        await second.session.initializePanel(createDocument(41));
+        assert.deepStrictEqual(requestedModes, ['full']);
+        second.session.dispose();
     });
 
     it('initializes the panel with shell html and delays snapshot delivery until webview ready', async () => {
