@@ -11,6 +11,8 @@ export interface ScalarFieldMeta {
 export interface TechnologyFolderEditMeta {
     editKey: string;
     editable: boolean;
+    resolvedX?: number;
+    resolvedY?: number;
 }
 
 export interface TechnologyPositionEdit {

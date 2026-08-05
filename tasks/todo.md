@@ -681,3 +681,10 @@ Technology Preview label and drag repair 2026-08-04:
 - [x] Run focused tests, TypeScript, lint, development/production bundles, UI smoke, and whitespace checks.
 
 Review note: Technology labels now refresh once the deferred localisation index becomes ready without blocking first paint. Position edits reserve their expected document version before `WorkspaceEdit` can emit a change event, discard that reservation on refusal, and keep the optimistic dragged node in place until the host acknowledgement. Verification passed 20 focused tests, all 427 unit tests, TypeScript, lint, development and production bundles, 16 Extension Host smoke tests, and `git diff --check` under Node 24.14.0; direct pointer/label interaction in a real mod workspace was not automated.
+
+Technology Preview constant x-coordinate drag repair 2026-08-05:
+- [x] Trace x-axis drag coordinates from parsed folder positions through render metadata and host validation.
+- [x] Feed statically resolved file-local x/y constants into the rendered Technology tree and drag start positions.
+- [x] Add focused regression coverage and run Technology tests, TypeScript checks, lint, builds, UI smoke, and whitespace checks.
+
+Review note: Technology folder coordinates backed by uniquely defined file-local constants now use their resolved numeric values in the rendered tree, so x-axis drag starts and occupancy validation match the source document. Verification passed 18 focused Technology tests, all 428 unit tests, TypeScript checks, lint, development and production builds, the Extension Host UI smoke suite, and `git diff --check` under Node 24.14.0. Direct pointer dragging in a representative real mod workspace remains unverified.

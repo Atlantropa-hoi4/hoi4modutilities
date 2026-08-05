@@ -3,6 +3,29 @@ import { parseHoi4File } from '../../src/hoiformat/hoiparser';
 import { getTechnologyTrees } from '../../src/previewdef/technology/schema';
 
 describe('technology tree schema', () => {
+    it('uses resolved file-local constants for draggable folder coordinates', () => {
+        const [tree] = getTechnologyTrees(parseHoi4File(`
+technologies = {
+    @column = 4
+    @row = 6
+    root = {
+        folder = {
+            name = infantry_folder
+            position = { x = @column y = @row }
+        }
+    }
+}
+`), 'common/technologies/constants.txt');
+
+        const folder = tree.technologies[0].folders.infantry_folder;
+        assert.deepStrictEqual({ x: folder.x, y: folder.y }, { x: 4, y: 6 });
+        assert.strictEqual(folder.edit?.editable, true);
+        assert.deepStrictEqual(
+            { x: folder.edit?.resolvedX, y: folder.edit?.resolvedY },
+            { x: 4, y: 6 },
+        );
+    });
+
     it('extracts conditional branches and forced small layouts without duplicating technologies', () => {
         const trees = getTechnologyTrees(parseHoi4File(`
 technologies = {

@@ -228,12 +228,12 @@ function getTechnologies(
         const folders: Record<string, TechnologyFolder> = {};
 
         for (const folder of technology.folder) {
-            const x = folder.position?.x?._value ?? 0;
-            const y = folder.position?.y?._value ?? 0;
-
             const folderName = folder.name;
             if (folderName) {
-                folders[folderName] = { name: folderName, x, y, edit: folderEditMetadata[id]?.[folderName] };
+                const edit = folderEditMetadata[id]?.[folderName];
+                const x = edit?.resolvedX ?? folder.position?.x?._value ?? 0;
+                const y = edit?.resolvedY ?? folder.position?.y?._value ?? 0;
+                folders[folderName] = { name: folderName, x, y, edit };
             }
         }
 

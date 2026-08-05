@@ -98,7 +98,12 @@ export function getTechnologyFolderEditMetadata(
         }
         const folders: Record<string, TechnologyFolderEditMeta> = {};
         for (const folder of technology.folders) {
-            folders[folder.name] = { editKey: folder.editKey, editable: folder.editable };
+            folders[folder.name] = {
+                editKey: folder.editKey,
+                editable: folder.editable,
+                resolvedX: folder.xValue,
+                resolvedY: folder.yValue,
+            };
         }
         result[technology.id] = folders;
     }
