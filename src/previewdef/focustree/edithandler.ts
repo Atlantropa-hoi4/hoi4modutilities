@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { forceError } from "../../util/common";
 import { localize } from "../../util/i18n";
 import { getDocumentByUri } from "../../util/vsccommon";
 import {
@@ -21,6 +22,9 @@ import {
 import type { FocusTreeLocalEditResult } from "./runtime";
 import type { FocusTreePreviewSession } from "./previewsession";
 
+type FocusTreeEditRequest = Exclude<FocusPositionEditMessage,
+    { command: 'promptFocusConditionPresetName' | 'persistFocusConditionPresets' }>;
+
 export interface FocusTreeEditCommandHandlerOptions {
     uri: vscode.Uri;
     relativeFilePath: string;
@@ -33,6 +37,7 @@ export class FocusTreeEditCommandHandler {
     private readonly relativeFilePath: string;
     private readonly webview: vscode.Webview;
     private readonly session: FocusTreePreviewSession;
+    private queue: Promise<void> = Promise.resolve();
 
     constructor(options: FocusTreeEditCommandHandlerOptions) {
         this.uri = options.uri;
@@ -42,32 +47,55 @@ export class FocusTreeEditCommandHandler {
     }
 
     public async handleMessage(msg: FocusPositionEditMessage): Promise<boolean> {
+        if (!isFocusTreeEditCommand(msg.command)) {
+            return false;
+        }
+        const editMessage = msg as FocusTreeEditRequest;
+        this.queue = this.queue
+            .catch(() => undefined)
+            .then(async () => {
+                try {
+                    await this.processMessage(editMessage);
+                } catch (error) {
+                    await this.reportError(editMessage, forceError(error).message);
+                }
+            });
+        await this.queue;
+        return true;
+    }
+
+    private async processMessage(msg: FocusTreeEditRequest): Promise<void> {
         const document = getDocumentByUri(this.uri);
         if (!document) {
-            await vscode.window.showErrorMessage(localize('TODO', 'The source document is no longer open.'));
-            return true;
+            await this.reportError(msg, localize('TODO', 'The source document is no longer open.'));
+            return;
         }
 
         if ('documentVersion' in msg && document.version !== msg.documentVersion) {
+            await this.reject(msg, localize('TODO', 'The focus document changed before the edit could be applied.'));
             await this.session.refreshDocument(document, { source: 'document' });
-            return true;
+            return;
         }
 
         switch (msg.command) {
             case 'applyFocusPositionEdit':
-                return this.applyFocusPositionEdit(document, msg);
+                await this.applyFocusPositionEdit(document, msg);
+                return;
             case 'applyContinuousFocusPositionEdit':
-                return this.applyContinuousFocusPositionEdit(document, msg);
+                await this.applyContinuousFocusPositionEdit(document, msg);
+                return;
             case 'applyFocusLinkEdit':
-                return this.applyFocusLinkEdit(document, msg);
+                await this.applyFocusLinkEdit(document, msg);
+                return;
             case 'applyFocusExclusiveLinkEdit':
-                return this.applyFocusExclusiveLinkEdit(document, msg);
+                await this.applyFocusExclusiveLinkEdit(document, msg);
+                return;
             case 'deleteFocus':
-                return this.deleteFocus(document, msg);
+                await this.deleteFocus(document, msg);
+                return;
             case 'createFocusTemplateAtPosition':
-                return this.createFocusTemplate(document, msg);
-            default:
-                return false;
+                await this.createFocusTemplate(document, msg);
+                return;
         }
     }
 
@@ -82,23 +110,32 @@ export class FocusTreeEditCommandHandler {
             msg.targetLocalY,
         );
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
+            await this.webview.postMessage({
+                command: 'focusPositionEditApplied',
+                requestId: msg.requestId,
+                focusId: msg.focusId,
+                targetLocalX: msg.targetLocalX,
+                targetLocalY: msg.targetLocalY,
+                documentVersion: document.version,
+            });
             return true;
         }
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus position edit.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the focus position edit.'));
             return true;
         }
 
         const result = this.reconcileLocalEdit(getDocumentByUri(this.uri));
         await this.webview.postMessage({
             command: 'focusPositionEditApplied',
+            requestId: msg.requestId,
             focusId: msg.focusId,
             targetLocalX: msg.targetLocalX,
             targetLocalY: msg.targetLocalY,
@@ -119,23 +156,32 @@ export class FocusTreeEditCommandHandler {
             msg.targetY,
         );
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
+            await this.webview.postMessage({
+                command: 'continuousFocusPositionEditApplied',
+                requestId: msg.requestId,
+                focusTreeEditKey: msg.focusTreeEditKey,
+                targetX: msg.targetX,
+                targetY: msg.targetY,
+                documentVersion: document.version,
+            });
             return true;
         }
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the continuous focus position edit.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the continuous focus position edit.'));
             return true;
         }
 
         const result = this.reconcileLocalEdit(getDocumentByUri(this.uri));
         await this.webview.postMessage({
             command: 'continuousFocusPositionEditApplied',
+            requestId: msg.requestId,
             focusTreeEditKey: msg.focusTreeEditKey,
             targetX: msg.targetX,
             targetY: msg.targetY,
@@ -157,13 +203,14 @@ export class FocusTreeEditCommandHandler {
             msg.parentFocusIds,
         );
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
             await this.webview.postMessage({
                 command: 'focusLinkEditApplied',
+                requestId: msg.requestId,
                 parentFocusId: msg.parentFocusId,
                 parentFocusIds: msg.parentFocusIds,
                 childFocusId: msg.childFocusId,
@@ -176,13 +223,14 @@ export class FocusTreeEditCommandHandler {
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus link edit.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the focus link edit.'));
             return true;
         }
 
         const updatedDocument = getDocumentByUri(this.uri);
         await this.webview.postMessage({
             command: 'focusLinkEditApplied',
+            requestId: msg.requestId,
             parentFocusId: msg.parentFocusId,
             parentFocusIds: msg.parentFocusIds,
             childFocusId: msg.childFocusId,
@@ -204,13 +252,14 @@ export class FocusTreeEditCommandHandler {
             msg.targetFocusId,
         );
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
             await this.webview.postMessage({
                 command: 'focusExclusiveLinkEditApplied',
+                requestId: msg.requestId,
                 sourceFocusId: msg.sourceFocusId,
                 targetFocusId: msg.targetFocusId,
                 documentVersion: document.version,
@@ -220,13 +269,14 @@ export class FocusTreeEditCommandHandler {
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the mutually exclusive focus link edit.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the mutually exclusive focus link edit.'));
             return true;
         }
 
         const updatedDocument = getDocumentByUri(this.uri);
         await this.webview.postMessage({
             command: 'focusExclusiveLinkEditApplied',
+            requestId: msg.requestId,
             sourceFocusId: msg.sourceFocusId,
             targetFocusId: msg.targetFocusId,
             documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
@@ -242,23 +292,30 @@ export class FocusTreeEditCommandHandler {
         const focusIds = msg.focusIds && msg.focusIds.length > 0 ? msg.focusIds : [msg.focusId];
         const { edit, error } = buildDeleteFocusWorkspaceEdit(document, focusIds);
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
+            await this.webview.postMessage({
+                command: 'deleteFocusApplied',
+                requestId: msg.requestId,
+                focusIds,
+                documentVersion: document.version,
+            });
             return true;
         }
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus delete edit.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the focus delete edit.'));
             return true;
         }
 
         const updatedDocument = getDocumentByUri(this.uri);
         await this.webview.postMessage({
             command: 'deleteFocusApplied',
+            requestId: msg.requestId,
             focusIds,
             documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
         });
@@ -278,17 +335,18 @@ export class FocusTreeEditCommandHandler {
             msg.targetAbsoluteY,
         );
         if (error) {
-            await vscode.window.showErrorMessage(error);
+            await this.reportError(msg, error);
             return true;
         }
 
         if (!edit) {
+            await this.reject(msg, localize('TODO', 'The focus template did not produce an editable source change.'));
             return true;
         }
 
         const applied = await vscode.workspace.applyEdit(edit);
         if (!applied) {
-            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus template insert.'));
+            await this.reportError(msg, localize('TODO', 'VS Code refused the focus template insert.'));
             return true;
         }
 
@@ -296,27 +354,44 @@ export class FocusTreeEditCommandHandler {
         const createdFocusId = updatedDocument && placeholderRange
             ? updatedDocument.getText().slice(placeholderRange.start, placeholderRange.end)
             : undefined;
-        if (updatedDocument) {
-            await this.webview.postMessage({
-                command: 'createFocusTemplateApplied',
-                treeEditKey: msg.treeEditKey,
-                focusId: createdFocusId,
-                targetAbsoluteX: msg.targetAbsoluteX,
-                targetAbsoluteY: msg.targetAbsoluteY,
-                documentVersion: updatedDocument.version,
+        if (!updatedDocument) {
+            await this.reject(msg, localize('TODO', 'The focus document closed after the template was inserted.'));
+            return true;
+        }
+        await this.webview.postMessage({
+            command: 'createFocusTemplateApplied',
+            requestId: msg.requestId,
+            treeEditKey: msg.treeEditKey,
+            focusId: createdFocusId,
+            targetAbsoluteX: msg.targetAbsoluteX,
+            targetAbsoluteY: msg.targetAbsoluteY,
+            documentVersion: updatedDocument.version,
+        });
+        void this.reloadStructuralEdit(updatedDocument);
+        if (placeholderRange) {
+            await vscode.window.showTextDocument(updatedDocument, {
+                selection: new vscode.Range(
+                    updatedDocument.positionAt(placeholderRange.start),
+                    updatedDocument.positionAt(placeholderRange.end),
+                ),
+                viewColumn: vscode.ViewColumn.One,
             });
-            void this.reloadStructuralEdit(updatedDocument);
-            if (placeholderRange) {
-                await vscode.window.showTextDocument(updatedDocument, {
-                    selection: new vscode.Range(
-                        updatedDocument.positionAt(placeholderRange.start),
-                        updatedDocument.positionAt(placeholderRange.end),
-                    ),
-                    viewColumn: vscode.ViewColumn.One,
-                });
-            }
         }
         return true;
+    }
+
+    private async reportError(msg: FocusTreeEditRequest, reason: string): Promise<void> {
+        void vscode.window.showErrorMessage(reason);
+        await this.reject(msg, reason);
+    }
+
+    private async reject(msg: FocusTreeEditRequest, reason: string): Promise<void> {
+        await this.webview.postMessage({
+            command: 'focusEditRejected',
+            requestId: msg.requestId,
+            documentVersion: getDocumentByUri(this.uri)?.version,
+            reason,
+        });
     }
 
     private reconcileLocalEdit(updatedDocument: vscode.TextDocument | undefined): FocusTreeLocalEditResult {
@@ -332,4 +407,13 @@ export class FocusTreeEditCommandHandler {
             updatedDocumentVersion: await this.session.reloadAfterStructuralEdit(updatedDocument),
         };
     }
+}
+
+function isFocusTreeEditCommand(command: string): command is FocusTreeEditRequest['command'] {
+    return command === 'applyFocusPositionEdit'
+        || command === 'applyContinuousFocusPositionEdit'
+        || command === 'applyFocusLinkEdit'
+        || command === 'applyFocusExclusiveLinkEdit'
+        || command === 'deleteFocus'
+        || command === 'createFocusTemplateAtPosition';
 }

@@ -62,52 +62,51 @@ export interface ContinuousFocusPositionMeta {
     };
 }
 
-export interface ApplyFocusPositionEditMessage {
+interface FocusEditRequestBase {
+    requestId: string;
+    documentVersion: number;
+}
+
+export interface ApplyFocusPositionEditMessage extends FocusEditRequestBase {
     command: 'applyFocusPositionEdit';
     focusId: string;
     targetLocalX: number;
     targetLocalY: number;
-    documentVersion: number;
 }
 
-export interface CreateFocusTemplateAtPositionMessage {
+export interface CreateFocusTemplateAtPositionMessage extends FocusEditRequestBase {
     command: 'createFocusTemplateAtPosition';
     treeEditKey: string;
     targetAbsoluteX: number;
     targetAbsoluteY: number;
-    documentVersion: number;
 }
 
-export interface ApplyFocusLinkEditMessage {
+export interface ApplyFocusLinkEditMessage extends FocusEditRequestBase {
     command: 'applyFocusLinkEdit';
     parentFocusId: string;
     parentFocusIds?: string[];
     childFocusId: string;
     targetLocalX: number;
     targetLocalY: number;
-    documentVersion: number;
 }
 
-export interface ApplyFocusExclusiveLinkEditMessage {
+export interface ApplyFocusExclusiveLinkEditMessage extends FocusEditRequestBase {
     command: 'applyFocusExclusiveLinkEdit';
     sourceFocusId: string;
     targetFocusId: string;
-    documentVersion: number;
 }
 
-export interface ApplyContinuousFocusPositionEditMessage {
+export interface ApplyContinuousFocusPositionEditMessage extends FocusEditRequestBase {
     command: 'applyContinuousFocusPositionEdit';
     focusTreeEditKey: string;
     targetX: number;
     targetY: number;
-    documentVersion: number;
 }
 
-export interface DeleteFocusMessage {
+export interface DeleteFocusMessage extends FocusEditRequestBase {
     command: 'deleteFocus';
     focusId: string;
     focusIds?: string[];
-    documentVersion: number;
 }
 
 export interface PromptFocusConditionPresetNameMessage {

@@ -43,7 +43,8 @@ export function getTechnologyGridGeometry(data: {
         : 'up';
     const slotSize = { width: Number(data.slotWidth), height: Number(data.slotHeight) };
     const gridSize = { width: Number(data.gridWidth), height: Number(data.gridHeight) };
-    return Object.values({ ...slotSize, ...gridSize }).every(value => Number.isFinite(value) && value > 0)
+    return [slotSize.width, slotSize.height, gridSize.width, gridSize.height]
+        .every(value => Number.isFinite(value) && value > 0)
         ? { format, slotSize, gridSize }
         : undefined;
 }

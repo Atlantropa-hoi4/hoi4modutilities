@@ -688,3 +688,12 @@ Technology Preview constant x-coordinate drag repair 2026-08-05:
 - [x] Add focused regression coverage and run Technology tests, TypeScript checks, lint, builds, UI smoke, and whitespace checks.
 
 Review note: Technology folder coordinates backed by uniquely defined file-local constants now use their resolved numeric values in the rendered tree, so x-axis drag starts and occupancy validation match the source document. Verification passed 18 focused Technology tests, all 428 unit tests, TypeScript checks, lint, development and production builds, the Extension Host UI smoke suite, and `git diff --check` under Node 24.14.0. Direct pointer dragging in a representative real mod workspace remains unverified.
+
+Focus and Technology graph editor hardening 2026-08-05:
+- [x] Serialize Focus Tree source edits and correlate every applied or rejected result by request ID.
+- [x] Restore the continuous-focus preview after a pending edit and rebuild it on rejection.
+- [x] Reject non-finite Focus Tree coordinates and prerequisite links that would create cycles.
+- [x] Validate Technology slot dimensions without object-spread key collisions.
+- [x] Run focused and full verification, then record the final validation boundary.
+
+Review note: Focus edits now use one active webview request plus a serialized host queue, correlate every result by request ID, and restore the continuous-focus view while an edit is pending or rejected. Host validation blocks non-finite coordinates and new local prerequisite cycles. Technology grid geometry now validates slot and grid dimensions independently. Verification passed 92 focused tests, all 432 unit tests, TypeScript checks, lint, development and production builds, 17 Extension Host smoke/integration tests including Focus WorkspaceEdit Undo, local VSIX packaging, and `git diff --check` under Node 24.14.0; direct pointer interaction in a representative real mod workspace remains unverified.

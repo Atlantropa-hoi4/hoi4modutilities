@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { Commands, ViewType, WebviewType } from '../../src/constants';
 import { parseHoi4File } from '../../src/hoiformat/hoiparser';
+import { buildFocusPositionWorkspaceEdit } from '../../src/previewdef/focustree/positioneditservice';
 import { collectTechnologyFileMetadata } from '../../src/previewdef/technology/editmetadata';
 import { buildTechnologyPositionTextChanges } from '../../src/previewdef/technology/editservice';
 import { buildTechnologyWorkspaceEdit } from '../../src/previewdef/technology/editworkspace';
@@ -200,6 +201,28 @@ suite('extension smoke', () => {
 
         await vscode.commands.executeCommand(Commands.Preview);
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: preset-smoke.txt'), 30000);
+    });
+
+    test('applies a focus position edit as one undoable workspace edit', async () => {
+        const original = `focus_tree = {
+    id = undo
+    focus = {
+        id = ROOT
+        x = 1
+        y = 2
+    }
+}`;
+        const document = await vscode.workspace.openTextDocument({ language: 'hoi4', content: original });
+        await vscode.window.showTextDocument(document);
+        const result = buildFocusPositionWorkspaceEdit(document, 'ROOT', 4, 5);
+        assert.ifError(result.error);
+        assert.ok(result.edit);
+        assert.strictEqual(await vscode.workspace.applyEdit(result.edit!), true);
+        assert.match(document.getText(), /id = ROOT[\s\S]*?x = 4[\s\S]*?y = 5/);
+
+        await vscode.commands.executeCommand('undo');
+        await waitFor(() => document.getText() === original, 5000);
+        assert.strictEqual(document.getText(), original);
     });
 
     test('opens the GXC focus preview and resolves a non-empty current tree', async () => {

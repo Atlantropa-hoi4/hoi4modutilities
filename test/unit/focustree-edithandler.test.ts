@@ -19,6 +19,8 @@ const appliedEdits: any[] = [];
 
 let currentDocument: MockDocument | undefined;
 let nextDocumentAfterApply: MockDocument | undefined;
+let applyEditResult = true;
+let applyEditBarrier: Promise<void> | undefined;
 
 const editResults = {
     position: { edit: { kind: 'position' } },
@@ -35,10 +37,11 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             workspace: {
                 applyEdit: async (edit: unknown) => {
                     appliedEdits.push(edit);
-                    if (nextDocumentAfterApply) {
+                    await applyEditBarrier;
+                    if (applyEditResult && nextDocumentAfterApply) {
                         currentDocument = nextDocumentAfterApply;
                     }
-                    return true;
+                    return applyEditResult;
                 },
             },
             window: {
@@ -104,6 +107,8 @@ function resetHarness() {
     appliedEdits.length = 0;
     currentDocument = undefined;
     nextDocumentAfterApply = undefined;
+    applyEditResult = true;
+    applyEditBarrier = undefined;
 }
 
 function createHandler() {
@@ -145,6 +150,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'createFocusTemplateAtPosition',
+            requestId: 'create-1',
             treeEditKey: 'focus-tree:test',
             targetAbsoluteX: 12,
             targetAbsoluteY: 18,
@@ -152,6 +158,7 @@ describe('focustree edit command handler', () => {
         });
 
         assert.strictEqual(postedMessages[0].command, 'createFocusTemplateApplied');
+        assert.strictEqual(postedMessages[0].requestId, 'create-1');
         assert.strictEqual(postedMessages[0].focusId, 'TAG_FOCUS_1');
         assert.strictEqual(postedMessages[0].documentVersion, 4);
         assert.strictEqual(reloadedDocuments.length, 1);
@@ -167,6 +174,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'applyFocusPositionEdit',
+            requestId: 'position-1',
             focusId: 'ROOT',
             targetLocalX: 5,
             targetLocalY: 7,
@@ -175,6 +183,7 @@ describe('focustree edit command handler', () => {
 
         assert.strictEqual(appliedEdits[0].kind, 'position');
         assert.strictEqual(postedMessages[0].command, 'focusPositionEditApplied');
+        assert.strictEqual(postedMessages[0].requestId, 'position-1');
         assert.strictEqual(postedMessages[0].focusId, 'ROOT');
         assert.strictEqual(postedMessages[0].targetLocalX, 5);
         assert.strictEqual(postedMessages[0].targetLocalY, 7);
@@ -182,12 +191,13 @@ describe('focustree edit command handler', () => {
         assert.deepStrictEqual(errorMessages, []);
     });
 
-    it('ignores a stale position edit and refreshes the latest document', async () => {
+    it('rejects a stale position edit and refreshes the latest document', async () => {
         currentDocument = makeDocument(21, 'newer source');
         const handler = createHandler();
 
         await handler.handleMessage({
             command: 'applyFocusPositionEdit',
+            requestId: 'position-stale',
             focusId: 'ROOT',
             targetLocalX: 5,
             targetLocalY: 7,
@@ -195,7 +205,8 @@ describe('focustree edit command handler', () => {
         });
 
         assert.deepStrictEqual(appliedEdits, []);
-        assert.deepStrictEqual(postedMessages, []);
+        assert.strictEqual(postedMessages[0].command, 'focusEditRejected');
+        assert.strictEqual(postedMessages[0].requestId, 'position-stale');
         assert.deepStrictEqual(refreshedDocuments, [currentDocument]);
         assert.deepStrictEqual(errorMessages, []);
     });
@@ -207,6 +218,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'applyContinuousFocusPositionEdit',
+            requestId: 'continuous-1',
             focusTreeEditKey: 'focus-tree:common/national_focus/focus.txt:focus:0',
             targetX: 140,
             targetY: 920,
@@ -215,6 +227,7 @@ describe('focustree edit command handler', () => {
 
         assert.strictEqual(appliedEdits[0].kind, 'continuous');
         assert.strictEqual(postedMessages[0].command, 'continuousFocusPositionEditApplied');
+        assert.strictEqual(postedMessages[0].requestId, 'continuous-1');
         assert.strictEqual(postedMessages[0].focusTreeEditKey, 'focus-tree:common/national_focus/focus.txt:focus:0');
         assert.strictEqual(postedMessages[0].targetX, 140);
         assert.strictEqual(postedMessages[0].targetY, 920);
@@ -229,6 +242,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'deleteFocus',
+            requestId: 'delete-1',
             focusId: 'ROOT',
             focusIds: ['ROOT', 'CHILD'],
             documentVersion: 7,
@@ -248,6 +262,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'applyFocusLinkEdit',
+            requestId: 'link-1',
             parentFocusId: 'ROOT',
             parentFocusIds: ['ROOT', 'ALT'],
             childFocusId: 'CHILD',
@@ -270,6 +285,7 @@ describe('focustree edit command handler', () => {
 
         await handler.handleMessage({
             command: 'applyFocusExclusiveLinkEdit',
+            requestId: 'exclusive-1',
             sourceFocusId: 'ROOT',
             targetFocusId: 'OTHER',
             documentVersion: 14,
@@ -280,5 +296,61 @@ describe('focustree edit command handler', () => {
         assert.strictEqual(postedMessages[0].targetFocusId, 'OTHER');
         assert.strictEqual(postedMessages[0].documentVersion, 15);
         assert.strictEqual(reloadedDocuments[0], nextDocumentAfterApply);
+    });
+
+    it('serializes edits so a second stale request cannot enter applyEdit', async () => {
+        currentDocument = makeDocument(20, 'before');
+        nextDocumentAfterApply = makeDocument(21, 'after');
+        let releaseApplyEdit: (() => void) | undefined;
+        applyEditBarrier = new Promise<void>(resolve => {
+            releaseApplyEdit = resolve;
+        });
+        const handler = createHandler();
+        const first = handler.handleMessage({
+            command: 'applyFocusPositionEdit',
+            requestId: 'queued-1',
+            focusId: 'ROOT',
+            targetLocalX: 5,
+            targetLocalY: 7,
+            documentVersion: 20,
+        });
+        const second = handler.handleMessage({
+            command: 'applyFocusPositionEdit',
+            requestId: 'queued-2',
+            focusId: 'CHILD',
+            targetLocalX: 8,
+            targetLocalY: 9,
+            documentVersion: 20,
+        });
+
+        await new Promise(resolve => setImmediate(resolve));
+        assert.strictEqual(appliedEdits.length, 1);
+        releaseApplyEdit?.();
+        await Promise.all([first, second]);
+
+        assert.strictEqual(appliedEdits.length, 1);
+        assert.strictEqual(postedMessages[0].command, 'focusPositionEditApplied');
+        assert.strictEqual(postedMessages[1].command, 'focusEditRejected');
+        assert.strictEqual(postedMessages[1].requestId, 'queued-2');
+    });
+
+    it('posts a rejection when VS Code refuses an edit', async () => {
+        currentDocument = makeDocument(30, 'before');
+        applyEditResult = false;
+        const handler = createHandler();
+
+        await handler.handleMessage({
+            command: 'applyContinuousFocusPositionEdit',
+            requestId: 'refused-1',
+            focusTreeEditKey: 'focus-tree:common/national_focus/focus.txt:focus:0',
+            targetX: 140,
+            targetY: 920,
+            documentVersion: 30,
+        });
+
+        assert.strictEqual(postedMessages[0].command, 'focusEditRejected');
+        assert.strictEqual(postedMessages[0].requestId, 'refused-1');
+        assert.match(postedMessages[0].reason, /refused/i);
+        assert.strictEqual(errorMessages.length, 1);
     });
 });

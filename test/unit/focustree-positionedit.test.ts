@@ -774,4 +774,48 @@ describe('focus tree position edit helpers', () => {
 
         assert.match(result.error ?? '', /not editable/);
     });
+
+    it('rejects non-finite coordinates for every focus edit entry point', () => {
+        const filePath = 'common/national_focus/finite.txt';
+        const treeEditKey = `focus-tree:${filePath}:focus:0`;
+        const content = `focus_tree = {
+    id = finite
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = CHILD
+        x = 1
+        y = 1
+    }
+}`;
+
+        assert.match(buildFocusPositionTextChanges(content, 'ROOT', Number.NaN, 1).error ?? '', /finite numeric/i);
+        assert.match(buildContinuousFocusPositionTextChanges(content, filePath, treeEditKey, 1, Number.POSITIVE_INFINITY).error ?? '', /finite numeric/i);
+        assert.match(buildCreateFocusTemplateTextChanges(content, filePath, treeEditKey, Number.NEGATIVE_INFINITY, 1).error ?? '', /finite numeric/i);
+        assert.match(buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', Number.NaN, 1).error ?? '', /finite numeric/i);
+    });
+
+    it('rejects prerequisite links that would create a cycle', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        prerequisite = { focus = CHILD }
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = CHILD
+        x = 1
+        y = 1
+    }
+}`;
+
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 1, 1);
+
+        assert.match(result.error ?? '', /prerequisite cycle/i);
+        assert.deepStrictEqual(result.changes, undefined);
+    });
 });

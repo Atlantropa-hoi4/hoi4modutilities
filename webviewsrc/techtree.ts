@@ -156,7 +156,9 @@ function getTechnologyGridInfo(item: HTMLDivElement): TechnologyGridInfo | undef
             y: numberValue(item.dataset.gridY),
         },
     };
-    return Object.values({ ...info.slotSize, ...info.gridSize, ...info.start }).every(Number.isFinite)
+    return [info.slotSize.width, info.slotSize.height, info.gridSize.width, info.gridSize.height]
+        .every(value => Number.isFinite(value) && value > 0)
+        && [info.start.x, info.start.y].every(Number.isFinite)
         ? info
         : undefined;
 }

@@ -49,6 +49,9 @@ export function buildFocusPositionTextChanges(
     targetLocalX: number,
     targetLocalY: number,
 ): FocusPositionTextChangeResult {
+    if (!Number.isFinite(targetLocalX) || !Number.isFinite(targetLocalY)) {
+        return { error: 'Focus positions must use finite numeric coordinates.' };
+    }
     const { editableFocuses } = parseEditableFocusContext(content);
     const focusResult = findUniqueEditableFocus(editableFocuses, focusId);
     if (focusResult.error) {
@@ -93,6 +96,9 @@ export function buildContinuousFocusPositionTextChanges(
     targetX: number,
     targetY: number,
 ): FocusPositionTextChangeResult {
+    if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+        return { error: 'Continuous focus positions must use finite numeric coordinates.' };
+    }
     const { root, bomOffset } = parseEditableFocusContext(content);
     const continuousMeta = collectFocusPositionFileMetadata(root, filePath).continuousTrees[treeEditKey];
     const shiftedMeta = continuousMeta ? shiftContinuousFocusMeta(continuousMeta, bomOffset) : undefined;
@@ -142,6 +148,9 @@ export function buildCreateFocusTemplateTextChanges(
     targetAbsoluteX: number,
     targetAbsoluteY: number,
 ): CreateFocusTemplateTextChangeResult {
+    if (!Number.isFinite(targetAbsoluteX) || !Number.isFinite(targetAbsoluteY)) {
+        return { error: 'Focus positions must use finite numeric coordinates.' };
+    }
     const { root, bomOffset } = parseEditableFocusContext(content);
     const metadata = collectFocusPositionFileMetadata(root, filePath);
     const treeMeta = [
@@ -207,6 +216,10 @@ export function buildFocusLinkTextChanges(
     targetLocalY?: number,
     parentFocusIds?: readonly string[],
 ): FocusLinkTextChangeResult {
+    if ((targetLocalX !== undefined && !Number.isFinite(targetLocalX))
+        || (targetLocalY !== undefined && !Number.isFinite(targetLocalY))) {
+        return { error: 'Focus positions must use finite numeric coordinates.' };
+    }
     const normalizedParentFocusIds = normalizeParentFocusIds(parentFocusId, parentFocusIds, childFocusId);
     if (normalizedParentFocusIds.length === 0) {
         return { error: 'A focus cannot be linked to itself.' };
@@ -246,6 +259,14 @@ export function buildFocusLinkTextChanges(
         return {
             changes: dedupeChanges(changes),
         };
+    }
+
+    const existingPrerequisiteIds = new Set(child.prerequisiteIds);
+    const cyclicParentId = normalizedParentFocusIds.find(candidateParentId =>
+        !existingPrerequisiteIds.has(candidateParentId)
+        && canReachFocusPrerequisite(editableFocuses, candidateParentId, childFocusId));
+    if (cyclicParentId) {
+        return { error: `Linking ${cyclicParentId} as a prerequisite of ${childFocusId} would create a focus prerequisite cycle.` };
     }
 
     if (targetLocalX !== undefined && targetLocalY !== undefined) {
@@ -405,6 +426,28 @@ function findUniqueEditableFocus(
     }
 
     return { focus: matches[0] };
+}
+
+function canReachFocusPrerequisite(
+    focuses: readonly FocusNodeMeta[],
+    startFocusId: string,
+    targetFocusId: string,
+): boolean {
+    const focusesById = new Map(focuses.map(focus => [focus.focusId, focus]));
+    const pending = [startFocusId];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+        const currentFocusId = pending.pop()!;
+        if (currentFocusId === targetFocusId) {
+            return true;
+        }
+        if (visited.has(currentFocusId)) {
+            continue;
+        }
+        visited.add(currentFocusId);
+        focusesById.get(currentFocusId)?.prerequisiteIds.forEach(focusId => pending.push(focusId));
+    }
+    return false;
 }
 
 function buildWorkspaceEditResult(

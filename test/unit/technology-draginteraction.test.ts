@@ -43,6 +43,18 @@ describe('technology drag interaction', () => {
             gridSize: { width: 800, height: 600 },
         });
         assert.strictEqual(getTechnologyGridGeometry({ gridWidth: '800' }), undefined);
+        assert.strictEqual(getTechnologyGridGeometry({
+            slotWidth: '0',
+            slotHeight: '50',
+            gridWidth: '800',
+            gridHeight: '600',
+        }), undefined);
+        assert.strictEqual(getTechnologyGridGeometry({
+            slotWidth: 'not-a-number',
+            slotHeight: '50',
+            gridWidth: '800',
+            gridHeight: '600',
+        }), undefined);
     });
 
     it('registers and removes pointercancel with the marquee gesture listeners', () => {

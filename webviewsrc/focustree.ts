@@ -127,6 +127,8 @@ let conditionPresetsDropdown: DivDropdown | undefined = undefined;
 let inlayWindows: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
 let focusPositionEditMode: boolean = initialWebviewState.focusPositionEditMode;
+let activeFocusEditRequestId: string | undefined;
+let focusEditRequestSequence = 0;
 let currentRenderedFocusTree: FocusTree | undefined = undefined;
 let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedFocusElements: Record<string, HTMLElement> = {};
@@ -888,6 +890,23 @@ function setFocusPositionEditMode(enabled: boolean) {
     updateFocusPositionEditUi();
 }
 
+function postFocusEdit(command: string, payload: Record<string, unknown>): boolean {
+    if (activeFocusEditRequestId) {
+        return false;
+    }
+
+    focusEditRequestSequence += 1;
+    activeFocusEditRequestId = `focus-edit-${Date.now()}-${focusEditRequestSequence}`;
+    vscode.postMessage({
+        command,
+        requestId: activeFocusEditRequestId,
+        documentVersion: focusPositionDocumentVersion,
+        ...payload,
+    });
+    updateFocusPositionEditUi();
+    return true;
+}
+
 function hasPendingFocusLink(): boolean {
     return pendingFocusLinkParentId !== undefined && pendingFocusLinkType !== undefined;
 }
@@ -904,6 +923,7 @@ function setHoveredRelationFocusId(focusId: string | undefined) {
 function updateFocusPositionEditUi() {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
+        editButton.disabled = activeFocusEditRequestId !== undefined;
         editButton.setAttribute('aria-pressed', focusPositionEditMode ? 'true' : 'false');
         editButton.style.color = focusPositionEditMode ? 'var(--vscode-focusBorder)' : '';
         editButton.style.background = focusPositionEditMode ? 'rgba(32, 124, 229, 0.14)' : '';
@@ -1172,11 +1192,9 @@ function ensureFocusContextMenu(): HTMLDivElement {
     });
     const deleteItem = createMenuButton('Delete', focusId => {
         const focusIds = resolveFocusDeleteTargetIds(focusId);
-        vscode.postMessage({
-            command: 'deleteFocus',
+        postFocusEdit('deleteFocus', {
             focusId,
             focusIds,
-            documentVersion: focusPositionDocumentVersion,
         });
     });
 
@@ -1351,11 +1369,9 @@ function setupFocusPositionDragHandlers() {
                 if (parentFocusId === childFocusId) {
                     return;
                 }
-                vscode.postMessage({
-                    command: 'applyFocusExclusiveLinkEdit',
+                postFocusEdit('applyFocusExclusiveLinkEdit', {
                     sourceFocusId: parentFocusId,
                     targetFocusId: childFocusId,
-                    documentVersion: focusPositionDocumentVersion,
                 });
                 return;
             }
@@ -1397,14 +1413,12 @@ function setupFocusPositionDragHandlers() {
                 childAbsolutePosition,
             );
 
-            vscode.postMessage({
-                command: 'applyFocusLinkEdit',
+            postFocusEdit('applyFocusLinkEdit', {
                 parentFocusId: anchorParentFocusId,
                 parentFocusIds,
                 childFocusId,
                 targetLocalX: targetLocalPosition.x,
                 targetLocalY: targetLocalPosition.y,
-                documentVersion: focusPositionDocumentVersion,
             });
             return;
         }
@@ -1771,12 +1785,10 @@ function setupFocusTemplateCreateHandler() {
         event.stopPropagation();
         clearPendingFocusNavigate();
 
-        vscode.postMessage({
-            command: 'createFocusTemplateAtPosition',
+        postFocusEdit('createFocusTemplateAtPosition', {
             treeEditKey: currentRenderedFocusTree.createTemplate?.editKey ?? '',
             targetAbsoluteX: targetPosition.x,
             targetAbsoluteY: targetPosition.y,
-            documentVersion: focusPositionDocumentVersion,
         });
     }, true);
 }
@@ -1809,7 +1821,7 @@ function setupBlankCanvasPanFallback() {
 }
 
 function startFocusPositionDrag(focusElement: HTMLElement, event: PointerEvent) {
-    if (!focusPositionEditMode || event.button !== 0 || !event.isPrimary) {
+    if (!focusPositionEditMode || activeFocusEditRequestId || event.button !== 0 || !event.isPrimary) {
         return;
     }
 
@@ -1914,12 +1926,10 @@ function startFocusPositionDrag(focusElement: HTMLElement, event: PointerEvent) 
             nextAbsolutePosition,
         );
 
-        vscode.postMessage({
-            command: 'applyFocusPositionEdit',
+        postFocusEdit('applyFocusPositionEdit', {
             focusId,
             targetLocalX: targetLocalPosition.x,
             targetLocalY: targetLocalPosition.y,
-            documentVersion: focusPositionDocumentVersion,
         });
     };
 
@@ -1956,6 +1966,7 @@ function startContinuousFocusPositionDrag(continuousFocusElement: HTMLDivElement
     if (!focusPositionEditMode
         || event.button !== 0
         || !event.isPrimary
+        || !!activeFocusEditRequestId
         || hasPendingFocusLink()
         || !isContinuousFocusEditable(currentRenderedFocusTree)) {
         return;
@@ -2038,13 +2049,12 @@ function startContinuousFocusPositionDrag(continuousFocusElement: HTMLDivElement
             return;
         }
 
-        vscode.postMessage({
-            command: 'applyContinuousFocusPositionEdit',
+        postFocusEdit('applyContinuousFocusPositionEdit', {
             focusTreeEditKey: currentRenderedFocusTree.continuousLayout?.editKey ?? '',
             targetX: roundedTargetX,
             targetY: roundedTargetY,
-            documentVersion: focusPositionDocumentVersion,
         });
+        applyContinuousFocusElementPosition(currentRenderedFocusTree);
     };
 
     const pointerUpHandler = (upEvent: PointerEvent) => {
@@ -2881,6 +2891,8 @@ window.addEventListener('load', runSafely(async function() {
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;
+            requestId?: string;
+            reason?: string;
             snapshotVersion?: number;
             documentVersion?: number;
             name?: string;
@@ -3014,6 +3026,19 @@ window.addEventListener('load', runSafely(async function() {
             return;
         }
 
+        if (message.command === 'focusEditRejected') {
+            if (!message.requestId || message.requestId !== activeFocusEditRequestId) {
+                return;
+            }
+            activeFocusEditRequestId = undefined;
+            focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+            window.focusPositionDocumentVersion = focusPositionDocumentVersion;
+            applyContinuousFocusElementPosition(currentRenderedFocusTree);
+            updateFocusPositionEditUi();
+            void rebuildContentSafely();
+            return;
+        }
+
         if (message.command !== 'focusPositionEditApplied'
             && message.command !== 'createFocusTemplateApplied'
             && message.command !== 'continuousFocusPositionEditApplied'
@@ -3023,8 +3048,14 @@ window.addEventListener('load', runSafely(async function() {
             return;
         }
 
+        if (!message.requestId || message.requestId !== activeFocusEditRequestId) {
+            return;
+        }
+
+        activeFocusEditRequestId = undefined;
         focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
         window.focusPositionDocumentVersion = focusPositionDocumentVersion;
+        updateFocusPositionEditUi();
         if (message.command === 'createFocusTemplateApplied'
             && message.treeEditKey !== undefined
             && message.focusId !== undefined
