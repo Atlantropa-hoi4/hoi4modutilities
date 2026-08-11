@@ -7,7 +7,11 @@ import { parseHoi4File } from '../hoiformat/hoiparser';
 import { localize } from './i18n';
 import { convertNodeToJson, SchemaDef, HOIPartial } from '../hoiformat/schema';
 import { error } from './debug';
-import { updateSelectedModFileStatus, workspaceModFilesCache } from './modfile';
+import {
+    getSelectedModSourceGeneration,
+    updateSelectedModFileStatus,
+    workspaceModFilesCache,
+} from './modfile';
 import { getConfiguration, getDocumentByUri } from './vsccommon';
 import { UserError } from './common';
 import type * as AdmZip from 'adm-zip';
@@ -38,14 +42,25 @@ interface SelectedModRootCacheEntry {
     roots: vscode.Uri[];
 }
 
+interface SelectedModSourceCacheKey {
+    absolutePath: string;
+    generation: number;
+}
+
 const selectedModRootFoldersCache = new PromiseCache<SelectedModRootCacheEntry>({
     name: 'selectedModRoots',
-    factory: getSelectedModRootFoldersFromModFile,
+    factory: key => getSelectedModRootFoldersFromModFile(parseSelectedModSourceCacheKey(key).absolutePath),
     expireWhenChange: getSelectedModRootFoldersExpiryToken,
     life: 60 * 1000,
     nonExpireLife: selectedModRootCacheFreshnessMs,
+    maxSize: 16,
 });
 const selectedModRootFoldersInFlight = new Map<string, Promise<SelectedModRootCacheEntry>>();
+let fileContentSourceGeneration = 0;
+
+export function refreshFileContentSource(): number {
+    return ++fileContentSourceGeneration;
+}
 
 interface FileLoaderOptions {
     mod?: boolean;
@@ -413,14 +428,27 @@ export async function listFilesFromModOrHOI4(
     return promise;
 }
 
-function createFileLoaderCacheKey(relativePath: string, options?: ListFilesOptions): string {
+export function createFileLoaderCacheKey(relativePath: string, options?: ListFilesOptions): string {
     return JSON.stringify({
         relativePath,
         mod: options?.mod,
         hoi4: options?.hoi4,
         dlc: options?.dlc,
         recursively: options?.recursively,
+        source: createFileSourceFingerprint(),
     });
+}
+
+function createFileSourceFingerprint(): unknown {
+    const configuration = getConfiguration();
+    return {
+        installPath: configuration.installPath,
+        loadDlcContents: configuration.loadDlcContents,
+        modFile: configuration.modFile,
+        selectedModSourceGeneration: getSelectedModSourceGeneration(),
+        fileContentSourceGeneration,
+        workspaceFolders: vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()) ?? [],
+    };
 }
 
 async function runFileReadWithConcurrency<T>(
@@ -495,9 +523,10 @@ async function getDlcPaths(installPath: string): Promise<vscode.Uri[] | null> {
 }
 
 const replacePathsCache = new PromiseCache({
-    factory: getReplacePathsFromModFile,
-    expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(key)),
+    factory: key => getReplacePathsFromModFile(parseSelectedModSourceCacheKey(key).absolutePath),
+    expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(parseSelectedModSourceCacheKey(key).absolutePath)),
     life: 60 * 1000,
+    maxSize: 16,
 });
 
 interface ModFile {
@@ -534,45 +563,75 @@ async function getSelectedModFile(): Promise<vscode.Uri | undefined> {
 }
 
 async function getReplacePaths(): Promise<string[] | undefined> {
-    const modFile = await getSelectedModFile();
-
-    try {
-        if (modFile && await isFile(modFile)) {
-            const result = await replacePathsCache.get(modFile.toString());
-            updateSelectedModFileStatus(modFile);
-            return result;
+    while (true) {
+        const generation = getSelectedModSourceGeneration();
+        const modFile = await getSelectedModFile();
+        if (generation !== getSelectedModSourceGeneration()) {
+            continue;
         }
-    } catch (e) {
-        error(e);
-    }
 
-    updateSelectedModFileStatus(modFile, true);
-    return undefined;
+        try {
+            if (modFile && await isFile(modFile)) {
+                const result = await replacePathsCache.get(createSelectedModSourceCacheKey(modFile.toString(), generation));
+                if (generation !== getSelectedModSourceGeneration()) {
+                    continue;
+                }
+                updateSelectedModFileStatus(modFile);
+                return result;
+            }
+        } catch (e) {
+            if (generation !== getSelectedModSourceGeneration()) {
+                continue;
+            }
+            error(e);
+        }
+
+        if (generation !== getSelectedModSourceGeneration()) {
+            continue;
+        }
+        updateSelectedModFileStatus(modFile, true);
+        return undefined;
+    }
 }
 
 export async function getSelectedModRootFolders(): Promise<vscode.Uri[]> {
-    const modFile = await getSelectedModFile();
-    if (!modFile || !await isFile(modFile)) {
-        return [];
-    }
+    while (true) {
+        const generation = getSelectedModSourceGeneration();
+        const modFile = await getSelectedModFile();
+        if (generation !== getSelectedModSourceGeneration()) {
+            continue;
+        }
+        if (!modFile || !await isFile(modFile)) {
+            if (generation !== getSelectedModSourceGeneration()) {
+                continue;
+            }
+            return [];
+        }
 
-    const entry = await getCachedSelectedModRootFolders(modFile.toString());
-    return [...entry.roots];
+        const entry = await getCachedSelectedModRootFolders(modFile.toString(), generation);
+        if (generation === getSelectedModSourceGeneration()) {
+            return [...entry.roots];
+        }
+    }
 }
 
-function getCachedSelectedModRootFolders(absolutePath: string): Promise<SelectedModRootCacheEntry> {
-    const inFlight = selectedModRootFoldersInFlight.get(absolutePath);
+function getCachedSelectedModRootFolders(
+    absolutePath: string,
+    generation: number,
+): Promise<SelectedModRootCacheEntry> {
+    const cacheKey = createSelectedModSourceCacheKey(absolutePath, generation);
+    const inFlight = selectedModRootFoldersInFlight.get(cacheKey);
     if (inFlight) {
         incrementPerfCounter('fileloader.modRoots.inflightHit');
         return inFlight;
     }
 
-    const request = selectedModRootFoldersCache.get(absolutePath).finally(() => {
-        if (selectedModRootFoldersInFlight.get(absolutePath) === request) {
-            selectedModRootFoldersInFlight.delete(absolutePath);
+    const request = selectedModRootFoldersCache.get(cacheKey).finally(() => {
+        if (selectedModRootFoldersInFlight.get(cacheKey) === request) {
+            selectedModRootFoldersInFlight.delete(cacheKey);
         }
     });
-    selectedModRootFoldersInFlight.set(absolutePath, request);
+    selectedModRootFoldersInFlight.set(cacheKey, request);
     return request;
 }
 
@@ -600,9 +659,10 @@ async function getSelectedModRootFoldersFromModFile(absolutePath: string): Promi
 }
 
 async function getSelectedModRootFoldersExpiryToken(
-    absolutePath: string,
+    cacheKey: string,
     cachedEntry: Promise<SelectedModRootCacheEntry>,
 ): Promise<string> {
+    const { absolutePath } = parseSelectedModSourceCacheKey(cacheKey);
     const entry = await cachedEntry;
     const [descriptorModifiedAt, ...candidateDirectoryStates] = await Promise.all([
         getLastModifiedOrMissing(vscode.Uri.parse(absolutePath)),
@@ -610,6 +670,17 @@ async function getSelectedModRootFoldersExpiryToken(
     ]);
 
     return JSON.stringify([descriptorModifiedAt, ...candidateDirectoryStates]);
+}
+
+export function createSelectedModSourceCacheKey(
+    absolutePath: string,
+    generation: number = getSelectedModSourceGeneration(),
+): string {
+    return JSON.stringify({ absolutePath, generation });
+}
+
+function parseSelectedModSourceCacheKey(cacheKey: string): SelectedModSourceCacheKey {
+    return JSON.parse(cacheKey) as SelectedModSourceCacheKey;
 }
 
 async function getLastModifiedOrMissing(uri: vscode.Uri): Promise<number | undefined> {

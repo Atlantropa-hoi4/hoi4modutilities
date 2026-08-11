@@ -92,12 +92,12 @@ export async function getSpriteTextureFilesByGfxFile(gfxFilePath: string): Promi
     return result;
 }
 
-async function spriteCacheExpiryToken(key: string, spritePromise: Promise<Sprite | undefined>): Promise<string> {
+export async function spriteCacheExpiryToken(key: string, spritePromise: Promise<Sprite | undefined>): Promise<string> {
     const [gfxFilePath] = key.split('?');
     const gfxToken = await hoiFileExpiryToken(gfxFilePath);
     const sprite = await spritePromise;
     if (sprite) {
-        return `${gfxToken}:${expiryToken(sprite.image.path)}`;
+        return `${gfxToken}:${await expiryToken(sprite.image.path)}`;
     }
     return gfxToken;
 }

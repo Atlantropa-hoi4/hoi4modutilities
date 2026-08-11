@@ -21,7 +21,7 @@ export class DDS {
         }
 
         const header = extractHeader(headerArray);
-        if (header.ddspf.dwFlags === DDPF_FOURCC && header.ddspf.dwFourCC === FOURCC_DX10) {
+        if ((header.ddspf.dwFlags & DDPF_FOURCC) !== 0 && header.ddspf.dwFourCC === FOURCC_DX10) {
             const dxt10HeaderArray = new Int32Array(buffer, byteOffset + HEADER_LENGTH_INT * 4, HEADER_DXT10_LENGTH_INT);
             const dxt10Header = extractDxt10Header(dxt10HeaderArray);
             return DDS.parseDxt10(buffer, byteOffset, header, dxt10Header);
@@ -147,11 +147,13 @@ function parseCubeMap(buffer: ArrayBuffer, offset: number, pixelFormat: PixelFor
     const result: Surface[] = [];
 
     for (const cubeMap of cubeMaps) {
-        offset = pushSurface(result, buffer, offset, width, height, pixelFormat, cubeMap);
+        let mipWidth = width;
+        let mipHeight = height;
+        offset = pushSurface(result, buffer, offset, mipWidth, mipHeight, pixelFormat, cubeMap);
         for (let i = 0; i < mipmapCount; i++) {
-            width = Math.max(1, Math.floor(width / 2));
-            height = Math.max(1, Math.floor(height / 2));
-            offset = pushSurface(result, buffer, offset, width, height, pixelFormat, `Mipmap of ${cubeMap} #${i + 1}`);
+            mipWidth = Math.max(1, Math.floor(mipWidth / 2));
+            mipHeight = Math.max(1, Math.floor(mipHeight / 2));
+            offset = pushSurface(result, buffer, offset, mipWidth, mipHeight, pixelFormat, `Mipmap of ${cubeMap} #${i + 1}`);
         }
     }
 

@@ -4,6 +4,7 @@ import defaultBundle from '../../l10n/bundle.l10n.json';
 import koreanBundle from '../../l10n/bundle.l10n.ko.json';
 import russianBundle from '../../l10n/bundle.l10n.ru.json';
 import chineseBundle from '../../l10n/bundle.l10n.zh-cn.json';
+import packageNls from '../../package.nls.json';
 
 describe('extension manifest', () => {
     it('uses contextual activation with runtime l10n metadata', () => {
@@ -102,6 +103,16 @@ describe('extension manifest', () => {
         const featureFlags = manifest.contributes.configuration[0].properties['hoi4ModUtilities.featureFlags'];
 
         assert.deepStrictEqual(featureFlags.default, []);
+    });
+
+    it('defines every manifest localisation token in the default package bundle', () => {
+        const tokens = JSON.stringify(manifest).matchAll(/%([^%]+)%/g);
+        const keys = new Set(Array.from(tokens, match => match[1]));
+
+        assert.ok(keys.size > 0);
+        for (const key of keys) {
+            assert.ok(key in packageNls, `missing default package localisation for ${key}`);
+        }
     });
 
     it('localises the technology graph editor controls in every maintained bundle', () => {

@@ -1,6 +1,7 @@
 import { normalizeForStyle } from "../src/util/styletable";
 import { Checkbox } from "./util/checkbox";
 import { setState, getState, scrollToState, tryRun, subscribeRefreshButton } from "./util/common";
+import { resolveGuiPreviewFolder } from "./guipreview/state";
 
 const existingCheckboxes: Checkbox[] = [];
 let toggleVisibilityContentVisible = getState().toggleVisibilityContentVisible;
@@ -135,7 +136,11 @@ function refreshToggleVisibilityContent() {
 
 window.addEventListener('load', tryRun(function() {
     const folderSelector = document.getElementById('folderSelector') as HTMLSelectElement;
-    const folder = getState().folder || folderSelector.value;
+    const folder = resolveGuiPreviewFolder(
+        getState().folder,
+        Array.from(folderSelector.options, option => option.value),
+        folderSelector.value,
+    );
     folderSelector.value = folder;
     folderChange(folder);
     folderSelector.addEventListener('change', function() {

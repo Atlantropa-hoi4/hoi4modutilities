@@ -22,3 +22,21 @@ export function matchPathEnd(pathname: string, segments: string[]): boolean {
 export function isSamePath(a: string, b: string): boolean {
     return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 }
+
+export function getRelativePathWithinRoot(
+    rootPath: string,
+    filePath: string,
+    requiredPrefix: string,
+): string | undefined {
+    const nativeRelative = path.relative(rootPath, filePath);
+    const relative = nativeRelative.replace(/\\+/g, '/');
+    const normalizedPrefix = requiredPrefix.replace(/\\+/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!relative
+        || path.isAbsolute(nativeRelative)
+        || relative === '..'
+        || relative.startsWith('../')
+        || (normalizedPrefix && relative !== normalizedPrefix && !relative.startsWith(normalizedPrefix + '/'))) {
+        return undefined;
+    }
+    return relative;
+}

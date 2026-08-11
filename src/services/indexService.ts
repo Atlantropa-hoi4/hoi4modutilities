@@ -4,7 +4,8 @@ import { sendEvent } from '../util/telemetry';
 import { incrementPerfCounter, measureAsync } from '../util/perf';
 
 export interface IndexTarget<TSnapshot> {
-    build(estimatedSize: [number]): Promise<void>;
+    build(estimatedSize: [number]): Promise<TSnapshot>;
+    commit(snapshot: TSnapshot): void;
     reset(): void;
     statusMessage: string;
     telemetryEvent: string;
@@ -45,20 +46,29 @@ export class IndexService<TSnapshot> {
             vscode.window.setStatusBarMessage('$(loading~spin) ' + localizer.t(target.statusMessage), buildTask);
         }
 
-        const task = buildTask
-            .then(() => {
+        const task = (async () => {
+            let snapshot: TSnapshot;
+            try {
+                snapshot = await buildTask;
+            } catch (e) {
                 if (this.getGeneration(targetId) !== generation) {
-                    return;
+                    return this.ensure(targetId, options);
                 }
-                this.readyTargets.add(targetId);
-                sendEvent(target.telemetryEvent, { size: estimatedSize[0].toString() });
-            })
-            .finally(() => {
-                const currentTask = this.tasks.get(targetId);
-                if (currentTask?.generation === generation && currentTask.promise === task) {
-                    this.tasks.delete(targetId);
-                }
-            });
+                throw e;
+            }
+
+            if (this.getGeneration(targetId) !== generation) {
+                return this.ensure(targetId, options);
+            }
+            target.commit(snapshot);
+            this.readyTargets.add(targetId);
+            sendEvent(target.telemetryEvent, { size: estimatedSize[0].toString() });
+        })().finally(() => {
+            const currentTask = this.tasks.get(targetId);
+            if (currentTask?.generation === generation && currentTask.promise === task) {
+                this.tasks.delete(targetId);
+            }
+        });
         this.tasks.set(targetId, { generation, promise: task });
         return task;
     }
@@ -78,6 +88,21 @@ export class IndexService<TSnapshot> {
 
     public isReady(targetId: string): boolean {
         return this.readyTargets.has(targetId);
+    }
+
+    public isActive(targetId: string): boolean {
+        return this.readyTargets.has(targetId) || this.tasks.has(targetId);
+    }
+
+    public rebuildIfActive(targetId: string, options?: { showStatusBar?: boolean }): boolean {
+        if (!this.isActive(targetId)) {
+            return false;
+        }
+        this.invalidate(targetId);
+        queueMicrotask(() => {
+            void this.ensure(targetId, options);
+        });
+        return true;
     }
 
     private getGeneration(targetId: string): number {

@@ -118,11 +118,14 @@ export function getHoi4FormatterProfile(filePath: string): Hoi4FormatterProfile 
     }
 
     const segments = normalized.split('/').filter(Boolean);
-    if (segments.includes('localisation') || segments.includes('map')) {
-        return undefined;
-    }
-
-    if (segments.includes('common') || segments.includes('events') || segments.includes('history') || segments.includes('country_metadata')) {
+    const excludedRootIndex = Math.max(segments.lastIndexOf('localisation'), segments.lastIndexOf('map'));
+    const scriptRootIndex = Math.max(
+        segments.lastIndexOf('common'),
+        segments.lastIndexOf('events'),
+        segments.lastIndexOf('history'),
+        segments.lastIndexOf('country_metadata'),
+    );
+    if (scriptRootIndex > excludedRootIndex) {
         return 'script';
     }
 

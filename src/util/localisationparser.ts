@@ -3,6 +3,10 @@ import { YAMLException } from 'js-yaml';
 
 export type ParsedLocalisationData = Record<string, Record<string, string>>;
 
+export function parseLocalisationFileContent(fileContent: string): ParsedLocalisationData {
+    return parseLocalisationFile(preprocessYamlContent(fileContent));
+}
+
 export function preprocessYamlContent(fileContent: string): string {
     const lines = fileContent.split(/\r?\n/);
 

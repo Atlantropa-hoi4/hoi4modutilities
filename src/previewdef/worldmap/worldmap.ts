@@ -265,7 +265,7 @@ export class WorldMap {
         }
 
         let targetFolderUri = vscode.workspace.workspaceFolders[0].uri;
-        if (vscode.workspace.workspaceFolders.length >= 1) {
+        if (vscode.workspace.workspaceFolders.length > 1) {
             const folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: localize('worldmap.selectafolder', 'Select a folder to copy {0} file', typeName) });
             if (!folder) {
                 return;

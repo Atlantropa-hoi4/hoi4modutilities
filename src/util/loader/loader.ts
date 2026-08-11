@@ -74,10 +74,14 @@ export abstract class Loader<T, E = {}> {
         }
 
         session.checkingShouldReload(this);
-        const result = await this.shouldReloadImpl(session);
-        session.setShouldReload(this, result);
-
-        return result;
+        try {
+            const result = await this.shouldReloadImpl(session);
+            session.setShouldReload(this, result);
+            return result;
+        } catch (e) {
+            session.clearShouldReload(this);
+            throw e;
+        }
     };
 
     protected shouldReloadImpl(session: LoaderSession): Promise<boolean> {
@@ -121,11 +125,12 @@ export abstract class FileLoader<T, E={}> extends Loader<T, E> {
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
         session.throwIfCancelled();
-        this.expiryToken = await hoiFileExpiryToken(this.file);
+        const expiryToken = await hoiFileExpiryToken(this.file);
         session.throwIfCancelled();
 
         const result = await this.loadFromFile(session);
         session.throwIfCancelled();
+        this.expiryToken = expiryToken;
 
         return {
             ...result,
@@ -219,10 +224,11 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
 
     protected async loadImpl(session: LoaderSession): Promise<LoadResult<T, E>> {
         const dependencies: string[] = [this.file];
+        let expiryToken: string | undefined;
 
         if (this.contentProvider === undefined) {
             session.throwIfCancelled();
-            this.expiryToken = await hoiFileExpiryToken(this.file);
+            expiryToken = await hoiFileExpiryToken(this.file);
             session.throwIfCancelled();
         }
 
@@ -242,6 +248,9 @@ export abstract class ContentLoader<T, E={}> extends Loader<T, E> {
         session.throwIfCancelled();
         const result = await this.postLoad(content, dependenciesFromText, errorValue, session);
         session.throwIfCancelled();
+        if (expiryToken !== undefined) {
+            this.expiryToken = expiryToken;
+        }
         this.loaderDependencies.flip();
 
         return {

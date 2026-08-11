@@ -129,30 +129,20 @@ async function generateFocusGfxShine(): Promise<void> {
         return;
     }
 
-    let targetDocumentForEdit = targetDocument;
-    if (!targetExists) {
-        const createEdit = new vscode.WorkspaceEdit();
-        createEdit.createFile(resolved.targetUri, { ignoreIfExists: true });
-        const created = await vscode.workspace.applyEdit(createEdit);
-        if (!created) {
-            void vscode.window.showErrorMessage(localize('focusgfxshine.applyfailed', 'VS Code refused the focus GFX shine edit.'));
-            return;
-        }
-
-        targetDocumentForEdit = await vscode.workspace.openTextDocument(resolved.targetUri);
-    }
-
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(
-        resolved.targetUri,
-        new vscode.Range(
-            new vscode.Position(0, 0),
-            targetExists && targetDocumentForEdit
-                ? targetDocumentForEdit.positionAt(targetContent!.length)
-                : new vscode.Position(0, 0),
-        ),
-        plan.content,
-    );
+    if (targetExists && targetDocument) {
+        edit.replace(
+            resolved.targetUri,
+            new vscode.Range(
+                new vscode.Position(0, 0),
+                targetDocument.positionAt(targetContent!.length),
+            ),
+            plan.content,
+        );
+    } else {
+        edit.createFile(resolved.targetUri);
+        edit.insert(resolved.targetUri, new vscode.Position(0, 0), plan.content);
+    }
 
     const applied = await vscode.workspace.applyEdit(edit);
     if (!applied) {

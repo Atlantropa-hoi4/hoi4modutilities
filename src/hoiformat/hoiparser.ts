@@ -172,12 +172,8 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
             nextToken = tokens.peek();
         }
 
-        let nameValue = name.value;
-        if (name.type === 'string') {
-            nameValue = nameValue.substr(1, nameValue.length - 2).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-        }
         return {
-            name: name.value,
+            name: name.type === 'string' ? decodeStringToken(name) : name.value,
             nameToken: keepTokens ? name : null,
             operator: null,
             operatorToken: null,
@@ -219,7 +215,7 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
     }
 
     return {
-        name: name.value,
+        name: name.type === 'string' ? decodeStringToken(name) : name.value,
         nameToken: keepTokens ? name : null,
         operator: operator.value,
         operatorToken: keepTokens ? operator : null,
@@ -236,7 +232,7 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [
     switch (nextToken.type) {
         case 'string':
             return [
-                nextToken.value.substr(1, nextToken.end - nextToken.start - 2).replace(/\\"/g, '"').replace(/\\\\/g, '\\'),
+                decodeStringToken(nextToken),
                 nextToken,
                 nextToken,
             ];
@@ -271,6 +267,10 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [
     }
     
     tokens.throw("Expect string, number, symbol, or {", true);
+}
+
+function decodeStringToken(token: Token<HOITokenType>): string {
+    return token.value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }
 
 function parseNumberToken(value: string): number {

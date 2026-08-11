@@ -75,7 +75,86 @@ describe('cache metrics', () => {
         assert.strictEqual(await cache.get('a'), 'a:3');
         assert.strictEqual(await cache.get('b'), 'b:4');
     });
+
+    it('does not let a stale rejected promise remove a replacement entry', async () => {
+        let version = 1;
+        const requests: Deferred<string>[] = [];
+        const cache = new PromiseCache({
+            name: 'unit-stale-rejection',
+            factory: async () => {
+                const request = createDeferred<string>();
+                requests.push(request);
+                return request.promise;
+            },
+            expireWhenChange: () => version,
+            life: 1000,
+            nonExpireLife: 0,
+        });
+
+        const stale = cache.get('a');
+        version += 1;
+        const replacement = cache.get('a');
+        await waitForMicrotasks();
+        assert.strictEqual(requests.length, 2);
+
+        requests[0].reject(new Error('stale failure'));
+        await assert.rejects(stale, /stale failure/);
+        requests[1].resolve('replacement');
+        assert.strictEqual(await replacement, 'replacement');
+        assert.strictEqual(await cache.get('a'), 'replacement');
+        assert.strictEqual(requests.length, 2);
+    });
+
+    it('does not let a stale undefined result remove a replacement entry', async () => {
+        let version = 1;
+        const requests: Deferred<string | undefined>[] = [];
+        const cache = new PromiseCache<string | undefined>({
+            name: 'unit-stale-empty-result',
+            factory: async () => {
+                const request = createDeferred<string | undefined>();
+                requests.push(request);
+                return request.promise;
+            },
+            expireWhenChange: () => version,
+            life: 1000,
+            nonExpireLife: 0,
+        });
+
+        const stale = cache.get('a');
+        version += 1;
+        const replacement = cache.get('a');
+        await waitForMicrotasks();
+        assert.strictEqual(requests.length, 2);
+
+        requests[0].resolve(undefined);
+        assert.strictEqual(await stale, undefined);
+        requests[1].resolve('replacement');
+        assert.strictEqual(await replacement, 'replacement');
+        assert.strictEqual(await cache.get('a'), 'replacement');
+        assert.strictEqual(requests.length, 2);
+    });
 });
+
+interface Deferred<T> {
+    promise: Promise<T>;
+    resolve(value: T): void;
+    reject(reason: unknown): void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
+async function waitForMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+}
 
 function getCounterCount(label: string, cacheName: string): number {
     return getPerfSnapshot().counters.find(counter =>

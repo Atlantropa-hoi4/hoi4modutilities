@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { localize } from '../util/i18n';
-import { Commands, WebviewType, ConfigurationKey } from '../constants';
+import { Commands, WebviewType } from '../constants';
 import { debug, error } from '../util/debug';
 import { contextContainer } from '../context';
 import { basename, getDocumentByUri } from '../util/vsccommon';
@@ -8,6 +8,7 @@ import { sendEvent } from '../util/telemetry';
 import { getWebviewPanelOptions } from '../util/webview';
 import { UpdateScheduler } from '../services/updateScheduler';
 import { getSelectedModRootFolders } from '../util/fileloader';
+import { onDidChangeSelectedModSource } from '../util/modfile';
 import { incrementPerfCounter, measureAsync } from '../util/perf';
 import { PreviewProviderResolver } from './previewproviderresolver';
 import { PreviewDependencyTracker } from './previewdependencytracker';
@@ -37,6 +38,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private previewDependencyWatcher: vscode.Disposable | undefined;
     private modRootWatchers: vscode.Disposable[] = [];
     private modRootWatcherGeneration = 0;
+    private registrationGeneration = 0;
 
     constructor(
         options: PreviewManagerOptions,
@@ -51,15 +53,19 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
     public register(): vscode.Disposable {
         const disposables: vscode.Disposable[] = [];
+        const registrationGeneration = ++this.registrationGeneration;
+        disposables.push(new vscode.Disposable(() => {
+            if (this.registrationGeneration === registrationGeneration) {
+                this.registrationGeneration += 1;
+            }
+        }));
         disposables.push(vscode.commands.registerCommand(Commands.Preview, this.showPreview, this));
         disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildActiveDependencyWatchers(); }));
-        disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
-                void this.rebuildActiveDependencyWatchers();
-            }
+        disposables.push(onDidChangeSelectedModSource(() => {
+            void this.onDidChangeSelectedModSource(registrationGeneration);
         }));
         disposables.push(this.previewContextService.register());
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
@@ -295,6 +301,30 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         }
 
         await this.rebuildModRootWatchers();
+    }
+
+    private async onDidChangeSelectedModSource(registrationGeneration: number): Promise<void> {
+        await this.rebuildActiveDependencyWatchers();
+        if (registrationGeneration !== this.registrationGeneration) {
+            return;
+        }
+        for (const preview of Object.values(this.previews)) {
+            const previewUri = preview.uri.toString();
+            this.dependencyUpdateScheduler.schedule(
+                previewUri,
+                preview.getDependencyChangeDebounceMs(preview.uri, 'change'),
+                async () => {
+                    const document = getDocumentByUri(preview.uri);
+                    if (document && !preview.isDisposed) {
+                        await measureAsync(
+                            'preview.refresh',
+                            { source: 'dependency', preview: preview.constructor.name },
+                            () => preview.onDocumentChange(document, { source: 'dependency' }),
+                        );
+                    }
+                },
+            );
+        }
     }
 
     private async rebuildModRootWatchers(): Promise<void> {

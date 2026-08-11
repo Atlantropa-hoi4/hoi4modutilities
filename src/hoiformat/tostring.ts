@@ -1,7 +1,13 @@
 import { Node, NodeValue } from './hoiparser';
 
 export function nodeToString(node: Node): string {
-    return [node.name, node.operator, node.valueAttachment?.name, nodeValueToString(node.value)].filter(v => !!v).join(' ');
+    const name = node.name === null ? null : nodeNameToString(node);
+    return [name, node.operator, node.valueAttachment?.name, nodeValueToString(node.value)].filter(v => !!v).join(' ');
+}
+
+function nodeNameToString(node: Node): string {
+    const name = node.name!;
+    return node.nameToken?.type === 'string' || !isBareSymbol(name) ? quoteString(name) : name;
 }
 
 function nodeValueToString(nodeValue: NodeValue): string | null {
@@ -18,8 +24,16 @@ function nodeValueToString(nodeValue: NodeValue): string | null {
     }
 
     if (typeof nodeValue === 'string') {
-        return '"' + nodeValue + '"';
+        return quoteString(nodeValue);
     }
 
     return nodeValue.toString();
+}
+
+function isBareSymbol(value: string): boolean {
+    return value.length > 0 && !/[\s#={}<>!,;]/.test(value);
+}
+
+function quoteString(value: string): string {
+    return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }

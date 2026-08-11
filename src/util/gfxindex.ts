@@ -1,42 +1,55 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { parseHoi4File } from '../hoiformat/hoiparser';
 import { getSpriteTypes } from '../hoiformat/spritetype';
 import { debounceByInput, forceError, mapWithConcurrency, UserError } from './common';
 import { error } from './debug';
 import { isGfxIndexEnabled } from './featureflags';
-import { getSelectedModRootFolders, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
+import { getFilePathFromMod, getSelectedModRootFolders, listFilesFromModOrHOI4, readFileFromModOrHOI4, refreshFileContentSource } from './fileloader';
 import { localize } from './i18n';
 import { uniq } from 'lodash';
 import { IndexService } from '../services/indexService';
 import { ConfigurationKey } from '../constants';
+import { LatestGeneration, LatestUpdateCoordinator } from './latestUpdate';
+import { getRelativePathWithinRoot } from './nodecommon';
+import { onDidChangeSelectedModSource } from './modfile';
 
 interface GfxIndexItem {
     file: string;
 }
 
-const globalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
-const dlcGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+interface GfxIndexSnapshot {
+    index: Record<string, GfxIndexItem | undefined>;
+    dlcIndex?: Record<string, GfxIndexItem | undefined>;
+}
+
+let globalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+let dlcGfxIndex: Record<string, GfxIndexItem | undefined> = {};
 let workspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+const workspaceGfxUpdates = new LatestUpdateCoordinator<string>();
 const gfxIndexBuildConcurrency = 8;
 
-const gfxIndexService = new IndexService<GfxIndexItem>({
+const gfxIndexService = new IndexService<GfxIndexSnapshot>({
     global: {
         build: estimatedSize => buildGlobalGfxIndex(estimatedSize),
+        commit: snapshot => {
+            globalGfxIndex = snapshot.index;
+            dlcGfxIndex = snapshot.dlcIndex ?? {};
+        },
         reset: () => {
-            for (const key of Object.keys(globalGfxIndex)) {
-                delete globalGfxIndex[key];
-            }
-            for (const key of Object.keys(dlcGfxIndex)) {
-                delete dlcGfxIndex[key];
-            }
+            globalGfxIndex = {};
+            dlcGfxIndex = {};
         },
         statusMessage: 'Building GFX index...',
         telemetryEvent: 'gfxIndex',
     },
     workspace: {
         build: estimatedSize => buildWorkspaceGfxIndex(estimatedSize),
+        commit: snapshot => {
+            workspaceGfxUpdates.invalidateAll();
+            workspaceGfxIndex = snapshot.index;
+        },
         reset: () => {
+            workspaceGfxUpdates.invalidateAll();
             workspaceGfxIndex = {};
         },
         statusMessage: 'Building workspace GFX index...',
@@ -48,14 +61,26 @@ export function registerGfxIndex(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
     if (isGfxIndexEnabled()) {
         let modRootWatchers: vscode.Disposable[] = [];
+        const modRootWatcherGeneration = new LatestGeneration();
         const disposeModRootWatchers = () => {
             modRootWatchers.forEach(watcher => watcher.dispose());
             modRootWatchers = [];
         };
         const rebuildModRootWatchers = async () => {
+            const isCurrent = modRootWatcherGeneration.next();
             disposeModRootWatchers();
             const roots = await getSelectedModRootFolders();
-            modRootWatchers = roots.map(root => createGfxIndexFileWatcher(new vscode.RelativePattern(root, '**/*.gfx')));
+            if (!isCurrent()) {
+                return;
+            }
+            const nextWatchers = roots.map(root =>
+                createGfxIndexFileWatcher(
+                    new vscode.RelativePattern(root, '**/*.gfx'),
+                    root,
+                    isCurrent,
+                ));
+            disposeModRootWatchers();
+            modRootWatchers = nextWatchers;
         };
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(onChangeWorkspaceFolders));
         disposables.push(vscode.workspace.onDidChangeTextDocument(onChangeTextDocument));
@@ -65,12 +90,20 @@ export function registerGfxIndex(): vscode.Disposable {
         disposables.push(vscode.workspace.onDidRenameFiles(onRenameFiles));
         disposables.push(createGfxIndexFileWatcher('**/*.gfx'));
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void rebuildModRootWatchers(); }));
+        disposables.push(onDidChangeSelectedModSource(() => {
+            rebuildActiveGfxIndex('workspace');
+            void rebuildModRootWatchers();
+        }));
         disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
-                void rebuildModRootWatchers();
+            if (e.affectsConfiguration(`${ConfigurationKey}.installPath`)
+                || e.affectsConfiguration(`${ConfigurationKey}.loadDlcContents`)) {
+                rebuildActiveGfxIndex('global');
             }
         }));
-        disposables.push(new vscode.Disposable(disposeModRootWatchers));
+        disposables.push(new vscode.Disposable(() => {
+            modRootWatcherGeneration.invalidate();
+            disposeModRootWatchers();
+        }));
         void rebuildModRootWatchers();
     }
 
@@ -98,9 +131,11 @@ export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Pr
     return uniq((await Promise.all(gfxNames.map(getGfxContainerFile))).filter((v): v is string => v !== undefined));
 }
 
-async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<void> {
+async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<GfxIndexSnapshot> {
     const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
     const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
+    const rebuiltGlobalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
+    const rebuiltDlcGfxIndex: Record<string, GfxIndexItem | undefined> = {};
     const [baseGfxFiles, dlcGfxFiles] = await Promise.all([
         listFilesFromModOrHOI4('interface', baseOptions),
         listFilesFromModOrHOI4('interface', dlcOptions),
@@ -109,21 +144,24 @@ async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<void> {
         mapWithConcurrency(
             baseGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
             gfxIndexBuildConcurrency,
-            f => fillGfxItems('interface/' + f, globalGfxIndex, baseOptions, estimatedSize),
+            f => fillGfxItems('interface/' + f, rebuiltGlobalGfxIndex, baseOptions, estimatedSize),
         ),
         mapWithConcurrency(
             dlcGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
             gfxIndexBuildConcurrency,
-            f => fillGfxItems('interface/' + f, dlcGfxIndex, dlcOptions, estimatedSize),
+            f => fillGfxItems('interface/' + f, rebuiltDlcGfxIndex, dlcOptions, estimatedSize),
         ),
     ]);
+    return { index: rebuiltGlobalGfxIndex, dlcIndex: rebuiltDlcGfxIndex };
 }
 
-async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<void> {
+async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<GfxIndexSnapshot> {
     const options = { mod: true, hoi4: false, dlc: false, recursively: true };
+    const rebuiltWorkspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
     await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
-        fillGfxItems('interface/' + f, workspaceGfxIndex, options, estimatedSize));
+        fillGfxItems('interface/' + f, rebuiltWorkspaceGfxIndex, options, estimatedSize));
+    return { index: rebuiltWorkspaceGfxIndex };
 }
 
 function ensureGlobalGfxIndex(): Promise<void> {
@@ -177,27 +215,29 @@ async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexIt
 }
 
 function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
-    if (!gfxIndexService.isReady('workspace')) {
+    if (!gfxIndexService.isActive('workspace')) {
         return;
     }
-    gfxIndexService.invalidate('workspace');
-    void ensureWorkspaceGfxIndexImpl(false);
+    rebuildActiveGfxIndex('workspace');
 }
 
 function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
-    if (!gfxIndexService.isReady('workspace')) {
+    const file = e.document.uri;
+    if (!file.path.endsWith('.gfx') || !getWorkspaceGfxRelativePath(file)) {
         return;
     }
-    const file = e.document.uri;
-    if (file.path.endsWith('.gfx')) {
-        onChangeTextDocumentImpl(file);
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
+        return;
     }
+    onChangeTextDocumentImpl(file);
 }
 
 const onChangeTextDocumentImpl = debounceByInput(
     (file: vscode.Uri) => {
-        removeWorkspaceGfxIndex(file);
-        addWorkspaceGfxIndex(file);
+        if (prepareWorkspaceGfxIncrementalUpdate()) {
+            replaceWorkspaceGfxIndex(file);
+        }
     },
     file => file.toString(),
     50,
@@ -205,101 +245,165 @@ const onChangeTextDocumentImpl = debounceByInput(
 );
 
 function onCloseTextDocument(document: vscode.TextDocument) {
-    if (!gfxIndexService.isReady('workspace')) {
+    const file = document.uri;
+    if (!file.path.endsWith('.gfx') || !getWorkspaceGfxRelativePath(file)) {
         return;
     }
-    const file = document.uri;
-    if (file.path.endsWith('.gfx')) {
-        removeWorkspaceGfxIndex(file);
-        addWorkspaceGfxIndex(file);
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
+        return;
     }
+    replaceWorkspaceGfxIndex(file);
 }
 
 function onCreateFiles(e: vscode.FileCreateEvent) {
-    if (!gfxIndexService.isReady('workspace')) {
+    const files = e.files.filter(file =>
+        file.path.endsWith('.gfx') && getWorkspaceGfxRelativePath(file) !== undefined);
+    if (files.length === 0) {
         return;
     }
-    for (const file of e.files) {
-        if (file.path.endsWith('.gfx')) {
-            addWorkspaceGfxIndex(file);
-        }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
+        return;
+    }
+    for (const file of files) {
+        replaceWorkspaceGfxIndex(file);
     }
 }
 
 function onDeleteFiles(e: vscode.FileDeleteEvent) {
-    if (!gfxIndexService.isReady('workspace')) {
+    const files = e.files.filter(file =>
+        file.path.endsWith('.gfx') && getWorkspaceGfxRelativePath(file) !== undefined);
+    if (files.length === 0) {
         return;
     }
-    for (const file of e.files) {
-        if (file.path.endsWith('.gfx')) {
-            removeWorkspaceGfxIndex(file);
-        }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
+        return;
+    }
+    for (const file of files) {
+        replaceWorkspaceGfxIndex(file);
     }
 }
 
 function onRenameFiles(e: vscode.FileRenameEvent) {
-    if (!gfxIndexService.isReady('workspace')) {
+    if (!e.files.some(file =>
+        (file.oldUri.path.endsWith('.gfx') && getWorkspaceGfxRelativePath(file.oldUri) !== undefined)
+        || (file.newUri.path.endsWith('.gfx') && getWorkspaceGfxRelativePath(file.newUri) !== undefined))) {
+        return;
+    }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
         return;
     }
     onDeleteFiles({ files: e.files.map(f => f.oldUri) });
     onCreateFiles({ files: e.files.map(f => f.newUri) });
 }
 
-function createGfxIndexFileWatcher(pattern: vscode.GlobPattern): vscode.Disposable {
+function createGfxIndexFileWatcher(
+    pattern: vscode.GlobPattern,
+    root?: vscode.Uri,
+    isCurrent: () => boolean = () => true,
+): vscode.Disposable {
     const watcher = vscode.workspace.createFileSystemWatcher(pattern);
     return vscode.Disposable.from(
         watcher,
-        watcher.onDidChange(onChangeGfxFile),
-        watcher.onDidCreate(onCreateGfxFile),
-        watcher.onDidDelete(onDeleteGfxFile),
+        watcher.onDidChange(file => {
+            if (isCurrent()) {
+                onChangeGfxFile(file, root);
+            }
+        }),
+        watcher.onDidCreate(file => {
+            if (isCurrent()) {
+                onCreateGfxFile(file, root);
+            }
+        }),
+        watcher.onDidDelete(file => {
+            if (isCurrent()) {
+                onDeleteGfxFile(file, root);
+            }
+        }),
     );
 }
 
-function onChangeGfxFile(file: vscode.Uri) {
-    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+function onChangeGfxFile(file: vscode.Uri, root?: vscode.Uri) {
+    if (!file.path.toLowerCase().endsWith('.gfx') || !getWorkspaceGfxRelativePath(file, root)) {
+        return;
+    }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
         return;
     }
 
-    removeWorkspaceGfxIndex(file);
-    addWorkspaceGfxIndex(file);
+    replaceWorkspaceGfxIndex(file, root);
 }
 
-function onCreateGfxFile(file: vscode.Uri) {
-    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+function onCreateGfxFile(file: vscode.Uri, root?: vscode.Uri) {
+    if (!file.path.toLowerCase().endsWith('.gfx') || !getWorkspaceGfxRelativePath(file, root)) {
+        return;
+    }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
         return;
     }
 
-    addWorkspaceGfxIndex(file);
+    replaceWorkspaceGfxIndex(file, root);
 }
 
-function onDeleteGfxFile(file: vscode.Uri) {
-    if (!gfxIndexService.isReady('workspace') || !file.path.toLowerCase().endsWith('.gfx')) {
+function onDeleteGfxFile(file: vscode.Uri, root?: vscode.Uri) {
+    if (!file.path.toLowerCase().endsWith('.gfx') || !getWorkspaceGfxRelativePath(file, root)) {
+        return;
+    }
+    refreshFileContentSource();
+    if (!prepareWorkspaceGfxIncrementalUpdate()) {
         return;
     }
 
-    removeWorkspaceGfxIndex(file);
+    replaceWorkspaceGfxIndex(file, root);
 }
 
-function removeWorkspaceGfxIndex(file: vscode.Uri) {
-    const wsFolder = vscode.workspace.getWorkspaceFolder(file);
-    if (wsFolder) {
-        const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
-        if (relative && relative.startsWith('interface/')) {
-            for (const key in workspaceGfxIndex) {
-                if (workspaceGfxIndex[key]?.file === relative) {
-                    delete workspaceGfxIndex[key];
-                }
-            }
+function replaceWorkspaceGfxIndex(file: vscode.Uri, root?: vscode.Uri): void {
+    const relative = getWorkspaceGfxRelativePath(file, root);
+    if (!relative) {
+        return;
+    }
+
+    void workspaceGfxUpdates.update(relative, async () => {
+        const fileIndex: Record<string, GfxIndexItem | undefined> = {};
+        if (await getFilePathFromMod(relative)) {
+            await fillGfxItems(relative, fileIndex, { mod: true, hoi4: false, dlc: false });
+        }
+        return fileIndex;
+    }, fileIndex => {
+        removeGfxFileFromIndex(workspaceGfxIndex, relative);
+        Object.assign(workspaceGfxIndex, fileIndex);
+    });
+}
+
+function getWorkspaceGfxRelativePath(file: vscode.Uri, root?: vscode.Uri): string | undefined {
+    const baseUri = root ?? vscode.workspace.getWorkspaceFolder(file)?.uri;
+    if (baseUri) {
+        return getRelativePathWithinRoot(baseUri.path, file.path, 'interface');
+    }
+    return undefined;
+}
+
+function removeGfxFileFromIndex(index: Record<string, GfxIndexItem | undefined>, relative: string): void {
+    for (const key in index) {
+        if (index[key]?.file === relative) {
+            delete index[key];
         }
     }
 }
 
-function addWorkspaceGfxIndex(file: vscode.Uri) {
-    const wsFolder = vscode.workspace.getWorkspaceFolder(file);
-    if (wsFolder) {
-        const relative = path.relative(wsFolder.uri.path, file.path).replace(/\\+/g, '/');
-        if (relative && relative.startsWith('interface/')) {
-            void fillGfxItems(relative, workspaceGfxIndex, { mod: true, hoi4: false, dlc: false });
-        }
+function rebuildActiveGfxIndex(targetId: 'global' | 'workspace'): void {
+    gfxIndexService.rebuildIfActive(targetId, { showStatusBar: false });
+}
+
+function prepareWorkspaceGfxIncrementalUpdate(): boolean {
+    if (gfxIndexService.isReady('workspace')) {
+        return true;
     }
+    rebuildActiveGfxIndex('workspace');
+    return false;
 }

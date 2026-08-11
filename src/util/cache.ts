@@ -142,19 +142,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
         const { weigher, ...rest } = options;
         super({
             ...rest,
-            factory: (key) => {
-                return options.factory(key).then(
-                    value => {
-                        if (value === null || value === undefined) {
-                            this.remove(key);
-                        }
-                        return value;
-                    },
-                    error => {
-                        this.remove(key);
-                        return Promise.reject<V>(error);
-                    });
-            }
+            factory: options.factory,
         });
         this.promiseWeigher = weigher;
     }
@@ -185,16 +173,25 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
         };
 
         this._cache[key] = newEntry;
-        if (this.promiseWeigher && this.options.maxBytes !== undefined) {
-            value.then(resolved => {
-                if (this._cache[key] === newEntry) {
-                    newEntry.weight = resolved === null || resolved === undefined
-                        ? 0
-                        : (this.promiseWeigher!(resolved) ?? 0);
-                    this.enforceLimits();
-                }
-            }, () => undefined);
-        }
+        value.then(resolved => {
+            if (this._cache[key] !== newEntry) {
+                return;
+            }
+
+            if (resolved === null || resolved === undefined) {
+                this.remove(key);
+                return;
+            }
+
+            if (this.promiseWeigher && this.options.maxBytes !== undefined) {
+                newEntry.weight = this.promiseWeigher(resolved) ?? 0;
+                this.enforceLimits();
+            }
+        }, () => {
+            if (this._cache[key] === newEntry) {
+                this.remove(key);
+            }
+        });
         this.enforceLimits();
         return await newEntry.value;
     }

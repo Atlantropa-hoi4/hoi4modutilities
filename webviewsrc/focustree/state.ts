@@ -2,6 +2,7 @@ import { ConditionItem } from "../../src/hoiformat/condition";
 import { FocusTree } from "../../src/previewdef/focustree/schema";
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from "../../src/previewdef/focustree/conditionpresets";
 import { resolveFocusTreeSelection } from "../../src/previewdef/focustree/selectionstate";
+import { restoreArrayState } from "../util/restoredstate";
 
 export interface FocusTreeWebviewInitialState {
     selectedExprs: ConditionItem[];
@@ -58,7 +59,7 @@ export function createFocusTreeWebviewInitialState(
         (sanitizedRestoredState.selectedFocusTreeIndex as number | undefined) ?? 0,
     );
     return {
-        selectedExprs: (sanitizedRestoredState.selectedExprs as ConditionItem[] | undefined) ?? [],
+        selectedExprs: restoreArrayState<ConditionItem>(sanitizedRestoredState.selectedExprs),
         conditionPresetsByTree: normalizeConditionPresetsByTree(
             (sanitizedRestoredState.conditionPresetsByTree as FocusConditionPresetsByTree | undefined)
             ?? persistedConditionPresetsByTree

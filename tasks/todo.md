@@ -1,3 +1,12 @@
+Functional deep audit 2026-08-11:
+- [x] Capture a clean baseline and map the current functional surfaces and verification commands.
+- [x] Audit extension activation/contributions, previews/webviews, and parser/index/cache utilities without performing a security audit.
+- [x] Reproduce and fix each high-confidence functional defect with focused regression coverage.
+- [x] Run targeted checks plus TypeScript, lint, unit, development-build, UI-smoke, and whitespace verification where feasible.
+- [x] Review the final diff and record verified outcomes, omissions, and remaining risks.
+
+Review note: Completed the non-security functional audit across packaging, extension/editor lifecycle, previews/webviews, parsers, caches/loaders, DDS handling, localisation, and layered indexes. Reproducible defects were fixed with focused regression coverage, including async generation and watcher races. Final verification passed with `npm run verify`, `npm run build:dev`, `npx vsce ls`, and `git diff --check`; no commit or push was performed. Remaining non-blocking limits are documented in the handoff.
+
 Preview/editor audit and feature research 2026-05-30:
 - [x] Map preview/editor entry points and existing high-risk guidance.
 - [x] Fix overlapping mod-root dependency watcher rebuilds so stale async results cannot replace the newest watcher set.

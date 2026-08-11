@@ -11,6 +11,7 @@ import { readFile } from './util/vsccommon';
 import { getStaticResourceRoots } from './util/webview';
 import { formatByteSize, isImagePreviewWithinLimit, maxCustomEditorImageBytes } from './util/image/previewlimits';
 import { measureSync, recordPerf } from './util/perf';
+import { runCancellableOperation } from './services/cancellableOperation';
 
 abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider {
     public async openCustomDocument(uri: vscode.Uri) {
@@ -60,20 +61,30 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
     }
 
     private async readPreviewBuffer(uri: vscode.Uri, token: vscode.CancellationToken): Promise<Buffer | null> {
-        const stat = await vscode.workspace.fs.stat(uri);
-        if (!isImagePreviewWithinLimit(stat.size)) {
-            throw new UserError(localize(
-                'imagePreview.tooLarge',
-                'Image preview is disabled for files larger than {0}. This file is {1}; open it with an external image tool or reduce the texture before previewing.',
-                formatByteSize(maxCustomEditorImageBytes),
-                formatByteSize(stat.size),
-            ));
+        const stat = await runCancellableOperation(token, () => vscode.workspace.fs.stat(uri));
+        if (stat === null) {
+            return null;
+        }
+        this.ensurePreviewWithinLimit(stat.size);
+
+        const buffer = await runCancellableOperation(token, () => readFile(uri));
+        if (buffer !== null) {
+            this.ensurePreviewWithinLimit(buffer.byteLength);
+        }
+        return buffer;
+    }
+
+    private ensurePreviewWithinLimit(size: number): void {
+        if (isImagePreviewWithinLimit(size)) {
+            return;
         }
 
-        return await Promise.race([
-            readFile(uri),
-            new Promise<null>(resolve => token.onCancellationRequested(_ => resolve(null))),
-        ]);
+        throw new UserError(localize(
+            'imagePreview.tooLarge',
+            'Image preview is disabled for files larger than {0}. This file is {1}; open it with an external image tool or reduce the texture before previewing.',
+            formatByteSize(maxCustomEditorImageBytes),
+            formatByteSize(size),
+        ));
     }
 
     protected abstract previewKind: string;

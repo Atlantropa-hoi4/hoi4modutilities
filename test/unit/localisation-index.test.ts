@@ -22,11 +22,13 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const {
+    applyLocalisationFileIndexUpdate,
     createLocalisedTextQuickIfReadyResolver,
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
     mergeLocalisationIndexes,
     parseLocalisationFile,
+    parseLocalisationFileContent,
     preprocessYamlContent,
     rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
@@ -86,6 +88,21 @@ describe('localisation index helpers', () => {
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_D', 'ja', globalIndex, workspaceIndex), 'Workspace English');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_FALLBACK_OVERRIDE', 'ja', globalIndex, workspaceIndex), 'Workspace English Override');
         assert.strictEqual(resolveLocalisedTextFromIndex('FOCUS_UNKNOWN', 'ko', globalIndex, workspaceIndex), 'FOCUS_UNKNOWN');
+    });
+
+    it('preserves an intentionally empty workspace override', () => {
+        const globalIndex = {
+            l_english: {
+                HIDDEN_LABEL: 'Visible vanilla text',
+            },
+        };
+        const workspaceIndex = {
+            l_english: {
+                HIDDEN_LABEL: '',
+            },
+        };
+
+        assert.strictEqual(resolveLocalisedTextFromIndex('HIDDEN_LABEL', 'en', globalIndex, workspaceIndex), '');
     });
 
     it('falls back to an available workspace language when requested and english text are missing', () => {
@@ -168,6 +185,65 @@ describe('localisation index helpers', () => {
         });
     });
 
+    it('preserves file precedence when incrementally replacing an existing file index', () => {
+        const fileIndexes = {
+            'localisation/a_l_english.yml': {
+                l_english: {
+                    SHARED_KEY: 'A',
+                },
+            },
+            'localisation/b_l_english.yml': {
+                l_english: {
+                    SHARED_KEY: 'B',
+                },
+            },
+        };
+
+        const rebuilt = applyLocalisationFileIndexUpdate(
+            fileIndexes,
+            'localisation/a_l_english.yml',
+            { l_english: { SHARED_KEY: 'A updated' } },
+        );
+
+        assert.deepStrictEqual(Object.keys(fileIndexes), [
+            'localisation/a_l_english.yml',
+            'localisation/b_l_english.yml',
+        ]);
+        assert.strictEqual(rebuilt.l_english.SHARED_KEY, 'B');
+    });
+
+    it('preserves file precedence when a deleted localisation file is recreated', () => {
+        const fileIndexes = {
+            'localisation/a_l_english.yml': {
+                l_english: {
+                    SHARED_KEY: 'A',
+                },
+            },
+            'localisation/b_l_english.yml': {
+                l_english: {
+                    SHARED_KEY: 'B',
+                },
+            },
+        };
+
+        applyLocalisationFileIndexUpdate(
+            fileIndexes,
+            'localisation/a_l_english.yml',
+            undefined,
+        );
+        const rebuilt = applyLocalisationFileIndexUpdate(
+            fileIndexes,
+            'localisation/a_l_english.yml',
+            { l_english: { SHARED_KEY: 'A recreated' } },
+        );
+
+        assert.deepStrictEqual(Object.keys(fileIndexes), [
+            'localisation/a_l_english.yml',
+            'localisation/b_l_english.yml',
+        ]);
+        assert.strictEqual(rebuilt.l_english.SHARED_KEY, 'B');
+    });
+
     it('applies DLC localisation after base-game localisation regardless of file name', () => {
         const baseIndex = {
             l_english: {
@@ -204,13 +280,14 @@ describe('localisation index helpers', () => {
     });
 
     it('recovers valid localisation entries when malformed prose makes the file invalid YAML', () => {
-        const processed = preprocessYamlContent([
+        const source = [
             'l_english:',
             ' FOCUS_BEFORE:0 "Before the malformed line"',
             ' CHARACTER_DESC:0 "He was known as "the expert" by his supporters."',
             ' BROKEN_ENTRY:0 "Missing the closing quote',
             ' FOCUS_AFTER:0 "After the malformed line\\nSecond line"',
-        ].join('\n'));
+        ].join('\n');
+        const processed = preprocessYamlContent(source);
 
         assert.deepStrictEqual(parseLocalisationFile(processed), {
             l_english: {
@@ -219,5 +296,6 @@ describe('localisation index helpers', () => {
                 FOCUS_AFTER: 'After the malformed line\nSecond line',
             },
         });
+        assert.deepStrictEqual(parseLocalisationFileContent(source), parseLocalisationFile(processed));
     });
 });

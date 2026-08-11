@@ -4,19 +4,35 @@ import Module = require('module');
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
+delete require.cache[require.resolve('../../src/util/fileloader')];
+delete require.cache[require.resolve('../../src/util/modfile')];
+delete require.cache[require.resolve('../../src/util/vsccommon')];
+const moduleCacheBeforeMock = new Set(Object.keys(require.cache));
 const mockWorkspaceFolders: Array<{ uri: { fsPath: string; path: string; scheme: string; toString: () => string } }> = [];
 const mockFiles = new Set<string>();
 const mockDirectories = new Set<string>();
 const mockReadContents = new Map<string, string>();
 const mockReadCounts = new Map<string, number>();
+const mockDirectoryReadCounts = new Map<string, number>();
 const mockModifiedTimes = new Map<string, number>();
 const mockDirectoryEntries = new Map<string, Array<[string, number]>>();
 let mockReadDelayMs = 0;
+let mockDirectoryReadDelayMs = 0;
 let mockConfigurationModFile = '';
 let mockConfigurationLoadDlcContents = false;
+let mockConfigurationInstallPath = '';
 
 function normalizeMockPath(value: string): string {
     return path.normalize(value).toLowerCase();
+}
+
+function createMockUri(value: string) {
+    return {
+        fsPath: value,
+        path: value,
+        scheme: 'file',
+        toString: () => `file:///${value}`,
+    };
 }
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
@@ -48,7 +64,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 workspaceFolders: mockWorkspaceFolders,
                 textDocuments: [],
                 getConfiguration: () => ({
-                    installPath: '',
+                    installPath: mockConfigurationInstallPath,
                     loadDlcContents: mockConfigurationLoadDlcContents,
                     modFile: mockConfigurationModFile,
                     featureFlags: [],
@@ -67,16 +83,27 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                         return { type, mtime: mockModifiedTimes.get(normalizedPath) ?? 1 };
                     },
                     readFile: async (uri: { fsPath: string }) => {
+                        const normalizedPath = normalizeMockPath(uri.fsPath);
+                        const content = mockReadContents.get(normalizedPath) ?? uri.fsPath;
+                        mockReadCounts.set(normalizedPath, (mockReadCounts.get(normalizedPath) ?? 0) + 1);
                         if (mockReadDelayMs > 0) {
                             await new Promise(resolve => setTimeout(resolve, mockReadDelayMs));
                         }
 
-                        const normalizedPath = normalizeMockPath(uri.fsPath);
-                        mockReadCounts.set(normalizedPath, (mockReadCounts.get(normalizedPath) ?? 0) + 1);
-                        return Buffer.from(mockReadContents.get(normalizedPath) ?? uri.fsPath);
+                        return Buffer.from(content);
                     },
-                    readDirectory: async (uri: { fsPath: string }) =>
-                        mockDirectoryEntries.get(normalizeMockPath(uri.fsPath)) ?? [],
+                    readDirectory: async (uri: { fsPath: string }) => {
+                        const normalizedPath = normalizeMockPath(uri.fsPath);
+                        const entries = [...(mockDirectoryEntries.get(normalizedPath) ?? [])];
+                        mockDirectoryReadCounts.set(
+                            normalizedPath,
+                            (mockDirectoryReadCounts.get(normalizedPath) ?? 0) + 1,
+                        );
+                        if (mockDirectoryReadDelayMs > 0) {
+                            await new Promise(resolve => setTimeout(resolve, mockDirectoryReadDelayMs));
+                        }
+                        return entries;
+                    },
                 },
             },
         };
@@ -87,12 +114,24 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const {
     clearDlcZipCache,
+    createFileLoaderCacheKey,
+    createSelectedModSourceCacheKey,
     getModRootCandidatePaths,
     isPathCoveredByReplacePath,
     listFilesInDlcZipEntries,
     listFilesFromModOrHOI4,
     readFileFromModOrHOI4,
+    refreshFileContentSource,
 } = require('../../src/util/fileloader') as typeof import('../../src/util/fileloader');
+const {
+    refreshSelectedModSource,
+} = require('../../src/util/modfile') as typeof import('../../src/util/modfile');
+nodeModule._load = originalLoad;
+for (const moduleId of Object.keys(require.cache)) {
+    if (!moduleCacheBeforeMock.has(moduleId) && moduleId.includes(`${path.sep}src${path.sep}`)) {
+        delete require.cache[moduleId];
+    }
+}
 
 describe('fileloader mod root helpers', () => {
     beforeEach(() => {
@@ -101,16 +140,15 @@ describe('fileloader mod root helpers', () => {
         mockDirectories.clear();
         mockReadContents.clear();
         mockReadCounts.clear();
+        mockDirectoryReadCounts.clear();
         mockModifiedTimes.clear();
         mockDirectoryEntries.clear();
         mockReadDelayMs = 0;
+        mockDirectoryReadDelayMs = 0;
         mockConfigurationModFile = '';
         mockConfigurationLoadDlcContents = false;
+        mockConfigurationInstallPath = '';
         clearDlcZipCache();
-    });
-
-    after(() => {
-        nodeModule._load = originalLoad;
     });
 
     it('uses descriptor.mod parent directory as a mod content root', () => {
@@ -133,6 +171,87 @@ describe('fileloader mod root helpers', () => {
         assert.strictEqual(isPathCoveredByReplacePath('common/national_focus', 'common'), true);
         assert.strictEqual(isPathCoveredByReplacePath('common/national_focus/file.txt', 'common/national_focus'), true);
         assert.strictEqual(isPathCoveredByReplacePath('history/countries', 'common'), false);
+    });
+
+    it('separates in-flight reads when their configured content source changes', () => {
+        const initial = createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true });
+
+        mockConfigurationInstallPath = 'C:\\hoi4-new';
+        assert.notStrictEqual(createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true }), initial);
+        mockConfigurationInstallPath = '';
+
+        mockConfigurationLoadDlcContents = true;
+        assert.notStrictEqual(createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true }), initial);
+        mockConfigurationLoadDlcContents = false;
+
+        mockConfigurationModFile = 'C:\\mods\\new.mod';
+        assert.notStrictEqual(createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true }), initial);
+        mockConfigurationModFile = '';
+
+        mockWorkspaceFolders.push({ uri: createMockUri('C:\\workspace-new') });
+        assert.notStrictEqual(createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true }), initial);
+    });
+
+    it('includes the selected-mod source generation in loader and root cache keys', () => {
+        const initialLoaderKey = createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: false });
+        const firstRootKey = createSelectedModSourceCacheKey('file:///C:/mods/source.mod');
+
+        refreshSelectedModSource();
+
+        assert.notStrictEqual(
+            createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: false }),
+            initialLoaderKey,
+        );
+        assert.notStrictEqual(
+            createSelectedModSourceCacheKey('file:///C:/mods/source.mod'),
+            firstRootKey,
+        );
+    });
+
+    it('does not reuse an in-flight file read after the content source generation changes', async () => {
+        const root = path.join('C:', 'workspace-content-read');
+        const relativePath = 'common/changing.txt';
+        const absolutePath = path.join(root, relativePath);
+        const normalizedPath = normalizeMockPath(absolutePath);
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockConfigurationModFile = path.join('C:', 'missing.mod');
+        mockFiles.add(normalizedPath);
+        mockReadContents.set(normalizedPath, 'old');
+        mockReadDelayMs = 20;
+
+        const oldRead = readFileFromModOrHOI4(relativePath, { hoi4: false });
+        await waitForCount(mockReadCounts, normalizedPath, 1);
+        mockReadContents.set(normalizedPath, 'new');
+        refreshFileContentSource();
+        const newRead = readFileFromModOrHOI4(relativePath, { hoi4: false });
+
+        const [oldResult, newResult] = await Promise.all([oldRead, newRead]);
+        assert.strictEqual(oldResult[0].toString(), 'old');
+        assert.strictEqual(newResult[0].toString(), 'new');
+        assert.strictEqual(mockReadCounts.get(normalizedPath), 2);
+    });
+
+    it('does not reuse an in-flight file list after the content source generation changes', async () => {
+        const root = path.join('C:', 'workspace-content-list');
+        const relativePath = 'common';
+        const absolutePath = path.join(root, relativePath);
+        const normalizedPath = normalizeMockPath(absolutePath);
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockConfigurationModFile = path.join('C:', 'missing.mod');
+        mockDirectories.add(normalizedPath);
+        mockDirectoryEntries.set(normalizedPath, [['old.txt', 1]]);
+        mockDirectoryReadDelayMs = 20;
+
+        const oldList = listFilesFromModOrHOI4(relativePath, { hoi4: false });
+        await waitForCount(mockDirectoryReadCounts, normalizedPath, 1);
+        mockDirectoryEntries.set(normalizedPath, [['new.txt', 1]]);
+        refreshFileContentSource();
+        const newList = listFilesFromModOrHOI4(relativePath, { hoi4: false });
+
+        const [oldResult, newResult] = await Promise.all([oldList, newList]);
+        assert.deepStrictEqual(oldResult, ['old.txt']);
+        assert.deepStrictEqual(newResult, ['new.txt']);
+        assert.strictEqual(mockDirectoryReadCounts.get(normalizedPath), 2);
     });
 
     it('prefers DLC files over base files and isolates dlc:false reads', async () => {
@@ -300,4 +419,68 @@ describe('fileloader mod root helpers', () => {
             Date.now = originalNow;
         }
     });
+
+    it('refreshes selected roots immediately when the descriptor source generation changes', async () => {
+        const modFile = path.join('C:', 'mods', 'generation-changing.mod');
+        const firstModRoot = path.join('C:', 'mods', 'generation-first');
+        const secondModRoot = path.join('C:', 'mods', 'generation-second');
+        const normalizedModFile = normalizeMockPath(modFile);
+        mockConfigurationModFile = modFile;
+        mockFiles.add(normalizedModFile);
+        mockDirectories.add(normalizeMockPath(firstModRoot));
+        mockReadContents.set(normalizedModFile, `path = "${firstModRoot.replace(/\\/g, '/')}"`);
+        mockFiles.add(normalizeMockPath(path.join(firstModRoot, 'first.txt')));
+
+        await readFileFromModOrHOI4('first.txt', { hoi4: false });
+
+        mockDirectories.add(normalizeMockPath(secondModRoot));
+        mockReadContents.set(normalizedModFile, `path = "${secondModRoot.replace(/\\/g, '/')}"`);
+        mockFiles.add(normalizeMockPath(path.join(secondModRoot, 'second.txt')));
+        refreshSelectedModSource();
+
+        const resolved = await readFileFromModOrHOI4('second.txt', { hoi4: false });
+        assert.strictEqual(resolved[1].fsPath, path.join(secondModRoot, 'second.txt'));
+        assert.strictEqual(mockReadCounts.get(normalizedModFile), 2);
+    });
+
+    it('does not reuse replace_path data after the descriptor generation changes', async () => {
+        const modFile = path.join('C:', 'mods', 'replace-changing.mod');
+        const modRoot = path.join('C:', 'mods', 'replace-content');
+        const relativePath = 'common/base-only.txt';
+        const baseFile = path.join('server.hoi4installpath:/', relativePath);
+        const normalizedModFile = normalizeMockPath(modFile);
+        mockConfigurationModFile = modFile;
+        mockFiles.add(normalizedModFile);
+        mockDirectories.add(normalizeMockPath(modRoot));
+        mockFiles.add(normalizeMockPath(baseFile));
+        mockReadContents.set(normalizedModFile, [
+            `path = "${modRoot.replace(/\\/g, '/')}"`,
+            'replace_path = "common"',
+        ].join('\n'));
+
+        await assert.rejects(
+            readFileFromModOrHOI4(relativePath),
+            /Can't find file/,
+        );
+
+        mockReadContents.set(normalizedModFile, `path = "${modRoot.replace(/\\/g, '/')}"`);
+        refreshSelectedModSource();
+
+        const resolved = await readFileFromModOrHOI4(relativePath);
+        assert.strictEqual(resolved[1].fsPath, baseFile);
+    });
 });
+
+async function waitForCount(
+    counts: Map<string, number>,
+    key: string,
+    expected: number,
+): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((counts.get(key) ?? 0) >= expected) {
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert.fail(`Timed out waiting for ${key} read count ${expected}`);
+}

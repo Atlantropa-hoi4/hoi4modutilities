@@ -9,6 +9,7 @@ import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
 import { feLocalize } from './util/i18n';
 import { Mio, MioTrait } from "../src/previewdef/mio/schema";
+import { restoreArrayState, restoreSelectionIndex } from "./util/restoredstate";
 
 declare global {
     interface Window {
@@ -21,9 +22,10 @@ declare global {
 }
 
 const mios: Mio[] = window.mios;
+const restoredState = getState();
 
-let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
-let selectedMioIndex: number = Math.min(mios.length - 1, getState().selectedMioIndex ?? 0);
+let selectedExprs = restoreArrayState<ConditionItem>(restoredState.selectedExprs);
+let selectedMioIndex = restoreSelectionIndex(restoredState.selectedMioIndex, mios.length);
 let conditions: DivDropdown | undefined = undefined;
 
 function conditionItemToExprKey(expr: ConditionItem): string {

@@ -105,8 +105,8 @@ export async function mapWithConcurrency<T, R>(
     concurrency: number,
     mapper: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
-    if (concurrency <= 0) {
-        throw new Error('concurrency must be greater than 0');
+    if (!Number.isSafeInteger(concurrency) || concurrency <= 0) {
+        throw new Error('concurrency must be a positive safe integer');
     }
 
     const results = new Array<R>(items.length);
@@ -127,8 +127,8 @@ export async function mapWithConcurrency<T, R>(
 }
 
 export function createConcurrencyLimiter(concurrency: number): <T>(task: () => Promise<T>) => Promise<T> {
-    if (concurrency <= 0) {
-        throw new Error('concurrency must be greater than 0');
+    if (!Number.isSafeInteger(concurrency) || concurrency <= 0) {
+        throw new Error('concurrency must be a positive safe integer');
     }
 
     let activeCount = 0;

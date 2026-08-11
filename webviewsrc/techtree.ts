@@ -10,6 +10,7 @@ import { findTechnologyXorGroups, getAllowedTechnologies, TechnologyXorGroups } 
 import { getMovedTechnologyPosition, getTechnologyDoubleClickCreateParent, getTechnologyGridDelta, getTechnologyGridGeometry, hasTechnologyDragPassedThreshold, registerTechnologyPointerGesture } from "../src/previewdef/technology/draginteraction";
 import type { TechnologyPositionEdit } from "../src/previewdef/technology/editcommon";
 import { normalizePreviewScale } from "../src/util/previewscale";
+import { restoreArrayState } from "./util/restoredstate";
 import { vscode } from "./util/vscode";
 import { feLocalize } from "./util/i18n";
 
@@ -30,7 +31,7 @@ interface TechnologyGridInfo {
 const renderedTechFolders: Record<string, RenderedTechnologyFolder> = (window as any).renderedTechFolders;
 const technologyTrees: TechnologyTree[] = (window as any).technologyTrees;
 
-let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
+let selectedExprs = restoreArrayState<ConditionItem>(getState().selectedExprs);
 let selectedFolder: string = getState().folder;
 let conditions: DivDropdown | undefined = undefined;
 let technologyEditMode = getState().technologyEditMode === true;

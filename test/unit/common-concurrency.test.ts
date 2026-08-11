@@ -18,10 +18,12 @@ describe('common concurrency helpers', () => {
     });
 
     it('rejects invalid concurrency values', async () => {
-        await assert.rejects(
-            () => mapWithConcurrency([1], 0, async item => item),
-            /concurrency must be greater than 0/,
-        );
+        for (const concurrency of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+            await assert.rejects(
+                () => mapWithConcurrency([1], concurrency, async item => item),
+                /concurrency must be a positive safe integer/,
+            );
+        }
     });
 
     it('limits separately queued async tasks', async () => {
@@ -41,9 +43,11 @@ describe('common concurrency helpers', () => {
     });
 
     it('rejects invalid limiter concurrency values', () => {
-        assert.throws(
-            () => createConcurrencyLimiter(0),
-            /concurrency must be greater than 0/,
-        );
+        for (const concurrency of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+            assert.throws(
+                () => createConcurrencyLimiter(concurrency),
+                /concurrency must be a positive safe integer/,
+            );
+        }
     });
 });

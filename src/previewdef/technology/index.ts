@@ -9,6 +9,7 @@ import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { TechnologyEditCommandHandler } from './edithandler';
 import { TechnologyEditMessage, TechnologyEditRenderContext } from './editcommon';
 import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
+import { TechnologyPreviewRenderCoordinator } from './renderruntime';
 
 function canPreviewTechnology(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -34,9 +35,8 @@ class TechnologyTreePreview extends PreviewBase {
         availableTreeRootsByFolder: {},
         gridLayoutsByFolder: {},
     };
-    private renderGeneration = 0;
+    private readonly renderCoordinator = new TechnologyPreviewRenderCoordinator();
     private renderQueue: Promise<void> = Promise.resolve();
-    private locallyAppliedPositionVersions = new Set<number>();
     private pendingLocalisationRefreshVersion: number | undefined;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
@@ -52,8 +52,7 @@ class TechnologyTreePreview extends PreviewBase {
             refreshDocument: document => this.onDocumentChange(document),
             recordLocallyAppliedVersion: (command, version) => {
                 if (command === 'applyTechnologyPositionEdits') {
-                    this.locallyAppliedPositionVersions.add(version);
-                    return () => this.locallyAppliedPositionVersions.delete(version);
+                    return this.renderCoordinator.recordLocallyAppliedPositionVersion(version);
                 }
             },
         });
@@ -94,18 +93,18 @@ class TechnologyTreePreview extends PreviewBase {
     }
 
     public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
-        if (this.locallyAppliedPositionVersions.delete(document.version)) {
+        const request = this.renderCoordinator.begin(document.version);
+        if (request.skipRender) {
             return;
         }
-        const generation = ++this.renderGeneration;
         this.renderQueue = this.renderQueue
             .catch(() => undefined)
             .then(async () => {
-                if (this.isDisposed || generation !== this.renderGeneration) {
+                if (this.isDisposed || !this.renderCoordinator.isCurrent(request.generation)) {
                     return;
                 }
                 const html = await this.getContent(document);
-                if (!this.isDisposed && generation === this.renderGeneration) {
+                if (!this.isDisposed && this.renderCoordinator.isCurrent(request.generation)) {
                     this.panel.webview.html = html;
                 }
             });

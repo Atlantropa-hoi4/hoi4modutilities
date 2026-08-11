@@ -139,6 +139,37 @@ describe('parser fixtures', () => {
         ]);
     });
 
+    it('decodes and round-trips quoted bare block values', () => {
+        const input = String.raw`values = { "alpha beta" "quote\" and \\ slash" }`;
+        const node = parseHoi4File(input);
+        const [valuesNode] = node.value as any[];
+        const expected = ['alpha beta', 'quote" and \\ slash'];
+
+        assert.deepStrictEqual((valuesNode.value as any[]).map(child => child.name), expected);
+
+        const roundTripped = parseHoi4File(nodeToString(valuesNode));
+        const [roundTrippedValues] = roundTripped.value as any[];
+        assert.deepStrictEqual((roundTrippedValues.value as any[]).map(child => child.name), expected);
+    });
+
+    it('decodes and round-trips quoted assignment keys', () => {
+        const input = String.raw`"alpha beta" = { "nested\"key" = "quote\" and \\ slash" }`;
+        const node = parseHoi4File(input);
+        const [outer] = node.value as any[];
+        const [inner] = outer.value as any[];
+
+        assert.strictEqual(outer.name, 'alpha beta');
+        assert.strictEqual(inner.name, 'nested"key');
+        assert.strictEqual(inner.value, 'quote" and \\ slash');
+
+        const roundTripped = parseHoi4File(nodeToString(outer));
+        const [roundTrippedOuter] = roundTripped.value as any[];
+        const [roundTrippedInner] = roundTrippedOuter.value as any[];
+        assert.strictEqual(roundTrippedOuter.name, 'alpha beta');
+        assert.strictEqual(roundTrippedInner.name, 'nested"key');
+        assert.strictEqual(roundTrippedInner.value, 'quote" and \\ slash');
+    });
+
     it('parses anonymous block lists used by medals and ribbons', () => {
         const node = parseHoi4File([
             'colors = {',

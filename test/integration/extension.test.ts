@@ -313,6 +313,17 @@ suite('extension smoke', () => {
         const secondContent = regenerated.getText();
         assert.strictEqual(secondContent, firstContent);
         assert.strictEqual((secondContent.match(/name = "GFX_country_goal_sample_shine"/g) ?? []).length, 1);
+
+        await vscode.window.showTextDocument(regenerated);
+        await vscode.commands.executeCommand('undo');
+        await waitFor(async () => {
+            try {
+                await vscode.workspace.fs.stat(targetUri);
+                return false;
+            } catch {
+                return true;
+            }
+        }, 5000);
     });
 
     test('opens a mio preview webview for a representative fixture', async () => {

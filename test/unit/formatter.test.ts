@@ -374,5 +374,6 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(getHoi4FormatterProfile('/mod/map/weatherpositions.txt'), undefined);
         assert.strictEqual(getHoi4FormatterProfile('/mod/README.txt'), undefined);
         assert.strictEqual(getHoi4FormatterProfile('/mod/map/default.map'), undefined);
+        assert.strictEqual(getHoi4FormatterProfile('C:\\projects\\map\\my-mod\\events\\sample.txt'), 'script');
     });
 });

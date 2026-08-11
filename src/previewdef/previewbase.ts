@@ -61,6 +61,8 @@ function shouldUseNavigateStartAsHint(document: vscode.TextDocument, documentVer
 
 export abstract class PreviewBase {
     private cachedDependencies: string[] | undefined = undefined;
+    private contentRenderGeneration = 0;
+    private contentRenderQueue: Promise<void> = Promise.resolve();
 
     private dependencyChangedEmitter = new vscode.EventEmitter<string[]>();
     public onDependencyChanged = this.dependencyChangedEmitter.event;
@@ -81,11 +83,24 @@ export abstract class PreviewBase {
         document: vscode.TextDocument,
         _options?: { source?: 'document' | 'dependency' },
     ): Promise<void> {
-        try {
-            this.panel.webview.html = await this.getContent(document);
-        } catch(e) {
-            error(e);
-        }
+        const renderGeneration = ++this.contentRenderGeneration;
+        this.contentRenderQueue = this.contentRenderQueue
+            .catch(() => undefined)
+            .then(async () => {
+                if (this.disposed || renderGeneration !== this.contentRenderGeneration) {
+                    return;
+                }
+
+                try {
+                    const content = await this.getContent(document);
+                    if (!this.disposed && renderGeneration === this.contentRenderGeneration) {
+                        this.panel.webview.html = content;
+                    }
+                } catch(e) {
+                    error(e);
+                }
+            });
+        await this.contentRenderQueue;
     }
 
     public getDocumentChangeDebounceMs(): number {
@@ -175,7 +190,7 @@ export abstract class PreviewBase {
         }
 
         let targetFolderUri = vscode.workspace.workspaceFolders[0].uri;
-        if (vscode.workspace.workspaceFolders.length >= 1) {
+        if (vscode.workspace.workspaceFolders.length > 1) {
             const folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: localize('preview.selectafolder', 'Select a folder to copy "{0}"', file) });
             if (!folder) {
                 return;

@@ -5,6 +5,7 @@ import { PromiseCache } from './cache';
 import { localize } from './i18n';
 import { basename, fileOrUriStringToUri, getConfiguration, uriToFilePathWhenPossible } from './vsccommon';
 import { isFile, readDir } from './vsccommon';
+import { getRelativePathWithinRoot, isSamePath } from './nodecommon';
 
 export const modFileStatusContainer: { current: vscode.StatusBarItem | null } = {
     current: null,
@@ -14,16 +15,111 @@ export const workspaceModFilesCache = new PromiseCache({
     factory: getWorkspaceModFiles,
     life: 10 * 1000,
 });
+let modFileStatusCheckGeneration = 0;
+let selectedModSourceGeneration = 0;
+const selectedModSourceChangeListeners = new Set<(generation: number) => void>();
+
+export const onDidChangeSelectedModSource: vscode.Event<number> = (listener, thisArgs, disposables) => {
+    const wrappedListener = thisArgs === undefined
+        ? listener
+        : (generation: number) => listener.call(thisArgs, generation);
+    selectedModSourceChangeListeners.add(wrappedListener);
+    const disposable: vscode.Disposable = {
+        dispose: () => selectedModSourceChangeListeners.delete(wrappedListener),
+    };
+    disposables?.push(disposable);
+    return disposable;
+};
+
+export function getSelectedModSourceGeneration(): number {
+    return selectedModSourceGeneration;
+}
+
+export function refreshSelectedModSource(): number {
+    workspaceModFilesCache.clear();
+    const generation = ++selectedModSourceGeneration;
+    for (const listener of [...selectedModSourceChangeListeners]) {
+        listener(generation);
+    }
+    return generation;
+}
 
 export function registerModFile(): vscode.Disposable {
     const disposables: vscode.Disposable[] = [];
+    let sourceWatchers: vscode.Disposable[] = [];
+    let sourceWatcherGeneration = 0;
+    let sourceChangeScheduled = false;
+    let scheduledSourceWatcherGeneration = 0;
+    let disposed = false;
+    const disposeSourceWatchers = () => {
+        sourceWatchers.forEach(watcher => watcher.dispose());
+        sourceWatchers = [];
+    };
+    const scheduleSelectedModSourceChange = () => {
+        if (disposed) {
+            return;
+        }
+        scheduledSourceWatcherGeneration = sourceWatcherGeneration;
+        if (sourceChangeScheduled) {
+            return;
+        }
+        sourceChangeScheduled = true;
+        queueMicrotask(() => {
+            sourceChangeScheduled = false;
+            if (!disposed && scheduledSourceWatcherGeneration === sourceWatcherGeneration) {
+                refreshSelectedModSource();
+            }
+        });
+    };
+    const rebuildSourceWatchers = () => {
+        const generation = ++sourceWatcherGeneration;
+        disposeSourceWatchers();
+        const isCurrent = () => !disposed && generation === sourceWatcherGeneration;
+        const configuredModFile = getConfiguration().modFile.trim();
+        if (configuredModFile) {
+            const modFile = fileOrUriStringToUri(configuredModFile);
+            if (modFile) {
+                const parent = vscode.Uri.joinPath(modFile, '..');
+                sourceWatchers.push(createSelectedModSourceWatcher(
+                    new vscode.RelativePattern(parent, '*.mod'),
+                    file => isSamePath(file.fsPath, modFile.fsPath),
+                    isCurrent,
+                    scheduleSelectedModSourceChange,
+                ));
+            }
+        } else {
+            sourceWatchers.push(...(vscode.workspace.workspaceFolders ?? []).map(folder =>
+                createSelectedModSourceWatcher(
+                    new vscode.RelativePattern(folder.uri, '*.mod'),
+                    file => isDirectModFileInWorkspaceRoot(folder.uri, file),
+                    isCurrent,
+                    scheduleSelectedModSourceChange,
+                )));
+        }
+    };
     disposables.push(vscode.commands.registerCommand(Commands.SelectModFile, selectModFile));
     disposables.push(modFileStatusContainer.current = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50));
-    disposables.push(vscode.workspace.onDidChangeConfiguration(onChangeWorkspaceConfiguration));
-    disposables.push(new vscode.Disposable(() => { modFileStatusContainer.current = null; }));
+    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
+            void checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
+            rebuildSourceWatchers();
+            scheduleSelectedModSourceChange();
+        }
+    }));
+    disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        rebuildSourceWatchers();
+        scheduleSelectedModSourceChange();
+    }));
+    disposables.push(new vscode.Disposable(() => {
+        disposed = true;
+        sourceWatcherGeneration += 1;
+        disposeSourceWatchers();
+        modFileStatusContainer.current = null;
+    }));
 
     // Initial status bar
     void checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
+    rebuildSourceWatchers();
     return vscode.Disposable.from(...disposables);
 }
 
@@ -45,19 +141,17 @@ export function updateSelectedModFileStatus(modFile: vscode.Uri | undefined, err
     }
 }
 
-function onChangeWorkspaceConfiguration(e: vscode.ConfigurationChangeEvent): void {
-    if (e.affectsConfiguration(`${ConfigurationKey}.modFile`)) {
-        void checkAndUpdateModFileStatus(fileOrUriStringToUri(getConfiguration().modFile));
-    }
-}
-
 async function checkAndUpdateModFileStatus(modFile: vscode.Uri | undefined): Promise<void> {
+    const generation = ++modFileStatusCheckGeneration;
     if (modFile === undefined) {
         updateSelectedModFileStatus(undefined);
         return;
     }
 
     const error = !(await isFile(modFile));
+    if (generation !== modFileStatusCheckGeneration) {
+        return;
+    }
 
     updateSelectedModFileStatus(modFile, error);
     if (error) {
@@ -102,7 +196,7 @@ async function selectModFile(): Promise<void> {
         });
     }
 
-    modsList.sort((a, b) => a.picked ? -1 : b.picked ? 1 : 0);
+    modsList.sort((a, b) => Number(Boolean(b.picked)) - Number(Boolean(a.picked)));
 
     modsList.push({
         label: localize('modfile.select', 'Browse a .mod file...'),
@@ -136,4 +230,31 @@ async function getWorkspaceModFiles(uriString: string): Promise<vscode.Uri[]> {
     const uri = vscode.Uri.parse(uriString);
     const items = await readDir(uri);
     return items.filter(i => i.endsWith('.mod')).map(i => vscode.Uri.joinPath(uri, i));
+}
+
+function createSelectedModSourceWatcher(
+    pattern: vscode.GlobPattern,
+    isRelevant: (file: vscode.Uri) => boolean,
+    isCurrent: () => boolean,
+    onChange: () => void,
+): vscode.Disposable {
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    const handleChange = (file: vscode.Uri) => {
+        if (isCurrent() && isRelevant(file)) {
+            onChange();
+        }
+    };
+    return vscode.Disposable.from(
+        watcher,
+        watcher.onDidChange(handleChange),
+        watcher.onDidCreate(handleChange),
+        watcher.onDidDelete(handleChange),
+    );
+}
+
+export function isDirectModFileInWorkspaceRoot(root: vscode.Uri, file: vscode.Uri): boolean {
+    const relative = getRelativePathWithinRoot(root.fsPath, file.fsPath, '');
+    return relative !== undefined
+        && !relative.includes('/')
+        && relative.toLowerCase().endsWith('.mod');
 }

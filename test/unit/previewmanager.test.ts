@@ -26,6 +26,7 @@ const watchedAssetDeletes: Array<(uri: FakeUri) => void> = [];
 const watchedPatterns: unknown[] = [];
 const activeWatcherPatterns: unknown[] = [];
 const disposedWatcherPatterns: unknown[] = [];
+const selectedModSourceListeners: Array<() => void> = [];
 let selectedModRoots: FakeUri[] = [];
 let getSelectedModRoots = async () => selectedModRoots;
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
@@ -189,6 +190,23 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
+    if ((request.endsWith('/util/modfile') || request === '../util/modfile')
+        && parent?.filename?.includes('previewmanager')) {
+        return {
+            onDidChangeSelectedModSource: (listener: () => void) => {
+                selectedModSourceListeners.push(listener);
+                return {
+                    dispose: () => {
+                        const index = selectedModSourceListeners.indexOf(listener);
+                        if (index >= 0) {
+                            selectedModSourceListeners.splice(index, 1);
+                        }
+                    },
+                };
+            },
+        };
+    }
+
     if ((request.endsWith('/util/i18n') || request === '../util/i18n')
         && parent?.filename?.includes('previewmanager')) {
         return {
@@ -216,6 +234,7 @@ describe('preview manager', () => {
         watchedPatterns.length = 0;
         activeWatcherPatterns.length = 0;
         disposedWatcherPatterns.length = 0;
+        selectedModSourceListeners.length = 0;
         selectedModRoots = [];
         getSelectedModRoots = async () => selectedModRoots;
         activeTabState.activeTab = undefined;
@@ -372,6 +391,10 @@ describe('preview manager', () => {
         const disposable = manager.register();
 
         try {
+            selectedModSourceListeners.forEach(listener => listener());
+            await waitForMicrotasks();
+            assert.deepStrictEqual(activeWatcherPatterns, []);
+
             await manager['showPreviewImpl'](document.uri as any);
             await Promise.resolve();
             assert.ok(watchedPatterns.some(pattern =>
@@ -383,6 +406,98 @@ describe('preview manager', () => {
         } finally {
             disposable.dispose();
         }
+    });
+
+    it('rebinds active selected-root dependency watchers when descriptor contents change', async () => {
+        const document = createDocument('file:///workspace/common/preview.txt');
+        selectedModRoots = [createUri('file:///external/old-root')];
+        const previews: FakePreview[] = [];
+        const scheduled = new Map<string, () => void | Promise<void>>();
+        const manager = new PreviewManager({
+            previewProviders: [createPanelProvider('focus', () => 0, (uri, panel) => {
+                const preview = new FakePreview(uri, panel);
+                previews.push(preview);
+                return preview as any;
+            }) as any],
+            documentUpdateScheduler: immediateScheduler(),
+            dependencyUpdateScheduler: {
+                schedule: (key: string, _delayMs: number, action: () => void | Promise<void>) => {
+                    scheduled.set(key, action);
+                },
+                dispose: () => undefined,
+            },
+        });
+        const disposable = manager.register();
+
+        try {
+            await manager['showPreviewImpl'](document.uri as any);
+            await waitForMicrotasks();
+            assert.ok(activeWatcherPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///external/old-root'
+            ));
+
+            selectedModRoots = [createUri('file:///external/new-root')];
+            selectedModSourceListeners.forEach(listener => listener());
+            selectedModSourceListeners.forEach(listener => listener());
+            await waitForMicrotasks();
+
+            assert.ok(!activeWatcherPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///external/old-root'
+            ));
+            assert.ok(activeWatcherPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///external/new-root'
+            ));
+            assert.ok(disposedWatcherPatterns.some(pattern =>
+                typeof pattern === 'object'
+                && pattern !== null
+                && 'base' in pattern
+                && (pattern as { base: FakeUri }).base.toString() === 'file:///external/old-root'
+            ));
+            assert.strictEqual(scheduled.size, 1);
+            assert.strictEqual(previews[0].changeCount, 0);
+            await scheduled.get(document.uri.toString())?.();
+            assert.strictEqual(previews[0].changeCount, 1);
+            assert.strictEqual(previews[0].lastChangeSource, 'dependency');
+        } finally {
+            disposable.dispose();
+        }
+    });
+
+    it('does not schedule a selected-source refresh after registration is disposed during root resolution', async () => {
+        const document = createDocument('file:///workspace/common/preview.txt');
+        let scheduledRefreshCount = 0;
+        const manager = new PreviewManager({
+            previewProviders: [createPanelProvider('focus', () => 0) as any],
+            documentUpdateScheduler: immediateScheduler(),
+            dependencyUpdateScheduler: {
+                schedule: () => {
+                    scheduledRefreshCount += 1;
+                },
+                dispose: () => undefined,
+            },
+        });
+        const disposable = manager.register();
+        await manager['showPreviewImpl'](document.uri as any);
+        await waitForMicrotasks();
+
+        const pendingRoots = createDeferred<FakeUri[]>();
+        getSelectedModRoots = () => pendingRoots.promise;
+        selectedModSourceListeners.forEach(listener => listener());
+        disposable.dispose();
+        pendingRoots.resolve([createUri('file:///external/late-root')]);
+        await waitForMicrotasks();
+
+        assert.strictEqual(scheduledRefreshCount, 0);
+        assert.deepStrictEqual(activeWatcherPatterns, []);
     });
 
     it('skips selected mod-root watchers already covered by the workspace watcher', async () => {
@@ -723,6 +838,12 @@ function createDeferred<T>() {
         resolve = promiseResolve;
     });
     return { promise, resolve };
+}
+
+async function waitForMicrotasks(): Promise<void> {
+    for (let index = 0; index < 4; index += 1) {
+        await Promise.resolve();
+    }
 }
 
 function createPanelProvider(
