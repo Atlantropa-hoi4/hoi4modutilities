@@ -265,7 +265,7 @@ const internalTable = /* SOT Do not remove this comment */{
     "worldmap.warnings.supplyareanovalidstates": "Supply area {0} doesn't have valid states.",
     "worldmap.warnings.terraindefinedtwice": "Terrain {0} is defined in two files: {1}, {2}.",
     "worldmap.warnings.terrainnotdefined": "Terrain \"{0}\" is not defined.",
-    "worldmap.warnings.xcrossing": "Map invalid X crossing at: ({0}, {1})."
+    "worldmap.warnings.xcrossing": "Map invalid X crossing at: ({0}, {1}).",
     "decisiontree.activation": "Activation",
     "decisiontree.allowed": "Allowed",
     "decisiontree.available": "Available",
@@ -318,6 +318,7 @@ const internalTable = /* SOT Do not remove this comment */{
     "decisiontree.targets": "Targets: {0}",
     "decisiontree.timeouteffect": "When the timer runs out",
     "decisiontree.unresolved": "Not defined in this file",
+    "decisiontree.visible": "Visible",
     "decisiontree.visiblewhenempty": "Tab shown when empty",
     "eventtree.after": "after",
     "eventtree.aftereffects": "After effects",
