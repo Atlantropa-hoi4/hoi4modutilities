@@ -706,3 +706,12 @@ Focus and Technology graph editor hardening 2026-08-05:
 - [x] Run focused and full verification, then record the final validation boundary.
 
 Review note: Focus edits now use one active webview request plus a serialized host queue, correlate every result by request ID, and restore the continuous-focus view while an edit is pending or rejected. Host validation blocks non-finite coordinates and new local prerequisite cycles. Technology grid geometry now validates slot and grid dimensions independently. Verification passed 92 focused tests, all 432 unit tests, TypeScript checks, lint, development and production builds, 17 Extension Host smoke/integration tests including Focus WorkspaceEdit Undo, local VSIX packaging, and `git diff --check` under Node 24.14.0; direct pointer interaction in a representative real mod workspace remains unverified.
+MD preview feature port 2026-08-30:
+- [x] Map the MD v1.1.30 idea, decision, event, shared graph, loader, and index dependencies onto the current feature catalog and preview lifecycle.
+- [x] Port shared card/graph webview utilities and styles through the current esbuild/CSP pipeline.
+- [x] Add idea-card and decision/mission-graph previews with detection, live refresh, dependency tracking, and feature registration.
+- [x] Upgrade the event preview to the MD workflow graph with search, filters, conditions, effects, pictures, and restored UI state.
+- [x] Add fixture-backed host/webview coverage and localisation/manifest coverage.
+- [x] Run targeted tests, TypeScript checks, lint, development build, UI tests when feasible, and `git diff --check`.
+
+Review note: Completed from MillenniumDawn/MD-VSCode-Utility-Tool v1.1.30 (`0689601`) while retaining the current feature catalog, preview sessions, lazy dependency watchers, CSP, and source-editing features. Idea cards, optional swap chains, decision/mission graphs, scripted category GUI rendering, and the MD event workflow graph now share searchable/filterable card and graph infrastructure with in-place payload refresh and persisted webview controls. Verification passed 573 unit tests, TypeScript checks, lint, production/development builds, 19 Extension Host UI tests including all three preview types, and `git diff --check`.

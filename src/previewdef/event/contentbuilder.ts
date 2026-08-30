@@ -1,777 +1,192 @@
-import * as vscode from 'vscode';
-import { EventsLoader, EventsLoaderResult } from './loader';
-import { LoaderSession } from '../../util/loader/loader';
-import { debug } from '../../util/debug';
-import { html, htmlAttributeEscape, htmlEscape, htmlTextEscape } from '../../util/html';
-import { localize } from '../../util/i18n';
-import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { HOIEvent, HOIEventType } from './schema';
-import { flatten, max } from 'lodash';
-import { arrayToMap, forceError } from '../../util/common';
-import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
-import { GridBoxType } from '../../hoiformat/gui';
-import { renderGridBox, GridBoxItem, GridBoxConnection } from '../../util/hoi4gui/gridbox';
-import { Token } from '../../hoiformat/hoiparser';
-import { getSpriteByGfxName } from '../../util/image/imagecache';
-import { getLocalisedTextQuick } from "../../util/localisationIndex";
-import { featureFlagsAsScript, isLocalisationIndexEnabled } from "../../util/featureflags";
-import { getSharedOptionChildGroups, nextScope, ScopeContext, SharedOptionChildGroup } from './sharedchildren';
+import * as vscode from "vscode";
+import { EventsLoader, EventsLoaderResult } from "./loader";
+import { LoaderSession } from "../../util/loader/loader";
+import { debug } from "../../util/debug";
+import { html, previewedFileUriScript, errorPage } from "../../util/html";
+import { localize, i18nTableAsScript } from "../../util/i18n";
+import { StyleTable } from "../../util/styletable";
+import { HOIEvent } from "./schema";
+import { flatten } from "lodash";
+import { arrayToMap, jsonForScript } from "../../util/common";
+import { buildEventGraphPayload, eventsToGraph } from "./graph";
+import { EventGraphPayload } from "./payload";
+import { LoaderRender } from "../loaderpreview";
 
-export async function renderEventFile(loader: EventsLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
-    const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
-    
-    try {
-        const session = new LoaderSession(false);
-        const loadResult = await loader.load(session);
-        debug('Loader session event tree', session.getLoadedLoaderNames());
+// Height of the fixed toolbar strip. The content is offset by it and enableZoom is told about
+// it, so the graph never renders underneath the toolbar.
+//
+// It has to clear more than the row itself: common.css adds 10px of padding above, a 1px bottom
+// border, and the strip scrolls horizontally, so its 6px scrollbar eats into the same box. At 40
+// that left less room than the 24px-tall search box and checkboxes need and the row was clipped.
+// webviewsrc/eventtree.ts carries the same constant -- the two must move together.
+const toolbarHeight = 52;
 
-        const styleTable = new StyleTable();
-        const baseContent = await renderEvents(loadResult.result, styleTable);
+export async function renderEventFile(
+	loader: EventsLoader,
+	uri: vscode.Uri,
+	webview: vscode.Webview,
+): Promise<LoaderRender> {
+	try {
+		const session = new LoaderSession(false);
+		const loadResult = await loader.load(session);
+		debug("Loader session event tree", session.getLoadedLoaderNames());
 
-        return html(
-            webview,
-            baseContent,
-            [
-                setPreviewFileUriScript,
-                { content: featureFlagsAsScript() },
-                'eventtree.js',
-            ],
-            [
-                'codicon.css',
-                styleTable
-            ],
-        );
+		const styleTable = new StyleTable();
+		const eventGraph = await renderEvents(loadResult.result, styleTable);
 
-    } catch (e) {
-        const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
-        return html(webview, baseContent, [ setPreviewFileUriScript ], []);
-    }
+		const baseContent = renderShell(styleTable);
 
+		const fullHtml = html(
+			webview,
+			baseContent,
+			[
+				previewedFileUriScript(uri),
+				// jsonForScript, not JSON.stringify: the payload carries localisation text straight
+				// from the workspace, and a string containing `</script>` would end the tag here.
+				{ content: `window.eventGraph = ${jsonForScript(eventGraph)};` },
+				{ content: i18nTableAsScript() },
+				"common.js",
+				"eventtree.js",
+			],
+			[
+				"codicon.css",
+				// The shared widget stylesheet: .toolbar-outer, .toolbar and the codicon checkbox
+				// the toggles are upgraded into. Without it the toolbar renders unstyled.
+				"common.css",
+				// The theme tokens and the card primitives, shared with the idea preview.
+				"hoicard.css",
+				// The canvas the cards are laid out on -- rails, arrows, chips -- shared with the
+				// decision preview.
+				"hoigraph.css",
+				"eventtree.css",
+				// Addressable id so an in-place updateBody can refresh the server StyleTable -- which
+				// now only holds the event picture sprites -- by mutating this <style>.textContent
+				// instead of forcing a full reload.
+				{ content: styleTable.toRawCss(), id: "event-server-styles" },
+			],
+		);
+
+		// Parts for the in-place update. The graph is laid out and rendered in the webview, so the
+		// payload ships the data rather than markup. JSON.stringify over a deterministically built
+		// payload (stable graph order, counter-assigned ids) is byte-identical for identical input,
+		// so an unchanged edit hashes equal and the LoaderPreview skips.
+		return {
+			html: fullHtml,
+			update: { styleCss: styleTable.toRawCss(), data: { eventGraph } },
+		};
+	} catch (e) {
+		return { html: errorPage(webview, uri, e) };
+	}
 }
 
-const leftPaddingBase = 50;
-const topPaddingBase = 90;
-const xGridSize = 180;
-const yGridSize = 150;
+async function renderEvents(
+	eventsLoaderResult: EventsLoaderResult,
+	styleTable: StyleTable,
+): Promise<EventGraphPayload> {
+	const eventIdToEvent = arrayToMap(
+		flatten(Object.values(eventsLoaderResult.events.eventItemsByNamespace)) as HOIEvent[],
+		"id",
+	);
+	const graph = eventsToGraph(eventIdToEvent, eventsLoaderResult.mainNamespaces);
+	return buildEventGraphPayload(graph, eventsLoaderResult, styleTable);
+}
 
-async function renderEvents(eventsLoaderResult: EventsLoaderResult, styleTable: StyleTable): Promise<string> {
-    const leftPadding = leftPaddingBase;
-    const topPadding = topPaddingBase;
-
-    const gridBox: HOIPartial<GridBoxType> = {
-        position: { x: toNumberLike(leftPadding), y: toNumberLike(topPadding) },
-        format: toStringAsSymbolIgnoreCase('left'),
-        size: { width: toNumberLike(xGridSize), height: toNumberLike(yGridSize) },
-        slotsize: { width: toNumberLike(xGridSize), height: toNumberLike(yGridSize) },
-    } as HOIPartial<GridBoxType>;
-    
-    const eventIdToEvent = arrayToMap(flatten(Object.values(eventsLoaderResult.events.eventItemsByNamespace)), 'id');
-    const graph = eventsToGraph(eventIdToEvent, eventsLoaderResult.mainNamespaces);
-    const idToContentMap: Record<string, string> = {};
-    const renderContext = makeEventRenderContext();
-    const gridBoxItems = await graphToGridBoxItems(graph, idToContentMap, eventsLoaderResult, styleTable, renderContext);
-    addEventTreeInteractionStyles(styleTable);
-
-    const renderedGridBox = await renderGridBox(gridBox, {
-        size: { width: 0, height: 0 },
-        orientation: 'upper_left'
-    }, {
-        styleTable,
-        items: arrayToMap(gridBoxItems, 'id'),
-        onRenderItem: async (item) => idToContentMap[item.id],
-        cornerPosition: 0.5,
-    });
-
-    return `
-        <div id="dragger" additionalDraggerHostId="eventtreecontent" class="${styleTable.oneTimeStyle('dragger', () => `
+// The drag layer is a fixed, viewport-sized, transparent div: pressing anywhere the graph does not
+// cover starts a pan (see initCommon in webviewsrc/util/common.ts). Which of these three covers
+// which is settled by the --ev-layer-* scale in eventtree.css, not by the order they are written
+// in; the order below is kept only because it reads the way the layers stack.
+function renderShell(styleTable: StyleTable): string {
+	return `
+        <div id="dragger" class="${styleTable.style(
+					"dragger",
+					() => `
             width: 100vw;
             height: 100vh;
             position: fixed;
             left:0;
             top:0;
-        `)}"></div>
-        ${makeEventToolbar(styleTable)}
-        <div id="eventtreecontent" class="${styleTable.oneTimeStyle('eventtreecontent', () => `
-            left: -20px;
+        `,
+				)}"></div>
+        <div id="eventtreecontent" class="${styleTable.style(
+					"eventtreecontent",
+					() => `
             position: relative;
-        `)}">
-            ${renderedGridBox}
-        </div>
+            top: ${toolbarHeight}px;
+        `,
+				)}"></div>
+        ${renderToolBar(styleTable)}
     `;
 }
 
-function makeEventToolbar(styleTable: StyleTable): string {
-    return `<div id="event-tree-toolbar" class="${styleTable.style('event-tree-toolbar', () => `
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 10;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-            max-width: min(760px, calc(100vw - 24px));
-            box-sizing: border-box;
-            padding: 8px;
-            color: var(--vscode-foreground);
-            background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-            border: 1px solid var(--vscode-panel-border);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-            font-size: 12px;
-            user-select: text;
-        `)}">
-            <label for="event-tree-search" class="${styleTable.style('event-tree-search-label', () => `
-                color: var(--vscode-descriptionForeground);
-                white-space: nowrap;
-            `)}">${localize('focustree.search', 'Search: ')}</label>
-            <input id="event-tree-search" type="search" placeholder="${htmlAttributeEscape(localize('eventtree.search.placeholder', 'Find event...'))}" class="${styleTable.style('event-tree-search-input', () => `
-                min-width: 0;
-                width: 180px;
-                color: var(--vscode-input-foreground);
-                background: var(--vscode-input-background);
-                border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-                padding: 3px 6px;
-            `)}" />
-            <span id="event-tree-search-count" class="${styleTable.style('event-tree-search-count', () => `
-                color: var(--vscode-descriptionForeground);
-                min-width: 38px;
-                text-align: right;
-                white-space: nowrap;
-            `)}">0/0</span>
-            <button id="event-tree-search-prev" type="button" title="${htmlAttributeEscape(localize('eventtree.search.previous', 'Previous match'))}" class="${styleTable.style('event-tree-icon-button', () => `
-                width: 24px;
-                height: 24px;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                border: 1px solid var(--vscode-button-border, transparent);
-                color: var(--vscode-button-foreground);
-                background: var(--vscode-button-background);
-                cursor: pointer;
-                padding: 0;
-            `)}">${makeIcon('arrow-up', styleTable)}</button>
-            <button id="event-tree-search-next" type="button" title="${htmlAttributeEscape(localize('eventtree.search.next', 'Next match'))}" class="${styleTable.style('event-tree-icon-button', () => `
-                width: 24px;
-                height: 24px;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                border: 1px solid var(--vscode-button-border, transparent);
-                color: var(--vscode-button-foreground);
-                background: var(--vscode-button-background);
-                cursor: pointer;
-                padding: 0;
-            `)}">${makeIcon('arrow-down', styleTable)}</button>
+// The toolbar lives outside #eventtreecontent so its listeners are bound once and an in-place
+// update never rebinds them. Modelled on the MIO preview's toolbar.
+//
+// Every control is always rendered, including the ones a given file cannot use: which of them are
+// shown is decided in the webview from EventGraphPayload.toolbarFlags. Deciding it here would put
+// the answer in the baked-in shell, where the only way to apply a change is to reassign the whole
+// html -- a page teardown, losing scroll and zoom, on every flip.
+function renderToolBar(styleTable: StyleTable): string {
+	const labelStyle = styleTable.style("evToggleLabel", () => `margin-right:5px`);
+
+	// The <input> is hidden and replaced by a codicon checkbox as soon as the webview loads, so it
+	// carries no spacing: the gap between two toggles is on .checkbox-container-out in eventtree.css.
+	const toggle = (id: string, text: string) => `
+        <label for="${id}" class="${labelStyle}">${text}</label>
+        <input type="checkbox" id="${id}">`;
+
+	// Leftmost, because the toolbar strip scrolls horizontally in a narrow pane and search is the one
+	// control that has to stay reachable without scrolling it.
+	const search = `
+        <label for="ev-searchbox" class="${labelStyle}">${localize("eventtree.search", "Search: ")}</label>
+        <input id="ev-searchbox" type="text" />
+        <span id="ev-search-count" class="ev-search-count"></span>`;
+
+	// One multi-select rather than one checkbox per idea: every entry answers the same question --
+	// which events belong on the canvas -- and two separate controls narrowing the same graph left
+	// the reader with no single place to read the answer off. Selecting nothing shows everything;
+	// selecting several is an OR. Which entries are offered is decided in the webview from
+	// EventGraphPayload.toolbarFlags, so the list itself is written out in full here.
+	//
+	// Each entry carries the glyph the matching events wear on the canvas, so the shape vocabulary is
+	// learned from the control that uses it. It travels as an attribute rather than as markup inside
+	// the div because the dropdown flattens an option with textContent, which would drop the element
+	// and leave its classes in the closed combobox caption. Event chains has no glyph -- nothing on a
+	// card stands for it -- so it passes the empty string, which still reserves the column and keeps
+	// the six labels aligned.
+	const filterOption = (value: string, text: string, glyph: string) =>
+		`<div class="option" value="${value}" data-glyph="${glyph}">${text}</div>`;
+	const marker = (kind: string) => `ev-marker ev-marker-${kind}`;
+	const filters = `
+        <div id="ev-filter-container">
+            <label for="ev-filters" class="${labelStyle}">${localize("eventtree.filters", "Filters: ")}</label>
+            <div class="select-container ${styleTable.style("marginRight10", () => `margin-right:10px`)}">
+                <div id="ev-filters" class="select multiple-select" tabindex="0" role="combobox">
+                    <span class="value"></span>
+                    ${filterOption("mtth", localize("eventtree.filtermtth", "MTTH events"), marker("mtth"))}
+                    ${filterOption("triggered", localize("eventtree.filtertriggered", "Triggered only"), marker("triggered"))}
+                    ${filterOption("news", localize("eventtree.filternews", "News events"), marker("news"))}
+                    ${filterOption("hidden", localize("eventtree.filterhidden", "Hidden"), marker("hidden"))}
+                    ${filterOption("major", localize("eventtree.filtermajor", "Major"), marker("major"))}
+                    ${filterOption("chains", localize("eventtree.filterchains", "Event chains"), "")}
+                </div>
+            </div>
         </div>`;
-}
 
-function addEventTreeInteractionStyles(styleTable: StyleTable): void {
-    styleTable.raw('[data-event-preview-node]', `
-        outline: 1px solid transparent;
-        outline-offset: 2px;
-        transition: outline-color 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
-    `);
-    styleTable.raw('[data-event-preview-node]:hover', `
-        filter: brightness(1.08);
-        outline-color: var(--vscode-focusBorder);
-    `);
-    styleTable.raw('[data-event-preview-node].event-preview-search-match', `
-        box-shadow: 0 0 0 2px var(--vscode-editor-findMatchHighlightBackground);
-    `);
-    styleTable.raw('[data-event-preview-node].event-preview-search-current', `
-        outline-color: var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
-        box-shadow: 0 0 0 3px var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
-    `);
-    styleTable.raw('#event-tree-search-prev:disabled, #event-tree-search-next:disabled', `
-        cursor: default;
-        opacity: 0.6;
-    `);
-}
+	const toggles = [
+		toggle("show-localisation", localize("eventtree.showlocalisation", "Show localisation")),
+		toggle("show-option-triggers", localize("eventtree.showoptiontriggers", "Show option triggers")),
+		toggle("show-edge-conditions", localize("eventtree.showedgeconditions", "Show arrow conditions")),
+		toggle("show-event-conditions", localize("eventtree.showeventconditions", "Show event conditions")),
+		toggle("show-picture", localize("eventtree.showpicture", "Show event picture")),
+		toggle("show-effects", localize("eventtree.showeffects", "Show effects")),
+	].join("");
 
-interface EventNode {
-    event: HOIEvent;
-    loop: boolean;
-    children: (EventEdge | OptionNode)[];
-    relatedNamespace: string[];
-    token: Token | undefined;
-}
-
-interface OptionNode {
-    optionName: string;
-    children: EventEdge[];
-    file: string;
-    token: Token | undefined;
-}
-
-interface EventEdge {
-    toScope: string;
-    toNode: EventNode | string;
-    days: number;
-    hours: number;
-    randomDays: number;
-    randomHours: number;
-}
-
-interface EventRenderContext {
-    localisationCache: Map<string, Promise<string | undefined | null>>;
-}
-
-function makeEventRenderContext(): EventRenderContext {
-    return {
-        localisationCache: new Map(),
-    };
-}
-
-function getLocalisedTextCached(key: string, context: EventRenderContext): Promise<string | undefined | null> {
-    if (!isLocalisationIndexEnabled()) {
-        return Promise.resolve(undefined);
-    }
-
-    let cached = context.localisationCache.get(key);
-    if (!cached) {
-        cached = getLocalisedTextQuick(key);
-        context.localisationCache.set(key, cached);
-    }
-    return cached;
-}
-
-function eventsToGraph(eventIdToEvent: Record<string, HOIEvent>, mainNamespaces: string[]): EventNode[] {
-    const eventIdToNode: Record<string, EventNode> = {};
-    const eventHasParent: Record<string, boolean> = {};
-    const eventStack: HOIEvent[] = [];
-
-    for (const event of Object.values(eventIdToEvent)) {
-        eventToNode(event, eventIdToEvent, eventStack, eventIdToNode, eventHasParent);
-    }
-    
-    const result: EventNode[] = [];
-    for (const event of Object.values(eventIdToEvent)) {
-        if (!eventHasParent[event.id]) {
-            const eventNode = eventIdToNode[event.id];
-            if (eventNode.relatedNamespace.some(n => mainNamespaces.includes(n))) {
-                result.push(eventNode);
-            }
-        }
-    }
-
-    return result;
-}
-
-function eventToNode(
-    event: HOIEvent,
-    eventIdToEvent: Record<string, HOIEvent>,
-    eventStack: HOIEvent[],
-    eventIdToNode: Record<string, EventNode>,
-    eventHasParent: Record<string, boolean>
-): EventNode {
-    const cachedNode = eventIdToNode[event.id];
-    if (cachedNode) {
-        return cachedNode;
-    }
-
-    eventStack.push(event);
-    const eventNode: EventNode = {
-        event,
-        children: [],
-        relatedNamespace: [event.namespace],
-        token: event.token,
-        loop: false,
-    };
-    eventIdToNode[event.id] = eventNode;
-
-    const optionEntries = [
-        { option: event.immediate, optionIndex: -1 },
-        ...event.options.map((option, optionIndex) => ({ option, optionIndex })),
-    ];
-    for (const { option, optionIndex } of optionEntries) {
-        const isImmediate = !option.name;
-        const optionNode: OptionNode = {
-            optionName: option.name ?? ':immediate',
-            children: [],
-            file: event.file,
-            token: option.token,
-        };
-        if (!isImmediate) {
-            eventNode.children.push(optionNode);
-        }
-
-        for (const childEvent of option.childEvents) {
-            const childEventItem = eventIdToEvent[childEvent.eventName];
-            eventHasParent[childEvent.eventName] = true;
-
-            let toNode: EventNode | string;
-            if (!childEventItem) {
-                toNode = childEvent.eventName;
-            } else if (eventStack.includes(childEventItem)) {
-                toNode = eventToNode(childEventItem, eventIdToEvent, eventStack, eventIdToNode, eventHasParent);
-                toNode = {
-                    ...toNode,
-                    children: [],
-                    loop: true,
-                };
-            } else {
-                toNode = eventToNode(childEventItem, eventIdToEvent, eventStack, eventIdToNode, eventHasParent);
-                toNode.relatedNamespace.forEach(n => {
-                    if (!eventNode.relatedNamespace.includes(n)) {
-                        eventNode.relatedNamespace.push(n);
-                    }
-                });
-            }
-
-            const eventEdge: EventEdge = {
-                toNode,
-                toScope: childEvent.scopeName,
-                days: childEvent.days,
-                hours: childEvent.hours,
-                randomDays: childEvent.randomDays,
-                randomHours: childEvent.randomHours,
-            };
-            
-            if (isImmediate) {
-                eventNode.children.push(eventEdge);
-            } else {
-                optionNode.children.push(eventEdge);
-            }
-        }
-    }
-
-    eventStack.pop();
-    return eventNode;
-}
-
-interface GridBoxTree {
-    id: string;
-    items: GridBoxItem[];
-    starts: number[];
-    ends: number[];
-}
-
-async function graphToGridBoxItems(
-    graph: EventNode[],
-    idToContentMap: Record<string, string>,
-    eventsLoaderResult: EventsLoaderResult,
-    styleTable: StyleTable,
-    renderContext: EventRenderContext,
-): Promise<GridBoxItem[]> {
-    const resultTree: GridBoxTree = {
-        id: '',
-        items: [],
-        starts: [],
-        ends: [],
-    };
-    const idContainer = { id: 0 };
-
-    for (const eventNode of graph) {
-        const scopeContext: ScopeContext = {
-            fromStack: [],
-            currentScopeName: 'EVENT_TARGET',
-        };
-        const tree = await eventNodeToGridBoxItems(eventNode, undefined, idToContentMap, scopeContext, eventsLoaderResult, styleTable, renderContext, idContainer);
-        idToContentMap[tree.id] = await makeEventNode(scopeContext.currentScopeName, eventNode, undefined, eventsLoaderResult, styleTable, renderContext);
-        appendChildToTree(resultTree, tree);
-    }
-
-    return resultTree.items;
-}
-
-async function eventNodeToGridBoxItems(
-    node: EventNode | OptionNode | string,
-    edge: EventEdge | undefined,
-    idToContentMap: Record<string, string>,
-    scopeContext: ScopeContext,
-    eventsLoaderResult: EventsLoaderResult,
-    styleTable: StyleTable,
-    renderContext: EventRenderContext,
-    idContainer: { id: number },
-): Promise<GridBoxTree> {
-    const result: GridBoxTree = {
-        id: '',
-        items: [],
-        starts: [],
-        ends: [],
-    };
-    const childConnections: GridBoxConnection[] = [];
-    const optionNodeToId = new Map<OptionNode, string>();
-    let sharedOptionChildGroups: SharedOptionChildGroup<OptionNode, EventEdge>[] = [];
-    if (typeof node === 'object') {
-        if ('event' in node) {
-            sharedOptionChildGroups = getSharedOptionChildGroups<EventEdge, OptionNode>(node.children, scopeContext);
-        }
-        for (const child of node.children) {
-            let tree: GridBoxTree;
-            if ('toNode' in child) {
-                const toNode = child.toNode;
-                const nextScopeContext = nextScope(scopeContext, child.toScope);
-                tree = await eventNodeToGridBoxItems(toNode, child, idToContentMap, nextScopeContext, eventsLoaderResult, styleTable, renderContext, idContainer);
-                childConnections.push({
-                    target: tree.id,
-                    targetType: 'child',
-                    style: getEventEdgeConnectionStyle(child),
-                });
-            } else {
-                const filteredChild = sharedOptionChildGroups.length > 0
-                    ? removeSharedOptionChildEdges(child, sharedOptionChildGroups)
-                    : child;
-                tree = await eventNodeToGridBoxItems(filteredChild, undefined, idToContentMap, scopeContext, eventsLoaderResult, styleTable, renderContext, idContainer);
-                optionNodeToId.set(child, tree.id);
-                childConnections.push({
-                    target: tree.id,
-                    targetType: 'child',
-                    style: eventOptionConnectionStyle,
-                });
-            }
-            appendChildToTree(result, tree, 1, true);
-        }
-
-        for (const sharedGroup of sharedOptionChildGroups) {
-            const nextScopeContext = nextScope(scopeContext, sharedGroup.edge.toScope);
-            const sharedTree = await eventNodeToGridBoxItems(
-                sharedGroup.edge.toNode,
-                sharedGroup.edge,
-                idToContentMap,
-                nextScopeContext,
-                eventsLoaderResult,
-                styleTable,
-                renderContext,
-                idContainer,
-            );
-            appendChildToTree(result, sharedTree, 2, true);
-            for (const optionNode of sharedGroup.optionNodes) {
-                const optionId = optionNodeToId.get(optionNode);
-                if (!optionId) {
-                    continue;
-                }
-
-                const optionItem = result.items.find(item => item.id === optionId);
-                if (optionItem) {
-                    optionItem.connections.push({
-                        target: sharedTree.id,
-                        targetType: 'child',
-                        style: getEventEdgeConnectionStyle(sharedGroup.edge),
-                    });
-                }
-            }
-        }
-    }
-
-    const isOption = typeof node === 'object' && !('event' in node);
-    const id = (typeof node === 'object' ? ('event' in node ? node.event.id : node.optionName) : node) + ':' + (idContainer.id++);
-    if (isOption) {
-        idToContentMap[id] = await makeOptionNode(node as OptionNode, styleTable, renderContext);
-    } else {
-        idToContentMap[id] = await makeEventNode(scopeContext.currentScopeName,
-            typeof node === 'object' ? node as EventNode : node, edge, eventsLoaderResult, styleTable, renderContext);
-    }
-
-    const x = result.starts.length < 2 ? 0 : Math.floor((result.ends[1] + result.starts[1] - 1) / 2);
-    result.id = id;
-    result.items.push({
-        id,
-        gridX: x,
-        gridY: 0,
-        connections: childConnections,
-    });
-
-    if (result.starts.length === 0) {
-        result.starts.push(0);
-        result.ends.push(1);
-    } else {
-        if (result.starts[0] === result.ends[0]) {
-            result.starts[0] = x;
-            result.ends[0] = x + 1;
-        } else {
-            result.starts[0] = Math.min(x, result.starts[0] ?? 0);
-            result.ends[0] = Math.max(x + 1, result.ends[0] ?? 0);
-        }
-    }
-
-    return result;
-}
-
-function removeSharedOptionChildEdges(optionNode: OptionNode, sharedGroups: readonly SharedOptionChildGroup<OptionNode, EventEdge>[]): OptionNode {
-    const sharedEdges = new Set(sharedGroups.flatMap(group => group.optionNodes.includes(optionNode) ? [group.edge] : []));
-    if (sharedEdges.size === 0) {
-        return optionNode;
-    }
-
-    return {
-        ...optionNode,
-        children: optionNode.children.filter(child => !sharedEdges.has(child)),
-    };
-}
-
-const typeToIcon: Record<HOIEventType, string> = {
-    state: 'location',
-    country: 'globe',
-    unit_leader: 'account',
-    news: 'note',
-    operative_leader: 'device-camera',
-};
-
-const flagIcons: string[] = [
-    'eye-closed',
-    'sync-ignored',
-    'broadcast',
-    'refresh',
-];
-
-function makeDataAttribute(name: string, value: string | number | undefined): string {
-    if (value === undefined || value === '') {
-        return '';
-    }
-
-    return `data-${name}="${htmlAttributeEscape(String(value))}"`;
-}
-
-const immediateEventConnectionStyle = '1px solid #88aaff';
-const delayedEventConnectionStyle = '1px dashed #d9a441';
-const eventOptionConnectionStyle = '1px solid #88aaff';
-
-function getEventEdgeConnectionStyle(edge: EventEdge): string {
-    return formatEventDelay(edge) ? delayedEventConnectionStyle : immediateEventConnectionStyle;
-}
-
-function makeNodeInteractionAttributes(options: {
-    searchText: string;
-    file?: string;
-    start?: number;
-    end?: number;
-}): string {
-    return [
-        'data-event-preview-node="true"',
-        'tabindex="0"',
-        makeDataAttribute('event-search-text', options.searchText),
-        makeDataAttribute('event-navigate-file', options.file),
-        makeDataAttribute('event-navigate-start', options.start),
-        makeDataAttribute('event-navigate-end', options.end),
-    ].filter(Boolean).join(' ');
-}
-
-function formatEventDelay(edge: EventEdge | undefined): string | undefined {
-    if (edge === undefined || (edge.days <= 0 && edge.hours <= 0 && edge.randomDays <= 0 && edge.randomHours <= 0)) {
-        return undefined;
-    }
-
-    if (edge.days > 0 || edge.randomDays > 0) {
-        return `${edge.randomDays > 0 ? `${edge.days}-${edge.days + edge.randomDays}` : edge.days} ${localize('days', 'day(s)')}`;
-    }
-
-    return `${edge.randomHours > 0 ? `${edge.hours}-${edge.hours + edge.randomHours}` : edge.hours} ${localize('hours', 'hour(s)')}`;
-}
-
-async function makeEventNode(
-    scope: string,
-    eventNode: EventNode | string,
-    edge: EventEdge | undefined,
-    eventsLoaderResult: EventsLoaderResult,
-    styleTable: StyleTable,
-    renderContext: EventRenderContext,
-): Promise<string> {
-    if (typeof eventNode === 'object') {
-        const { gfxFiles } = eventsLoaderResult;
-        const event = eventNode.event;
-        const eventId = event.id;
-        const localizedTitle = await getLocalisedTextCached(event.title, renderContext);
-        const displayTitle = localizedTitle ?? event.title;
-        const delay = formatEventDelay(edge);
-        const timing = [
-            event.isTriggeredOnly ?
-                localize('eventtree.istriggeredonly', 'Is triggered only') :
-                `${localize('eventtree.mtthbase', 'Mean time to happen (base): ')}${event.meanTimeToHappenBase} ${localize('days', 'day(s)')}`,
-            delay ? `${localize('eventtree.delay', 'Delay: ')}${delay}` : undefined,
-        ].filter((value): value is string => value !== undefined).join(' / ');
-        const title = `${event.type}_event\n${localize('eventtree.eventid', 'Event ID: ')}${eventId}\n` +
-            (event.major ? localize('eventtree.major', 'Major') + '\n' : '') +
-            (event.hidden ? localize('eventtree.hidden', 'Hidden') + '\n' : '') +
-            (event.fire_only_once ? localize('eventtree.fireonlyonce', 'Fire only once') + '\n' : '') +
-            (event.isTriggeredOnly ? localize('eventtree.istriggeredonly', 'Is triggered only') :
-                `${localize('eventtree.mtthbase', 'Mean time to happen (base): ')}${event.meanTimeToHappenBase} ${localize('days', 'day(s)')}`) + '\n' +
-            (delay ?
-                localize('eventtree.delay', 'Delay: ') + delay + '\n' :
-                '') +
-            `${localize('eventtree.scope', 'Scope: ')}${scope}\n${localize('eventtree.title', 'Title: ')}${displayTitle}`;
-
-        const flags = [event.hidden, event.fire_only_once, event.major, eventNode.loop];
-        const content = `<p class="
-                ${styleTable.style('paragraph', () => 'margin: 5px 0; text-overflow: ellipsis; overflow: hidden;')}
-                ${styleTable.style('white-space-nowrap', () => 'white-space: nowrap;')}
-            ">
-                ${makeIcon(typeToIcon[event.type], styleTable)}
-                ${htmlTextEscape(eventId)}
-                ${flags.includes(true) ? '<br/>' + flags.map((v, i) => v ? makeIcon(flagIcons[i], styleTable) : '').join(' ') : ''}
-                ${!event.isTriggeredOnly ?
-                    `<br/>${makeIcon('history', styleTable)} ${event.meanTimeToHappenBase} ${localize('days', 'day(s)')}` :
-                    ''}
-                <br/>
-                ${makeIcon('symbol-namespace', styleTable)} ${htmlTextEscape(scope)}
-                ${delay ?
-                    `<br/>${makeIcon('watch', styleTable)} ${htmlTextEscape(delay)}`
-                    : ''}
-            </p>
-            <p class="${styleTable.style('paragraph', () => 'margin: 5px 0; text-overflow: ellipsis; overflow: hidden;')}">
-                ${htmlTextEscape(displayTitle)}
-            </p>`;
-        
-        const extraAttributes = [makeNodeInteractionAttributes({
-            searchText: [
-                eventId,
-                displayTitle,
-                `${event.type}_event`,
-                scope,
-                timing,
-                event.file,
-            ].join(' '),
-            file: event.file,
-            start: event.token?.start,
-            end: event.token?.end,
-        })];
-        const extraClasses = [
-            styleTable.style('event-item', () => 'background: rgb(151, 58, 67);'),
-            styleTable.style('cursor-pointer', () => 'cursor: pointer;'),
-        ];
-
-        const picture = event.picture ? await getSpriteByGfxName(event.picture, gfxFiles) : undefined;
-        if (picture) {
-            const pictureStyle = styleTable.style('event-picture-' + normalizeForStyle(event.picture ?? '-empty'), () => `
-                background-image: url(${picture.image.uri});
-                background-size: ${picture.image.width}px;
-                width: ${picture.image.width}px;
-                height: ${picture.image.height}px;
-            `);
-            extraAttributes.push(`
-                picture-style-key="${pictureStyle}"
-                picture-width="${picture.image.width}"
-            `);
-            extraClasses.push('event-picture-host');
-        }
-
-        return makeNode(
-            content,
-            title,
-            styleTable,
-            extraClasses.join(' '),
-            extraAttributes.join(' '));
-
-    } else {
-        const eventId = eventNode;
-        const title = `${localize('eventtree.eventid', 'Event ID: ')}${eventId}\n${localize('eventtree.scope', 'Scope: ')}${scope}`;
-        let contentText = '';
-        let displayTitle = eventId;
-        if (isLocalisationIndexEnabled()) {
-            let localizedTitle = await getLocalisedTextCached(eventId, renderContext);
-            if (localizedTitle !== undefined && localizedTitle !== null && localizedTitle !== eventId) {
-                contentText += `<br/>${htmlTextEscape(localizedTitle)}`;
-                displayTitle = localizedTitle;
-            } else {
-                localizedTitle = await getLocalisedTextCached(`${eventId}.t`, renderContext);
-                if (localizedTitle !== undefined && localizedTitle !== null && localizedTitle !== `${eventId}.t`) {
-                    contentText += `<br/>${htmlTextEscape(localizedTitle)}`;
-                    displayTitle = localizedTitle;
-                }
-            }
-        }
-        const content = `<p class="
-                ${styleTable.style('paragraph', () => 'margin: 5px 0; text-overflow: ellipsis; overflow: hidden;')}
-                ${styleTable.style('white-space-nowrap', () => 'white-space: nowrap;')}
-            ">
-                ${makeIcon('question', styleTable)}
-                ${htmlTextEscape(eventId)}
-                <br/>
-                ${makeIcon('symbol-namespace', styleTable)} ${htmlTextEscape(scope)}
-                ${contentText}
-            </p>`;
-    
-        return makeNode(
-            content,
-            title,
-            styleTable,
-            `${styleTable.style('event-item', () => 'background: rgb(151, 58, 67);')} ${styleTable.style('cursor-pointer', () => 'cursor: pointer;')}`,
-            makeNodeInteractionAttributes({
-                searchText: [eventId, displayTitle, scope].join(' '),
-            }));
-    }
-}
-
-function makeIcon(type: string, styleTable: StyleTable): string {
-    return `<i class="codicon codicon-${type} ${styleTable.style('bottom', () => 'vertical-align: bottom;')}"></i>`;
-}
-
-async function makeOptionNode(option: OptionNode, styleTable: StyleTable, renderContext: EventRenderContext): Promise<string> {
-    let content = htmlTextEscape(option.optionName);
-    let title = option.optionName;
-    if (isLocalisationIndexEnabled()) {
-        const optionName = await getLocalisedTextCached(option.optionName, renderContext);
-        if (optionName !== undefined && optionName !== null && optionName !== option.optionName) {
-            content = `${htmlTextEscape(option.optionName)} <br/> ${htmlTextEscape(optionName)}`;
-            title = `${option.optionName} \n ${optionName}`;
-        }
-    }
-
-    return makeNode(
-        content,
-        title,
-        styleTable,
-        styleTable.style('event-option', () => 'background: rgb(58, 58, 148); cursor: pointer;'),
-        makeNodeInteractionAttributes({
-            searchText: [option.optionName, title, option.file].join(' '),
-            file: option.file,
-            start: option.token?.start,
-            end: option.token?.end,
-        }));
-}
-
-function makeNode(content: string, title: string, styleTable: StyleTable, extraClasses: string, extraAttributes?: string) {
-    return `<div class=${styleTable.style('event-node-outer', () => `
-        height: 100%;
-        width: 100%;
-        position: relative;
-    `)}>
-        <div
-            class="${styleTable.style('event-node', () => `
-                position: absolute;
-                top: 50%;
-                transform: translateY(-50%);
-                width: calc(100% - 10px);
-                text-align: center;
-                padding: 10px 5px;
-                margin: 0 5px;
-                overflow: hidden;
-                box-sizing: border-box;
-                text-overflow: ellipsis;`)}
-                ${extraClasses}"
-            title='${htmlEscape(title.trim())}'
-            ${extraAttributes ?? ''}
-        >
-            ${content}
+	return `<div class="toolbar-outer ${styleTable.style(
+		"toolbar-height",
+		() => `box-sizing: border-box; height: ${toolbarHeight}px;`,
+	)}">
+        <div class="toolbar">
+            ${search}${filters}${toggles}
         </div>
     </div>`;
-}
-
-function appendChildToTree(target: GridBoxTree, nextChild: GridBoxTree, yOffset: number = 0, canBeLessThanZero: boolean = false): void {
-    const minXOffset = target.starts.length === 0 ? -(max(nextChild.starts) ?? 0) : -Infinity;
-    const xOffset = Math.max(minXOffset, max(nextChild.starts.map((s, i) => {
-        if (!canBeLessThanZero) {
-            const e = target.ends[i + yOffset] ?? 0;
-            return e - s;
-        } else {
-            if (target.ends[i + yOffset] === target.starts[i + yOffset]) {
-                return -Infinity;
-            } else {
-                return target.ends[i + yOffset] - s;
-            }
-        }
-    })) ?? 0);
-    target.items.push(...nextChild.items.map(v => ({
-        ...v,
-        gridX: v.gridX + xOffset,
-        gridY: v.gridY + yOffset,
-    })));
-    nextChild.ends.forEach((e, i) => {
-        if (target.starts[i + yOffset] === target.ends[i + yOffset]) {
-            target.starts[i + yOffset] = (nextChild.starts[i] ?? 0) + xOffset;
-        } else {
-            target.starts[i + yOffset] = target.starts[i + yOffset] ?? 0;
-        }
-        target.ends[i + yOffset] = e + xOffset;
-    });
 }

@@ -1,0 +1,9 @@
+ideas = {
+    country = {
+        sample_idea = {
+            picture = generic_industry
+            modifier = { stability_factor = 0.05 }
+            allowed = { always = yes }
+        }
+    }
+}

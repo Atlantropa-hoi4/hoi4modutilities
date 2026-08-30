@@ -269,6 +269,33 @@ function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [
     tokens.throw("Expect string, number, symbol, or {", true);
 }
 
+/** Resolve top-level and nested HOI4 @constant references in a parsed tree. */
+export function resolveScriptVariables(root: Node): Node {
+    const constants: Record<string, number | string> = {};
+    const collect = (node: Node): void => {
+        if (node.name?.startsWith('@') && (typeof node.value === 'number' || typeof node.value === 'string')) {
+            constants[node.name] = node.value;
+        }
+        if (Array.isArray(node.value)) {
+            node.value.forEach(collect);
+        }
+    };
+    collect(root);
+
+    const substitute = (node: Node): void => {
+        if (Array.isArray(node.value)) {
+            node.value.forEach(substitute);
+        } else if (node.value !== null && typeof node.value === 'object' && 'name' in node.value) {
+            const constant = constants[node.value.name];
+            if (node.value.name.startsWith('@') && constant !== undefined) {
+                node.value = constant;
+            }
+        }
+    };
+    substitute(root);
+    return root;
+}
+
 function decodeStringToken(token: Token<HOITokenType>): string {
     return token.value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }

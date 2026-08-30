@@ -41,6 +41,8 @@
     "workspaceContains:common/**/*.txt",
     "workspaceContains:common/national_focus/*.txt",
     "workspaceContains:common/technologies/*.txt",
+    "workspaceContains:common/ideas/*.txt",
+    "workspaceContains:common/decisions/*.txt",
     "workspaceContains:events/*.txt",
     "workspaceContains:events/**/*.txt",
     "workspaceContains:country_metadata/**/*.txt",
@@ -109,12 +111,17 @@
                 "localisationIndex",
                 "rightButtonDrag",
                 "technologyShowId",
+                "ideaPreview",
+                "decisionPreview",
+                "ideaSwapIndex",
                 "!gfxIndex",
                 "!useConditionInFocus",
                 "!eventTreePreview",
                 "!sharedFocusIndex",
                 "!localisationIndex",
-                "!rightButtonDrag"
+                "!rightButtonDrag",
+                "!ideaPreview",
+                "!decisionPreview"
               ]
             },
             "description": "%hoi4modutilities.featureFlags.desc%"

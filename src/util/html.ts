@@ -1,16 +1,22 @@
 import * as vscode from 'vscode';
 import { contextContainer } from '../context';
 import { StyleTable } from './styletable';
-import { randomString } from './common';
+import { forceError, randomString } from './common';
+import { localize } from './i18n';
 
 export { htmlAttributeEscape, htmlTextEscape } from './htmlescape';
 
 export interface DynamicScript {
     content: string;
+    id?: string;
 }
 
 export interface NonceOnly {
     nonce: string;
+}
+
+export function previewedFileUriScript(uri: vscode.Uri): DynamicScript {
+    return { content: `window.previewedFileUri = ${JSON.stringify(uri.toString())};` };
 }
 
 export function html(webview: vscode.Webview, body: string, scripts: (string | DynamicScript)[], styles?: (string | StyleTable | DynamicScript | NonceOnly)[]): string {
@@ -48,7 +54,7 @@ export function html(webview: vscode.Webview, body: string, scripts: (string | D
                     ];
                 } else {
                     return [
-                        `<style nonce="${nonce}">${style.content}</style>`,
+                        `<style nonce="${nonce}"${style.id ? ` id="${style.id}"` : ''}>${style.content}</style>`,
                         `'nonce-${nonce}'`,
                     ];
                 }
@@ -93,4 +99,12 @@ export function htmlEscape(unsafe: string): string {
          .replace(/'/g, "&#039;")
          .replace(/\n/g, "&#13;")
          .replace(/ /g, "&nbsp;");
+}
+
+export function errorPageContent(cause: unknown): string {
+    return `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(cause).toString())}</pre>`;
+}
+
+export function errorPage(webview: vscode.Webview, uri: vscode.Uri, cause: unknown): string {
+    return html(webview, errorPageContent(cause), [previewedFileUriScript(uri)], []);
 }

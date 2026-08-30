@@ -83,6 +83,8 @@ const webviewEntries = [
     { in: 'webviewsrc/guipreview.ts', out: 'guipreview' },
     { in: 'webviewsrc/miopreview.ts', out: 'miopreview' },
     { in: 'webviewsrc/characterpreview.ts', out: 'characterpreview' },
+    { in: 'webviewsrc/ideapreview.ts', out: 'ideapreview' },
+    { in: 'webviewsrc/decisiontree.ts', out: 'decisiontree' },
 ].map(e => ({ in: path.join(rootDir, e.in), out: e.out }));
 
 async function ensureDir(dir) {
@@ -98,6 +100,11 @@ async function copyStaticAssets() {
     await ensureDir(staticDir);
     const codiconRoot = path.dirname(require.resolve('@vscode/codicons/package.json'));
     await copyAsset(path.join(rootDir, 'resource/common.css'), path.join(staticDir, 'common.css'));
+    await copyAsset(path.join(rootDir, 'resource/hoicard.css'), path.join(staticDir, 'hoicard.css'));
+    await copyAsset(path.join(rootDir, 'resource/ideapreview.css'), path.join(staticDir, 'ideapreview.css'));
+    await copyAsset(path.join(rootDir, 'resource/hoigraph.css'), path.join(staticDir, 'hoigraph.css'));
+    await copyAsset(path.join(rootDir, 'resource/decisiontree.css'), path.join(staticDir, 'decisiontree.css'));
+    await copyAsset(path.join(rootDir, 'resource/eventtree.css'), path.join(staticDir, 'eventtree.css'));
     await copyAsset(path.join(rootDir, 'resource/preview-right-dark.svg'), path.join(staticDir, 'preview-right-dark.svg'));
     await copyAsset(path.join(rootDir, 'resource/preview-right-light.svg'), path.join(staticDir, 'preview-right-light.svg'));
     await copyAsset(path.join(codiconRoot, 'dist/codicon.css'), path.join(staticDir, 'codicon.css'));

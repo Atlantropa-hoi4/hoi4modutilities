@@ -28,6 +28,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const {
     isGfxIndexEnabled,
+    isIdeaPreviewEnabled,
+    isDecisionPreviewEnabled,
+    isIdeaSwapIndexEnabled,
     isLocalisationIndexEnabled,
     isRightButtonDragEnabled,
     isTechnologyShowIdEnabled,
@@ -45,13 +48,18 @@ describe('feature flag helpers', () => {
     it('enables preview indexes without opt-in feature flags', () => {
         assert.strictEqual(isGfxIndexEnabled(), true);
         assert.strictEqual(isLocalisationIndexEnabled(), true);
+        assert.strictEqual(isIdeaPreviewEnabled(), true);
+        assert.strictEqual(isDecisionPreviewEnabled(), true);
+        assert.strictEqual(isIdeaSwapIndexEnabled(), false);
     });
 
     it('allows preview indexes to be disabled explicitly', () => {
-        configuredFeatureFlags = ['!gfxIndex', '!localisationIndex'];
+        configuredFeatureFlags = ['!gfxIndex', '!localisationIndex', '!ideaPreview', '!decisionPreview'];
 
         assert.strictEqual(isGfxIndexEnabled(), false);
         assert.strictEqual(isLocalisationIndexEnabled(), false);
+        assert.strictEqual(isIdeaPreviewEnabled(), false);
+        assert.strictEqual(isDecisionPreviewEnabled(), false);
     });
 
     it('enables raw technology IDs only when requested', () => {

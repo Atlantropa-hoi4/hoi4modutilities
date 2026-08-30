@@ -3,7 +3,7 @@ import * as path from 'path';
 import { PromiseCache } from './cache';
 import { isSamePath } from './nodecommon';
 import { getLastModifiedAsync, readDirFiles, isFile, isDirectory, readFile, readDir, isSameUri, fileOrUriStringToUri, ensureFileScheme, readDirFilesRecursively } from './vsccommon';
-import { parseHoi4File } from '../hoiformat/hoiparser';
+import { parseHoi4File, resolveScriptVariables, Node } from '../hoiformat/hoiparser';
 import { localize } from './i18n';
 import { convertNodeToJson, SchemaDef, HOIPartial } from '../hoiformat/schema';
 import { error } from './debug';
@@ -437,6 +437,15 @@ export function createFileLoaderCacheKey(relativePath: string, options?: ListFil
         recursively: options?.recursively,
         source: createFileSourceFingerprint(),
     });
+}
+
+export async function parseHoi4FileCached(relativePath: string): Promise<Node> {
+    const [buffer, realPath] = await readFileFromModOrHOI4(relativePath);
+    return parseHoi4File(buffer.toString().replace(/^\uFEFF/, ''), localize('infile', 'In file {0}:\n', realPath));
+}
+
+export async function parseAndResolveHoi4FileCached(relativePath: string): Promise<Node> {
+    return resolveScriptVariables(await parseHoi4FileCached(relativePath));
 }
 
 function createFileSourceFingerprint(): unknown {

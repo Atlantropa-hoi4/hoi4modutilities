@@ -4,7 +4,10 @@ import { vscode } from './vscode';
 import { sendException } from './telemetry';
 import { forceError } from '../../src/util/common';
 import { normalizePreviewScale } from '../../src/util/previewscale';
+import { BehaviorSubject } from 'rxjs';
 export { arrayToMap } from '../../src/util/common';
+
+export const panning$ = new BehaviorSubject<boolean>(false);
 
 export function setState(obj: Record<string, any>): void {
     const state = getState();
@@ -31,6 +34,14 @@ let previewPanStartX = -1;
 let previewPanStartY = -1;
 let previewPanPressed = false;
 
+function setPreviewPanPressed(pressed: boolean): void {
+    previewPanPressed = pressed;
+    document.body?.classList.toggle('panning', pressed);
+    if (panning$.value !== pressed) {
+        panning$.next(pressed);
+    }
+}
+
 export function setPreviewPanDisabled(disabled: boolean): void {
     if (!document.body) {
         return;
@@ -47,13 +58,13 @@ export function setPreviewPanDisabled(disabled: boolean): void {
 
 export function startPreviewPan(pageX: number, pageY: number, force = false): void {
     if (!force && isPreviewPanDisabled()) {
-        previewPanPressed = false;
+        setPreviewPanPressed(false);
         return;
     }
 
     previewPanStartX = pageX;
     previewPanStartY = pageY;
-    previewPanPressed = true;
+    setPreviewPanPressed(true);
 }
 
 export function copyArray<T>(src: T[], dst: T[], offsetSrc: number, offsetDst: number, length: number): void {
@@ -124,6 +135,10 @@ function reportRunError(error: unknown): void {
 }
 
 let shouldDisableZoom = false;
+export function currentScale(): number {
+    return normalizePreviewScale(getState().scale);
+}
+
 export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOffset: number): void {
     const restoredScale = getState().scale;
     let scale = normalizePreviewScale(restoredScale);
@@ -213,6 +228,11 @@ export function refreshPreviewLabelMode(): void {
     applyPreviewLabelMode(mode);
 }
 
+/** Compatibility entrypoint for previews that explicitly initialise the shared module. */
+export function initCommon(): void {
+    // This fork registers the shared load handlers when the module is evaluated.
+}
+
 function applyPreviewLabelMode(mode: PreviewLabelMode): void {
     document.body.dataset.previewLabelMode = mode;
     setState({ previewLabelMode: mode });
@@ -292,7 +312,7 @@ window.addEventListener('load', function() {
 
         document.body.addEventListener('mousemove', function(e) {
             if (isPreviewPanDisabled()) {
-                previewPanPressed = false;
+                setPreviewPanPressed(false);
                 return;
             }
 
@@ -302,12 +322,12 @@ window.addEventListener('load', function() {
         });
 
         document.body.addEventListener('mouseup', function() {
-            previewPanPressed = false;
+            setPreviewPanPressed(false);
         });
 
         document.body.addEventListener('mouseenter', function(e) {
             if (previewPanPressed && (e.buttons & buttonMask) !== buttonMask) {
-                previewPanPressed = false;
+                setPreviewPanPressed(false);
             }
         });
     })();

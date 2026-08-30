@@ -159,6 +159,15 @@ div.checkbox {
     border-radius: 3px;
 }
 
+div.checkbox-glyph {
+    box-sizing: border-box;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    align-self: center;
+    margin-right: 6px;
+}
+
 ul.select-dropdown div.checkbox {
     margin-top: 1px;
 }

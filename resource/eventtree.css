@@ -1,0 +1,165 @@
+/*
+ * Event workflow view.
+ *
+ * The theme tokens and the card primitives this builds on live in hoicard.css, and the canvas the
+ * cards are laid out on -- the drag layer, the rails, the arrows and their chips -- in hoigraph.css;
+ * the event preview loads both alongside this file. What is here is what belongs to events alone.
+ *
+ * Colour carries meaning and nothing else: each glyph shape has one hue and keeps it on every
+ * card, so a card carrying three glyphs shows three colours rather than one; the accent marks a
+ * gated option and the condition that gates it; and the "immediate" hue marks a call fired
+ * outside player choice.
+ */
+
+/*
+ * The canvas is sized to the whole graph and paints over the fixed #dragger behind it, so without
+ * this it would swallow every mousedown and drag-to-pan could never start. Only the nodes take the
+ * mouse back; arrows, rails and chips carry no listeners, so a drag can begin on those too.
+ */
+#eventtreecontent {
+	position: relative;
+	z-index: var(--ev-layer-canvas);
+	transform-origin: 0 0;
+	pointer-events: none;
+}
+
+/* The label and the counter are single-line text next to 20px-tall controls, so they need centring
+   the flex row does not give them by default. */
+.toolbar > label[for="ev-searchbox"],
+.toolbar > .ev-search-count {
+	align-self: center;
+}
+
+.toolbar > #ev-searchbox {
+	width: 190px;
+	margin-right: 8px;
+}
+
+/* Wide enough that the strip does not shift sideways as the count goes from "1/9" to "no matches",
+   and spaced from the first toggle like one toggle is from the next. */
+.toolbar > .ev-search-count {
+	min-width: 5em;
+	margin-right: 12px;
+	font-size: 11px;
+	color: var(--ev-fg-muted);
+}
+
+.ev-card-event {
+	width: 250px;
+}
+
+.ev-card-option {
+	width: 228px;
+}
+
+/* background-color, not the shorthand: the shorthand would drop the lift painted by .ev-card. */
+.ev-card-hidden,
+.ev-card-unresolved {
+	border-style: dashed;
+	background-color: var(--ev-surface-alt);
+}
+
+.ev-card-gated {
+	border-color: var(--ev-accent);
+}
+
+/* The one non-round glyph on the canvas, so a gated option is findable at a glance. */
+.ev-marker-decision {
+	border-radius: 1px;
+	background: var(--ev-accent);
+	transform: rotate(45deg);
+}
+
+/*
+ * An event card carries one glyph per kind it is, rather than one dot for all of them: the kinds
+ * are not exclusive -- a news event is often major and still fires on a mean time -- and picking a
+ * winner would hide the rest. The row is never empty, because every event either waits on its own
+ * clock or waits to be called.
+ *
+ * Shape and colour say the same thing and are hard-coded together, so a card carrying three glyphs
+ * shows three colours and the reader can tell them apart without counting corners. The diamond is
+ * not among the shapes below: it belongs to a gated option.
+ */
+.ev-markers {
+	display: flex;
+	flex: none;
+	gap: 3px;
+	/* Aligns the row with the first line of the id next to it, as the single dot did. */
+	margin-top: 4px;
+}
+
+.ev-markers > .ev-marker {
+	width: 8px;
+	height: 8px;
+	margin-top: 0;
+}
+
+.ev-marker-mtth {
+	background: var(--ev-mtth);
+}
+
+.ev-marker-triggered {
+	border-radius: 1px;
+	background: var(--ev-triggered);
+}
+
+.ev-marker-news {
+	border-radius: 0;
+	clip-path: polygon(50% 0, 100% 100%, 0 100%);
+	background: var(--ev-news);
+}
+
+.ev-marker-major {
+	border-radius: 0;
+	clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+	background: var(--ev-major);
+}
+
+/* Hollow, which is the one thing a hidden event should look like. */
+.ev-marker-hidden {
+	background: transparent;
+	border: 1.5px solid var(--ev-hidden);
+	box-sizing: border-box;
+}
+
+/* The same glyphs stand in front of the filter names, where the row's card spacing does not apply. */
+.ev-marker.checkbox-glyph {
+	margin-top: 0;
+}
+
+.ev-card-option .ev-id {
+	color: var(--ev-fg-muted);
+}
+
+/* The hue the hexagon carries, so the badge and the glyph on the same card agree. */
+.ev-badge-major {
+	color: var(--ev-major);
+	border-color: var(--ev-major);
+}
+
+.ev-badge-hidden {
+	border-style: dashed;
+}
+
+.ev-badge-loop {
+	color: var(--ev-immediate);
+	border-color: var(--ev-immediate);
+}
+
+/* The event picture popup, which is a <body> child: the sprite class carries its background and
+   size, this carries the two things every hover popup here needs. Without pointer-events it would
+   take the click wherever it covers the toolbar. */
+.event-hover-picture {
+	z-index: var(--ev-layer-popup);
+	pointer-events: none;
+}
+
+/* A call the event fires itself, from its immediate or its after block, rather than one the player
+   picks. */
+.ev-edge-immediate {
+	stroke: var(--ev-immediate);
+	stroke-dasharray: 1 3;
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+

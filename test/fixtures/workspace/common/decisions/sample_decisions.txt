@@ -1,0 +1,8 @@
+sample_category = {
+    sample_decision = {
+        icon = generic_prepare_civil_war
+        cost = 25
+        available = { always = yes }
+        complete_effect = { add_political_power = 10 }
+    }
+}

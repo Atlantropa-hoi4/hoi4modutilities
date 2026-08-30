@@ -357,6 +357,37 @@ export function simplifyCondition(condition: ConditionComplexExpr): ConditionCom
     };
 }
 
+/** Combines two guards while flattening nested `and` groups and removing duplicates. */
+export function andCondition(a: ConditionComplexExpr, b: ConditionComplexExpr): ConditionComplexExpr {
+    if (a === true) {
+        return b;
+    }
+    if (b === true) {
+        return a;
+    }
+
+    const items: ConditionComplexExpr[] = [];
+    const seen = new Set<string>();
+    const push = (condition: ConditionComplexExpr): void => {
+        if (condition === true) {
+            return;
+        }
+        if (typeof condition === 'object' && 'items' in condition && condition.type === 'and') {
+            condition.items.forEach(push);
+            return;
+        }
+        const key = conditionToString(condition);
+        if (!seen.has(key)) {
+            seen.add(key);
+            items.push(condition);
+        }
+    };
+    push(a);
+    push(b);
+
+    return simplifyCondition({ type: 'and', items });
+}
+
 export function extractConditionalExprs(condition: ConditionComplexExpr, result: ConditionItem[] = []): ConditionItem[] {
     if (typeof condition === 'boolean') {
         return result;

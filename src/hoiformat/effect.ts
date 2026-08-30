@@ -1,7 +1,8 @@
-import { ConditionComplexExpr, ConditionFolder, extractConditionFolder, simplifyCondition } from "./condition";
+import { andCondition, ConditionComplexExpr, ConditionFolder, extractConditionFolder, simplifyCondition } from "./condition";
 import { Node, NodeValue } from "./hoiparser";
 import { Scope, tryMoveScope } from "./scope";
 import { nodeToString } from "./tostring";
+import type { EffectTreeNode } from "../previewdef/sharedpayload";
 
 export type EffectComplexExpr = EffectItem | EffectByCondition | RandomListEffect | null;
 
@@ -37,6 +38,59 @@ export function extractEffectValue(nodeValue: NodeValue, scope: Scope, excludedK
     };
 }
 
+/** Converts the parser-backed effect tree into the serializable shape used by graph webviews. */
+export function projectEffects(effect: EffectComplexExpr): EffectTreeNode[] {
+    if (effect === null) {
+        return [];
+    }
+    if ('nodeContent' in effect) {
+        return [{ kind: 'line', scopeName: effect.scopeName, content: effect.nodeContent }];
+    }
+    if ('condition' in effect) {
+        const items = effect.items.flatMap(projectEffects);
+        if (items.length === 0) {
+            return [];
+        }
+        return effect.condition === true ? items : [{ kind: 'group', condition: effect.condition, items }];
+    }
+
+    const items = effect.items
+        .map(item => ({ possibility: item.possibility, effect: projectEffects(item.effect) }))
+        .filter(item => item.effect.length > 0);
+    return items.length === 0 ? [] : [{ kind: 'choice', items }];
+}
+
+export interface GuardedEffectItem {
+    item: EffectItem;
+    condition: ConditionComplexExpr;
+    possibility: number | undefined;
+}
+
+/** Finds named effect statements and preserves the guards and random-list weight around them. */
+export function findGuardedEffectItems(
+    effect: EffectComplexExpr,
+    names: readonly string[],
+    condition: ConditionComplexExpr = true,
+    possibility: number | undefined = undefined,
+    result: GuardedEffectItem[] = [],
+): GuardedEffectItem[] {
+    if (effect === null) {
+        return result;
+    }
+    if ('nodeContent' in effect) {
+        const name = effect.node.name?.toLowerCase();
+        if (name && names.includes(name)) {
+            result.push({ item: effect, condition, possibility });
+        }
+    } else if ('condition' in effect) {
+        const inner = andCondition(condition, effect.condition);
+        effect.items.forEach(item => findGuardedEffectItems(item, names, inner, possibility, result));
+    } else {
+        effect.items.forEach(item => findGuardedEffectItems(item.effect, names, condition, item.possibility, result));
+    }
+    return result;
+}
+
 function extractEffectByCondition(
     nodeValue: NodeValue,
     scopeStack: Scope[],
@@ -68,7 +122,7 @@ function extractEffectByCondition(
             if (Array.isArray(child.value)) {
                 const randomListItems = child.value.map(n => {
                     const possibility = parseInt(n.name ?? '0');
-                    const effect = extractEffectByCondition(n.value, scopeStack, true, [], ['modifier']);
+                    const effect = extractEffectByCondition(n.value, scopeStack, condition, [], ['modifier']);
                     return {
                         possibility,
                         effect,

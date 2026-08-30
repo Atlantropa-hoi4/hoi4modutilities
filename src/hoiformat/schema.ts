@@ -37,6 +37,21 @@ export interface Raw extends TokenObject {
     _raw: Node;
 }
 
+export function readNodeAsString(node: Node): string | undefined {
+    const value = node.value;
+    if (typeof value === 'string') {
+        return value;
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'name' in value) {
+        return (value as SymbolNode).name;
+    }
+    return undefined;
+}
+
+export function readRawAsString(raw: Raw | undefined): string | undefined {
+    return raw ? readNodeAsString(raw._raw) : undefined;
+}
+
 export type NumberUnit = '%' | '%%';
 
 export type HOIPartial<T> =
@@ -136,10 +151,13 @@ export function isSymbolNode(value: NodeValue): value is SymbolNode {
 
 function applyConstantsToNode(node: Node, constants: Record<string, NodeValue>): Node {
     if (isSymbolNode(node.value) && node.value.name.startsWith('@')) {
-        return {
-            ...node,
-            value: constants[node.value.name],
-        };
+        const constant = constants[node.value.name];
+        if (constant !== undefined) {
+            return {
+                ...node,
+                value: constant,
+            };
+        }
     }
 
     return node;

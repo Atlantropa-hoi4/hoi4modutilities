@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { characterFeature } from './characters';
 import { countryColorFeature } from './countrycolors';
+import { decisionFeature } from './decisions';
 import { eventTreeFeature } from './eventtree';
 import { focusTreeFeature } from './focustree';
 import { formatterFeature } from './formatter';
 import { gfxFeature } from './gfx';
 import { guiFeature } from './gui';
 import { imageFeature } from './images';
+import { ideaFeature } from './ideas';
 import { localisationFeature } from './localisation';
 import { mioFeature } from './mio';
 import { referencesFeature } from './references';
@@ -26,6 +28,8 @@ export const extensionFeatures: readonly ExtensionFeature[] = [
     guiFeature,
     mioFeature,
     imageFeature,
+    ideaFeature,
+    decisionFeature,
     workspaceFeature,
     referencesFeature,
     localisationFeature,

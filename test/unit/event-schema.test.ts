@@ -26,6 +26,8 @@ describe('event schema fixtures', () => {
                 hours: 0,
                 randomDays: 0,
                 randomHours: 0,
+                condition: true,
+                possibility: undefined,
             },
         ]);
         assert.deepStrictEqual(firstEvent?.options[0]?.childEvents, [
@@ -36,6 +38,8 @@ describe('event schema fixtures', () => {
                 hours: 6,
                 randomDays: 0,
                 randomHours: 2,
+                condition: true,
+                possibility: undefined,
             },
         ]);
         assert.strictEqual(newsEvent?.type, 'news');
@@ -47,6 +51,8 @@ describe('event schema fixtures', () => {
                 hours: 0,
                 randomDays: 1,
                 randomHours: 0,
+                condition: true,
+                possibility: undefined,
             },
         ]);
     });

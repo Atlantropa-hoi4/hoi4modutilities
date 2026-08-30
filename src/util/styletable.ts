@@ -39,6 +39,10 @@ export class StyleTable {
         `;
     }
 
+    public toRawCss(): string {
+        return this.toStyleContent();
+    }
+
     public toStyleElement(nonce: string): string {
         return `<style nonce="${nonce}">
             ${this.toStyleContent()}

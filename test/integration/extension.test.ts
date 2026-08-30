@@ -128,6 +128,30 @@ suite('extension smoke', () => {
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'), 30000);
     });
 
+    test('opens an idea preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'ideas', 'sample_ideas.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_ideas.txt'), 30000);
+    });
+
+    test('opens a decision preview webview for a representative fixture', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'decisions', 'sample_decisions.txt');
+        const document = await vscode.workspace.openTextDocument(fixtureUri);
+        await vscode.window.showTextDocument(document);
+
+        await vscode.commands.executeCommand(Commands.Preview);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_decisions.txt'), 30000);
+    });
+
     test('opens a technology preview webview for a representative fixture', async () => {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
         assert.ok(workspaceRoot);

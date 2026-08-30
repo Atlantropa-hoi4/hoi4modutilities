@@ -14,10 +14,20 @@ export function enableCheckboxes() {
     }
 }
 
+export function syncCheckbox(input: HTMLInputElement): void {
+    checkboxes.find(checkbox => checkbox.input === input)?.syncAriaChecked();
+}
+
 export class Checkbox extends Subscriber {
-    constructor(readonly input: HTMLInputElement, private text?: string) {
+    private checkboxContainer: HTMLDivElement | undefined;
+
+    constructor(readonly input: HTMLInputElement, private text?: string, private glyphClassName?: string) {
         super();
         this.init();
+    }
+
+    public syncAriaChecked(): void {
+        this.checkboxContainer?.setAttribute('aria-checked', this.input.checked.toString());
     }
 
     private init() {
@@ -36,6 +46,7 @@ export class Checkbox extends Subscriber {
         checkboxContainerOut.classList.add('checkbox-container-out');
 
         const checkboxContainer = document.createElement('div');
+        this.checkboxContainer = checkboxContainer;
         checkboxContainer.classList.add('checkbox-container');
         checkboxContainerOut.appendChild(checkboxContainer);
         checkboxContainer.tabIndex = 0;
@@ -47,6 +58,12 @@ export class Checkbox extends Subscriber {
         checkbox.classList.add('codicon');
         checkbox.classList.add('codicon-check');
         checkboxContainer.appendChild(checkbox);
+
+        if (this.glyphClassName !== undefined) {
+            const glyph = document.createElement('div');
+            glyph.className = ('checkbox-glyph ' + this.glyphClassName).trim();
+            checkboxContainer.appendChild(glyph);
+        }
 
         const label = document.createElement('div');
         label.append(text);

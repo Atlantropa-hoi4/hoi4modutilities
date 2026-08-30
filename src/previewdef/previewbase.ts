@@ -94,7 +94,7 @@ export abstract class PreviewBase {
                 try {
                     const content = await this.getContent(document);
                     if (!this.disposed && renderGeneration === this.contentRenderGeneration) {
-                        this.panel.webview.html = content;
+                        await this.applyContent(content);
                     }
                 } catch(e) {
                     error(e);
@@ -231,6 +231,10 @@ export abstract class PreviewBase {
     }
 
     protected abstract getContent(document: vscode.TextDocument): Promise<string>;
+
+    protected applyContent(content: string): void | Promise<void> {
+        this.panel.webview.html = content;
+    }
 
     private async handleMessage(msg: any): Promise<void> {
         try {

@@ -36,6 +36,18 @@ export function isTechnologyShowIdEnabled(): boolean {
     return hasFeatureFlag('technologyShowId');
 }
 
+export function isIdeaPreviewEnabled(): boolean {
+    return !hasFeatureFlag('!ideaPreview');
+}
+
+export function isDecisionPreviewEnabled(): boolean {
+    return !hasFeatureFlag('!decisionPreview');
+}
+
+export function isIdeaSwapIndexEnabled(): boolean {
+    return hasFeatureFlag('ideaSwapIndex');
+}
+
 export function featureFlagsAsScript(): string {
     const featureFlagState = {
         useConditionInFocus: isUseConditionInFocusEnabled(),
@@ -45,6 +57,9 @@ export function featureFlagsAsScript(): string {
         localisationIndex: isLocalisationIndexEnabled(),
         rightButtonDrag: isRightButtonDragEnabled(),
         technologyShowId: isTechnologyShowIdEnabled(),
+        ideaPreview: isIdeaPreviewEnabled(),
+        decisionPreview: isDecisionPreviewEnabled(),
+        ideaSwapIndex: isIdeaSwapIndexEnabled(),
     };
     return 'window.__featureflags = ' + JSON.stringify(featureFlagState) + ';';
 }
