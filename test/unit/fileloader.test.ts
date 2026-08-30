@@ -166,6 +166,90 @@ describe('fileloader mod root helpers', () => {
         assert.ok(candidates.includes(path.join(hoi4UserDir, 'mod', 'Kaiserreich-Meowl')));
     });
 
+    it('loads files from launcher-declared dependency mods after the selected mod', async () => {
+        const registryRoot = path.join('C:', 'hoi4-user', 'mod');
+        const selectedModFile = path.join(registryRoot, 'selected.mod');
+        const selectedModRoot = path.join('C:', 'workshop', 'selected-content');
+        const dependencyModFile = path.join(registryRoot, 'dependency.mod');
+        const dependencyModRoot = path.join('C:', 'workshop', 'dependency-content');
+        const relativePath = 'interface/dependency-colors.gfx';
+        const dependencyInterfaceRoot = path.join(dependencyModRoot, 'interface');
+
+        mockConfigurationModFile = selectedModFile;
+        for (const file of [selectedModFile, dependencyModFile, path.join(dependencyModRoot, relativePath)]) {
+            mockFiles.add(normalizeMockPath(file));
+        }
+        for (const directory of [registryRoot, selectedModRoot, dependencyModRoot, dependencyInterfaceRoot]) {
+            mockDirectories.add(normalizeMockPath(directory));
+        }
+        mockDirectoryEntries.set(normalizeMockPath(registryRoot), [
+            ['selected.mod', 1],
+            ['dependency.mod', 1],
+        ]);
+        mockDirectoryEntries.set(normalizeMockPath(dependencyInterfaceRoot), [
+            ['dependency-colors.gfx', 1],
+        ]);
+        mockReadContents.set(normalizeMockPath(selectedModFile), [
+            'name = "Selected Mod"',
+            `path = "${selectedModRoot.replace(/\\/g, '/')}"`,
+            'dependencies = { "External Icons" }',
+        ].join('\n'));
+        mockReadContents.set(normalizeMockPath(dependencyModFile), [
+            'name = "External Icons"',
+            `path = "${dependencyModRoot.replace(/\\/g, '/')}"`,
+        ].join('\n'));
+        mockReadContents.set(normalizeMockPath(path.join(dependencyModRoot, relativePath)), 'dependency-icon');
+
+        const resolved = await readFileFromModOrHOI4(relativePath, { hoi4: false });
+        const listed = await listFilesFromModOrHOI4('interface', {
+            recursively: true,
+            hoi4: false,
+            dlc: false,
+        });
+
+        assert.strictEqual(resolved[0].toString(), 'dependency-icon');
+        assert.strictEqual(resolved[1].fsPath, path.join(dependencyModRoot, relativePath));
+        assert.deepStrictEqual(listed, ['dependency-colors.gfx']);
+    });
+
+    it('keeps selected mod files ahead of dependency mod files', async () => {
+        const registryRoot = path.join('C:', 'hoi4-user', 'mod');
+        const selectedModFile = path.join(registryRoot, 'priority-selected.mod');
+        const selectedModRoot = path.join(registryRoot, 'priority-selected-content');
+        const dependencyModFile = path.join(registryRoot, 'priority-dependency.mod');
+        const dependencyModRoot = path.join(registryRoot, 'priority-dependency-content');
+        const relativePath = 'interface/focus-icons.gfx';
+        const selectedFile = path.join(selectedModRoot, relativePath);
+        const dependencyFile = path.join(dependencyModRoot, relativePath);
+
+        mockConfigurationModFile = selectedModFile;
+        for (const file of [selectedModFile, dependencyModFile, selectedFile, dependencyFile]) {
+            mockFiles.add(normalizeMockPath(file));
+        }
+        for (const directory of [registryRoot, selectedModRoot, dependencyModRoot]) {
+            mockDirectories.add(normalizeMockPath(directory));
+        }
+        mockDirectoryEntries.set(normalizeMockPath(registryRoot), [
+            ['priority-selected.mod', 1],
+            ['priority-dependency.mod', 1],
+        ]);
+        mockReadContents.set(normalizeMockPath(selectedModFile), [
+            `path = "${selectedModRoot.replace(/\\/g, '/')}"`,
+            'dependencies = { "External Icons" }',
+        ].join('\n'));
+        mockReadContents.set(normalizeMockPath(dependencyModFile), [
+            'name = "External Icons"',
+            `path = "${dependencyModRoot.replace(/\\/g, '/')}"`,
+        ].join('\n'));
+        mockReadContents.set(normalizeMockPath(selectedFile), 'selected');
+        mockReadContents.set(normalizeMockPath(dependencyFile), 'dependency');
+
+        const resolved = await readFileFromModOrHOI4(relativePath, { hoi4: false });
+
+        assert.strictEqual(resolved[0].toString(), 'selected');
+        assert.strictEqual(resolved[1].fsPath, selectedFile);
+    });
+
     it('treats replace_path entries as covering their descendants', () => {
         assert.strictEqual(isPathCoveredByReplacePath('common', 'common'), true);
         assert.strictEqual(isPathCoveredByReplacePath('common/national_focus', 'common'), true);

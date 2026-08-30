@@ -1,8 +1,18 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { sendException } from './telemetry';
+import { listFilesFromModOrHOI4, readFileFromModOrHOI4, getSelectedModRootFolders } from './fileloader';
+import { parseHoi4File, Node } from '../hoiformat/hoiparser';
+import { onDidChangeSelectedModSource } from './modfile';
 
-export const hoi4LocalisationColors = {
+export interface Hoi4LocalisationColorInfo {
+    color: string;
+    name: string;
+}
+
+export type Hoi4LocalisationColorPalette = Record<string, Hoi4LocalisationColorInfo>;
+
+export const hoi4LocalisationColors: Hoi4LocalisationColorPalette = {
     R: { color: '#FF3232', name: 'Red' },
     G: { color: '#009F03', name: 'Green' },
     B: { color: '#0000FF', name: 'Blue' },
@@ -27,10 +37,10 @@ export const hoi4LocalisationColors = {
     9: { color: '#FCA97D', name: 'Gradient 9' },
     t: { color: '#FF4C4D', name: 'Gradient t' },
     '!': { color: '#888888', name: 'Reset' },
-} as const;
+};
 
-export type Hoi4LocalisationColorCode = keyof typeof hoi4LocalisationColors;
-type NonResetColorCode = Exclude<Hoi4LocalisationColorCode, '!'>;
+export type Hoi4LocalisationColorCode = string;
+type NonResetColorCode = string;
 export type LocalisationThemeTone = 'dark' | 'light';
 export type LocalisationDecorationKind = 'colorCode' | 'colorText' | 'textIcon' | 'localisationReference' | 'scriptedLocalisation';
 
@@ -72,14 +82,14 @@ interface AppliedDecorationState {
 const localisationHeaderPattern = /^\uFEFF?\s*l_[a-z_]+:/im;
 const localisationEntryPattern = /^\uFEFF?\s*[^\s#][^:]*:\s*\d+\s*"/;
 const localisationValuePattern = /^\uFEFF?\s*[^\s#][^:]*:\s*(?:\d+\s*)?"/;
-const colorCodePattern = /§([RGBYHWTCLObg0123456789t!])/g;
+const colorCodePattern = /§([A-Za-z0-9!])/g;
 const textIconPattern = /£[A-Za-z0-9_.|:-]+£?/g;
 const localisationReferencePattern = /\$[^$\r\n]+\$/g;
 const scriptedLocalisationPattern = /\[[^\]\r\n]+\]/g;
 const hoi4LocalisationExtensionPattern = /\.ya?ml$/i;
 const hoi4LocalisationPathPattern = /(^|[\\/])(locali[sz]ation)([\\/]|$)/i;
 const hoi4LocalisationFilePattern = /(?:^|[ _-])l_[a-z_]+\.ya?ml$/i;
-const hoi4LocalisationTokenHintPattern = /§[RGBYHWTCLObg0123456789t!]|£[A-Za-z0-9_.|:-]+£?|\$[^$\r\n]+\$|\[[^\]\r\n]+\]/;
+const hoi4LocalisationTokenHintPattern = /§[A-Za-z0-9!]|£[A-Za-z0-9_.|:-]+£?|\$[^$\r\n]+\$|\[[^\]\r\n]+\]/;
 
 export function isHoi4LocalisationText(text: string): boolean {
     return localisationHeaderPattern.test(text) || localisationEntryPattern.test(text);
@@ -155,13 +165,16 @@ export function findLocalisationStringRanges(text: string): LocalisationStringRa
     return ranges;
 }
 
-export function collectLocalisationDecorations(text: string): LocalisationDecoration[] {
+export function collectLocalisationDecorations(
+    text: string,
+    colors: Hoi4LocalisationColorPalette = hoi4LocalisationColors,
+): LocalisationDecoration[] {
     const decorations: LocalisationDecoration[] = [];
 
     for (const range of findLocalisationStringRanges(text)) {
         const stringContent = text.slice(range.start, range.end);
 
-        appendColorDecorations(decorations, stringContent, range.start);
+        appendColorDecorations(decorations, stringContent, range.start, colors);
         appendPatternDecorations(decorations, stringContent, range.start, textIconPattern, 'textIcon');
         appendPatternDecorations(decorations, stringContent, range.start, localisationReferencePattern, 'localisationReference');
         appendPatternDecorations(decorations, stringContent, range.start, scriptedLocalisationPattern, 'scriptedLocalisation');
@@ -171,8 +184,12 @@ export function collectLocalisationDecorations(text: string): LocalisationDecora
 }
 
 export function registerLocalisationHighlighting(): vscode.Disposable {
-    let decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
+    let colors = cloneLocalisationColorPalette(hoi4LocalisationColors);
+    let decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind), colors);
     let decorationGeneration = 0;
+    let colorLoadGeneration = 0;
+    let sourceWatcherGeneration = 0;
+    let sourceWatchers: vscode.Disposable[] = [];
     const documentAnalysisCache = new Map<string, LocalisationDocumentAnalysis>();
     const appliedEditorState = new WeakMap<vscode.TextEditor, AppliedDecorationState>();
 
@@ -217,6 +234,7 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
                     documentAnalysisCache,
                     appliedEditorState,
                     decorationGeneration,
+                    colors,
                 );
             } catch (error) {
                 reportLocalisationHighlightingError(error, editor.document);
@@ -226,12 +244,49 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
 
     const rebuildDecorationTypes = () => {
         decorationSet.dispose();
-        decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
+        decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind), colors);
         decorationGeneration++;
+        documentAnalysisCache.clear();
         scheduleRefresh();
     };
 
+    const reloadColors = async () => {
+        const generation = ++colorLoadGeneration;
+        try {
+            const loadedColors = await loadLocalisationColorPalette();
+            if (generation === colorLoadGeneration && !areLocalisationColorPalettesEqual(colors, loadedColors)) {
+                colors = loadedColors;
+                rebuildDecorationTypes();
+            }
+        } catch (error) {
+            reportLocalisationColorLoadingError(error);
+        }
+    };
+
+    const rebuildSourceWatchers = async () => {
+        const generation = ++sourceWatcherGeneration;
+        sourceWatchers.forEach(watcher => watcher.dispose());
+        sourceWatchers = [];
+        const roots = await getSelectedModRootFolders();
+        const watchers = roots.map(root => createLocalisationColorWatcher(
+            new vscode.RelativePattern(root, 'interface/**/*.gfx'),
+            () => void reloadColors(),
+        ));
+        if (generation !== sourceWatcherGeneration) {
+            vscode.Disposable.from(...watchers).dispose();
+            return;
+        }
+        sourceWatchers = watchers;
+    };
+
     scheduleRefresh();
+    void reloadColors();
+    void rebuildSourceWatchers();
+
+    const workspaceColorWatcher = createLocalisationColorWatcher(
+        '**/interface/**/*.gfx',
+        () => void reloadColors(),
+    );
 
     const disposables: vscode.Disposable[] = [
         vscode.window.onDidChangeActiveColorTheme(() => rebuildDecorationTypes()),
@@ -247,7 +302,19 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
         vscode.workspace.onDidCloseTextDocument(document => {
             documentAnalysisCache.delete(getDocumentCacheKey(document));
         }),
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            void reloadColors();
+            void rebuildSourceWatchers();
+        }),
+        onDidChangeSelectedModSource(() => {
+            void reloadColors();
+            void rebuildSourceWatchers();
+        }),
+        workspaceColorWatcher,
         new vscode.Disposable(() => {
+            colorLoadGeneration++;
+            sourceWatcherGeneration++;
+            sourceWatchers.forEach(watcher => watcher.dispose());
             if (refreshHandle) {
                 clearTimeout(refreshHandle);
             }
@@ -259,13 +326,21 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
     return vscode.Disposable.from(...disposables);
 }
 
-function appendColorDecorations(decorations: LocalisationDecoration[], stringContent: string, absoluteStart: number): void {
+function appendColorDecorations(
+    decorations: LocalisationDecoration[],
+    stringContent: string,
+    absoluteStart: number,
+    colors: Hoi4LocalisationColorPalette,
+): void {
     let activeColor: Hoi4LocalisationColorCode | undefined;
     let currentTextStart = 0;
 
     for (const match of stringContent.matchAll(colorCodePattern)) {
         const codeStart = match.index ?? 0;
         const code = match[1] as Hoi4LocalisationColorCode;
+        if (code !== '!' && !colors[code]) {
+            continue;
+        }
 
         if (activeColor && codeStart > currentTextStart) {
             decorations.push({
@@ -314,7 +389,7 @@ function appendPatternDecorations(
     }
 }
 
-function createDecorationSet(themeTone: LocalisationThemeTone) {
+function createDecorationSet(themeTone: LocalisationThemeTone, colors: Hoi4LocalisationColorPalette) {
     const colorCodeTypes = new Map<Hoi4LocalisationColorCode, vscode.TextEditorDecorationType>();
     const colorTextTypes = new Map<NonResetColorCode, vscode.TextEditorDecorationType>();
     const tokenTypes = {
@@ -338,7 +413,7 @@ function createDecorationSet(themeTone: LocalisationThemeTone) {
         }),
     } satisfies Record<Exclude<LocalisationDecorationKind, 'colorCode' | 'colorText'>, vscode.TextEditorDecorationType>;
 
-    for (const [code, info] of Object.entries(hoi4LocalisationColors) as [Hoi4LocalisationColorCode, typeof hoi4LocalisationColors[Hoi4LocalisationColorCode]][]) {
+    for (const [code, info] of Object.entries(colors)) {
         colorCodeTypes.set(code, vscode.window.createTextEditorDecorationType({
             color: info.color,
             fontWeight: code === '!' ? 'normal' : 'bold',
@@ -467,9 +542,10 @@ function updateEditorDecorations(
     documentAnalysisCache: Map<string, LocalisationDocumentAnalysis>,
     appliedEditorState: WeakMap<vscode.TextEditor, AppliedDecorationState>,
     decorationGeneration: number,
+    colors: Hoi4LocalisationColorPalette,
 ): void {
     const document = editor.document;
-    const analysis = getDocumentAnalysis(document, documentAnalysisCache);
+    const analysis = getDocumentAnalysis(document, documentAnalysisCache, colors);
     const appliedState = appliedEditorState.get(editor);
 
     if (appliedState &&
@@ -545,11 +621,11 @@ function isHoi4LocalisationDocument(document: vscode.TextDocument): boolean {
     return isHoi4LocalisationText(previewText) || hasHoi4LocalisationTokenHints(previewText);
 }
 
-function createDecorationBuckets() {
+function createDecorationBuckets(colors: Hoi4LocalisationColorPalette) {
     const colorCode = {} as Record<Hoi4LocalisationColorCode, vscode.Range[]>;
     const colorText = {} as Record<NonResetColorCode, vscode.Range[]>;
 
-    for (const code of Object.keys(hoi4LocalisationColors) as Hoi4LocalisationColorCode[]) {
+    for (const code of Object.keys(colors)) {
         colorCode[code] = [];
         if (code !== '!') {
             colorText[code] = [];
@@ -568,6 +644,7 @@ function createDecorationBuckets() {
 function getDocumentAnalysis(
     document: vscode.TextDocument,
     documentAnalysisCache: Map<string, LocalisationDocumentAnalysis>,
+    colors: Hoi4LocalisationColorPalette,
 ): LocalisationDocumentAnalysis {
     const key = getDocumentCacheKey(document);
     const cached = documentAnalysisCache.get(key);
@@ -598,13 +675,13 @@ function getDocumentAnalysis(
     }
 
     const text = document.getText();
-    const decorations = collectLocalisationDecorations(text);
+    const decorations = collectLocalisationDecorations(text, colors);
     const analysis: LocalisationDocumentAnalysis = {
         key,
         version: document.version,
         isHoi4Localisation: true,
         hasDecorations: decorations.length > 0,
-        buckets: decorations.length > 0 ? createRangeBuckets(document, decorations) : undefined,
+        buckets: decorations.length > 0 ? createRangeBuckets(document, decorations, colors) : undefined,
     };
     documentAnalysisCache.set(key, analysis);
     return analysis;
@@ -632,8 +709,12 @@ function getDocumentPreviewText(document: vscode.TextDocument, maxChars: number)
     return preview;
 }
 
-function createRangeBuckets(document: vscode.TextDocument, decorations: LocalisationDecoration[]): LocalisationRangeBuckets {
-    const buckets = createDecorationBuckets();
+function createRangeBuckets(
+    document: vscode.TextDocument,
+    decorations: LocalisationDecoration[],
+    colors: Hoi4LocalisationColorPalette,
+): LocalisationRangeBuckets {
+    const buckets = createDecorationBuckets(colors);
     for (const decoration of decorations) {
         const range = new vscode.Range(document.positionAt(decoration.start), document.positionAt(decoration.end));
 
@@ -671,4 +752,123 @@ function reportLocalisationHighlightingError(error: unknown, document: vscode.Te
         feature: 'localisationHighlighting',
         document: path,
     });
+}
+
+export function extractHoi4LocalisationColors(text: string): Hoi4LocalisationColorPalette {
+    const result: Hoi4LocalisationColorPalette = {};
+    if (!/\btextcolors\s*=/i.test(text)) {
+        return result;
+    }
+    const root = parseHoi4File(text);
+    visitHoi4Nodes(root, node => {
+        if (node.name?.toLowerCase() !== 'textcolors' || !Array.isArray(node.value)) {
+            return;
+        }
+
+        for (const colorNode of node.value) {
+            const code = colorNode.name;
+            if (!code || !/^[A-Za-z0-9]$/.test(code) || !Array.isArray(colorNode.value)) {
+                continue;
+            }
+
+            const channels = colorNode.value
+                .map(channel => Number(channel.name))
+                .filter(channel => Number.isFinite(channel));
+            if (channels.length < 3) {
+                continue;
+            }
+
+            result[code] = {
+                color: toHexColor({
+                    r: clampColorChannel(channels[0]),
+                    g: clampColorChannel(channels[1]),
+                    b: clampColorChannel(channels[2]),
+                }),
+                name: `Custom ${code}`,
+            };
+        }
+    });
+    return result;
+}
+
+export function mergeLocalisationColorPalettes(
+    contentsFromLowToHighPriority: readonly string[],
+): Hoi4LocalisationColorPalette {
+    const result = cloneLocalisationColorPalette(hoi4LocalisationColors);
+    for (const content of contentsFromLowToHighPriority) {
+        try {
+            for (const [code, info] of Object.entries(extractHoi4LocalisationColors(content))) {
+                result[code] = {
+                    ...info,
+                    name: result[code]?.name ?? info.name,
+                };
+            }
+        } catch {
+            // A malformed unrelated GFX file must not hide colors from the remaining content layers.
+        }
+    }
+    return result;
+}
+
+async function loadLocalisationColorPalette(): Promise<Hoi4LocalisationColorPalette> {
+    const gfxFiles = (await listFilesFromModOrHOI4('interface', {
+        recursively: true,
+        hoi4: false,
+        dlc: false,
+    })).filter(file => file.toLowerCase().endsWith('.gfx'));
+    const contents = await Promise.all(gfxFiles.map(async file => {
+        try {
+            return (await readFileFromModOrHOI4(`interface/${file}`, { hoi4: false, dlc: false }))[0].toString();
+        } catch {
+            return '';
+        }
+    }));
+    return mergeLocalisationColorPalettes(contents.reverse());
+}
+
+function createLocalisationColorWatcher(
+    pattern: vscode.GlobPattern,
+    onChange: () => void,
+): vscode.Disposable {
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    return vscode.Disposable.from(
+        watcher,
+        watcher.onDidChange(onChange),
+        watcher.onDidCreate(onChange),
+        watcher.onDidDelete(onChange),
+    );
+}
+
+function visitHoi4Nodes(node: Node, callback: (node: Node) => void): void {
+    if (!Array.isArray(node.value)) {
+        return;
+    }
+    for (const child of node.value) {
+        callback(child);
+        visitHoi4Nodes(child, callback);
+    }
+}
+
+function clampColorChannel(value: number): number {
+    return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function cloneLocalisationColorPalette(colors: Hoi4LocalisationColorPalette): Hoi4LocalisationColorPalette {
+    return Object.fromEntries(Object.entries(colors).map(([code, info]) => [code, { ...info }]));
+}
+
+function areLocalisationColorPalettesEqual(
+    left: Hoi4LocalisationColorPalette,
+    right: Hoi4LocalisationColorPalette,
+): boolean {
+    const leftEntries = Object.entries(left);
+    const rightEntries = Object.entries(right);
+    return leftEntries.length === rightEntries.length
+        && leftEntries.every(([code, info]) => right[code]?.color === info.color && right[code]?.name === info.name);
+}
+
+function reportLocalisationColorLoadingError(error: unknown): void {
+    const exception = error instanceof Error ? error : new Error(String(error));
+    Logger.error(`Localisation color loading failed: ${exception.stack ?? exception.message}`);
+    sendException(exception, { feature: 'localisationHighlightingColors' });
 }

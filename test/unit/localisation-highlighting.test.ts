@@ -22,10 +22,12 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const {
     collectLocalisationDecorations,
     correctLocalisationTextColor,
+    extractHoi4LocalisationColors,
     findLocalisationStringRanges,
     hasHoi4LocalisationTokenHints,
     isHoi4LocalisationText,
     isLikelyHoi4LocalisationPath,
+    mergeLocalisationColorPalettes,
 } = require('../../src/util/localisationHighlighting') as typeof import('../../src/util/localisationHighlighting');
 
 describe('localisation highlighting helpers', () => {
@@ -95,5 +97,50 @@ describe('localisation highlighting helpers', () => {
         assert.ok(summary.some(item => item.kind === 'textIcon' && item.text === '£pol_power'));
         assert.ok(summary.some(item => item.kind === 'localisationReference' && item.text === '$TARGET$'));
         assert.ok(summary.some(item => item.kind === 'scriptedLocalisation' && item.text === '[ROOT.GetName]'));
+    });
+
+    it('extracts custom bitmapfont text colors and clamps RGB channels', () => {
+        const colors = extractHoi4LocalisationColors(`
+            bitmapfonts = {
+                textcolors = {
+                    X = { 12 34 56 }
+                    z = { 300 -5 128 }
+                    invalid = { 1 2 3 }
+                }
+            }
+        `);
+
+        assert.deepStrictEqual(colors, {
+            X: { color: '#0C2238', name: 'Custom X' },
+            z: { color: '#FF0080', name: 'Custom z' },
+        });
+    });
+
+    it('lets higher-priority mod colors override dependency colors', () => {
+        const colors = mergeLocalisationColorPalettes([
+            'bitmapfonts = { textcolors = { X = { 1 2 3 } G = { 4 5 6 } } }',
+            'bitmapfonts = { textcolors = { X = { 10 20 30 } } }',
+        ]);
+
+        assert.strictEqual(colors.X.color, '#0A141E');
+        assert.strictEqual(colors.G.color, '#040506');
+        assert.strictEqual(colors.G.name, 'Green');
+    });
+
+    it('decorates configured custom color codes while ignoring unknown codes', () => {
+        const text = 'l_english:\n TEST:0 "§Xcustom§! §Qunknown"';
+        const colors = mergeLocalisationColorPalettes([
+            'bitmapfonts = { textcolors = { X = { 10 20 30 } } }',
+        ]);
+        const decorations = collectLocalisationDecorations(text, colors);
+        const codes = decorations
+            .filter(decoration => decoration.kind === 'colorCode')
+            .map(decoration => decoration.colorCode);
+
+        assert.deepStrictEqual(codes, ['X', '!']);
+        assert.ok(decorations.some(decoration =>
+            decoration.kind === 'colorText'
+            && decoration.colorCode === 'X'
+            && text.slice(decoration.start, decoration.end) === 'custom'));
     });
 });

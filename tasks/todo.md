@@ -715,3 +715,19 @@ MD preview feature port 2026-08-30:
 - [x] Run targeted tests, TypeScript checks, lint, development build, UI tests when feasible, and `git diff --check`.
 
 Review note: Completed from MillenniumDawn/MD-VSCode-Utility-Tool v1.1.30 (`0689601`) while retaining the current feature catalog, preview sessions, lazy dependency watchers, CSP, and source-editing features. Idea cards, optional swap chains, decision/mission graphs, scripted category GUI rendering, and the MD event workflow graph now share searchable/filterable card and graph infrastructure with in-place payload refresh and persisted webview controls. Verification passed 573 unit tests, TypeScript checks, lint, production/development builds, 19 Extension Host UI tests including all three preview types, and `git diff --check`.
+
+External mod focus icon resolution 2026-08-30:
+- [x] Compare Zed and VS Code content-root resolution for launcher-declared mod dependencies.
+- [x] Resolve dependency mod descriptors and add their content roots after the selected mod root.
+- [x] Add file-loader regression coverage for dependency assets and selected-mod precedence.
+- [x] Run focused tests, the full unit suite, TypeScript checks, lint, and whitespace verification.
+
+Review note: VS Code content resolution now reads launcher-style `dependencies = { ... }`, matches dependency names against sibling launcher `.mod` descriptors, and searches those roots after the workspace and selected mod but before DLC/base-game content. This lets Focus Tree GFX discovery and texture loading resolve icons supplied by declared external mods while retaining selected-mod override precedence. Verification passed 27 focused file-loader/Focus icon tests, all 577 unit tests, TypeScript checks, lint, and `git diff --check`.
+
+Mod-aware localisation colors 2026-08-30:
+- [x] Parse custom `bitmapfonts/textcolors` definitions from interface GFX files.
+- [x] Merge dependency, selected-mod, and workspace palettes in content precedence order.
+- [x] Rebuild localisation decorations when selected sources or relevant GFX files change.
+- [x] Run focused/full tests, TypeScript checks, lint, and whitespace verification.
+
+Review note: Localisation highlighting now discovers single-character custom color codes from `bitmapfonts/textcolors` blocks in workspace, selected-mod, and declared dependency GFX files. Dependency definitions load first, selected-mod/workspace definitions override them, and relevant source or GFX changes rebuild the editor decorations. Malformed unrelated GFX files are skipped without hiding the remaining palette. Verification passed 26 focused localisation/file-loader tests, all 580 unit tests, TypeScript checks, lint, and `git diff --check`; no representative mod with custom `textcolors` was available in this workspace for Extension Host visual verification.

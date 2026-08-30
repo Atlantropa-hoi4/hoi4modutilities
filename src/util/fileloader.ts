@@ -5,7 +5,7 @@ import { isSamePath } from './nodecommon';
 import { getLastModifiedAsync, readDirFiles, isFile, isDirectory, readFile, readDir, isSameUri, fileOrUriStringToUri, ensureFileScheme, readDirFilesRecursively } from './vsccommon';
 import { parseHoi4File, resolveScriptVariables, Node } from '../hoiformat/hoiparser';
 import { localize } from './i18n';
-import { convertNodeToJson, SchemaDef, HOIPartial } from '../hoiformat/schema';
+import { convertNodeToJson, SchemaDef, HOIPartial, Raw, readNodeAsString } from '../hoiformat/schema';
 import { error } from './debug';
 import {
     getSelectedModSourceGeneration,
@@ -40,6 +40,7 @@ const selectedModRootCacheFreshnessMs = 5 * 1000;
 interface SelectedModRootCacheEntry {
     candidates: vscode.Uri[];
     roots: vscode.Uri[];
+    descriptorFiles: vscode.Uri[];
 }
 
 interface SelectedModSourceCacheKey {
@@ -539,12 +540,16 @@ const replacePathsCache = new PromiseCache({
 });
 
 interface ModFile {
+    name?: string;
     path?: string;
+    dependencies: Raw;
     replace_path: string[];
 }
 
 const modFileSchema: SchemaDef<ModFile> = {
+    name: "string",
     path: "string",
+    dependencies: "raw",
     replace_path: {
         _innerType: "string",
         _type: "array",
@@ -648,10 +653,13 @@ async function getSelectedModRootFoldersFromModFile(absolutePath: string): Promi
     const modFile = vscode.Uri.parse(absolutePath);
 
     let descriptorPath: string | undefined;
+    let dependencies: string[] = [];
     try {
         const content = (await readFile(modFile)).toString();
         const node = parseHoi4File(content, localize('infile', 'In file {0}:\n', modFile));
-        descriptorPath = convertNodeToJson<ModFile>(node, modFileSchema).path;
+        const descriptor = convertNodeToJson<ModFile>(node, modFileSchema);
+        descriptorPath = descriptor.path;
+        dependencies = readStringList(descriptor.dependencies);
     } catch (e) {
         error(e);
     }
@@ -664,21 +672,94 @@ async function getSelectedModRootFoldersFromModFile(absolutePath: string): Promi
         }
     }
 
-    return { candidates, roots };
+    const dependencyDescriptors = await resolveModDependencyDescriptors(modFile, roots[0], dependencies);
+    for (const dependencyDescriptor of dependencyDescriptors) {
+        for (const dependencyCandidate of getModRootCandidatePaths(
+            dependencyDescriptor.uri.fsPath,
+            dependencyDescriptor.descriptor.path,
+        ).map(candidate => vscode.Uri.file(candidate))) {
+            candidates.push(dependencyCandidate);
+            if (await isDirectory(dependencyCandidate) && roots.every(root => !isSameUri(root, dependencyCandidate))) {
+                roots.push(dependencyCandidate);
+                break;
+            }
+        }
+    }
+
+    return {
+        candidates,
+        roots,
+        descriptorFiles: [modFile, ...dependencyDescriptors.map(dependency => dependency.uri)],
+    };
+}
+
+function readStringList(raw: Raw | undefined): string[] {
+    return raw && Array.isArray(raw._raw.value)
+        ? raw._raw.value
+            .map(node => readNodeAsString(node) ?? node.name ?? undefined)
+            .filter((value): value is string => typeof value === 'string')
+        : [];
+}
+
+async function resolveModDependencyDescriptors(
+    selectedModFile: vscode.Uri,
+    selectedModRoot: vscode.Uri | undefined,
+    dependencies: readonly string[],
+): Promise<Array<{ uri: vscode.Uri; descriptor: HOIPartial<ModFile> }>> {
+    if (!selectedModRoot || dependencies.length === 0) {
+        return [];
+    }
+
+    const dependencyNames = new Set(dependencies.map(name => name.trim().toLowerCase()).filter(Boolean));
+    const registryDirectories = [
+        vscode.Uri.file(path.dirname(selectedModFile.fsPath)),
+        vscode.Uri.file(path.dirname(selectedModRoot.fsPath)),
+    ].filter((directory, index, directories) =>
+        directories.findIndex(candidate => isSameUri(candidate, directory)) === index);
+    const result: Array<{ uri: vscode.Uri; descriptor: HOIPartial<ModFile> }> = [];
+    for (const registryDirectory of registryDirectories) {
+        let registryFiles: string[];
+        try {
+            registryFiles = (await readDir(registryDirectory)).filter(file => file.toLowerCase().endsWith('.mod'));
+        } catch {
+            continue;
+        }
+
+        for (const registryFile of registryFiles) {
+            const uri = vscode.Uri.joinPath(registryDirectory, registryFile);
+            if (isSameUri(uri, selectedModFile) || result.some(dependency => isSameUri(dependency.uri, uri))) {
+                continue;
+            }
+
+            try {
+                const node = parseHoi4File(
+                    (await readFile(uri)).toString(),
+                    localize('infile', 'In file {0}:\n', uri),
+                );
+                const descriptor = convertNodeToJson<ModFile>(node, modFileSchema);
+                if (descriptor.name && dependencyNames.has(descriptor.name.trim().toLowerCase())) {
+                    result.push({ uri, descriptor });
+                }
+            } catch {
+                // Ignore unrelated malformed launcher descriptors.
+            }
+        }
+    }
+
+    return result;
 }
 
 async function getSelectedModRootFoldersExpiryToken(
-    cacheKey: string,
+    _cacheKey: string,
     cachedEntry: Promise<SelectedModRootCacheEntry>,
 ): Promise<string> {
-    const { absolutePath } = parseSelectedModSourceCacheKey(cacheKey);
     const entry = await cachedEntry;
-    const [descriptorModifiedAt, ...candidateDirectoryStates] = await Promise.all([
-        getLastModifiedOrMissing(vscode.Uri.parse(absolutePath)),
+    const [descriptorStates, ...candidateDirectoryStates] = await Promise.all([
+        Promise.all(entry.descriptorFiles.map(getLastModifiedOrMissing)),
         ...entry.candidates.map(candidate => isDirectory(candidate)),
     ]);
 
-    return JSON.stringify([descriptorModifiedAt, ...candidateDirectoryStates]);
+    return JSON.stringify([descriptorStates, ...candidateDirectoryStates]);
 }
 
 export function createSelectedModSourceCacheKey(
