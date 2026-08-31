@@ -101,8 +101,8 @@ npm run verify
 Push a semantic version tag that matches `package.json`:
 
 ```bash
-git tag v0.14.0
-git push origin v0.14.0
+git tag v0.17.2
+git push origin v0.17.2
 ```
 
 GitHub Actions rebuilds the extension on `windows-latest`, validates the tag, runs the verification pipeline, and publishes the generated `.vsix` plus checksum to the matching GitHub Release.
