@@ -48,6 +48,7 @@ describe('world map webview loader batching', () => {
             data: {
                 width: 10,
                 height: 10,
+                provinceDefinitionsFile: 'map/definition.csv',
                 provinces: [],
                 states: [],
                 countries: [],
@@ -108,6 +109,17 @@ describe('world map webview loader batching', () => {
             command: 'mapready',
             loadGeneration: 1,
         });
+
+        dispatchWindowMessage(windowTarget, {
+            command: 'states',
+            start: 1,
+            end: 2,
+            count: 2,
+            data: [{ id: 1, provinces: [1] }],
+        });
+        assert.strictEqual(loader.worldMap.statesCount, 2);
+        assert.deepStrictEqual(loader.worldMap.getStateById(1), { id: 1, provinces: [1] });
+        assert.strictEqual(worldMapEmits, 2, 'live editor updates should rebuild webview indexes immediately');
 
         const committedProvince = loader.worldMap.getProvinceById(1);
         assert.deepStrictEqual(committedProvince, { id: 1, color: 101 });

@@ -5,8 +5,8 @@ import { getSpriteTypes } from '../../hoiformat/spritetype';
 import { readFileFromModOrHOI4, hoiFileExpiryToken, expiryToken } from '../fileloader';
 import { PromiseCache } from '../cache';
 import { ddsToPng, tgaToPng } from './converter';
-import { SpriteType, CorneredTileSpriteType } from '../../hoiformat/spritetype';
-import { Sprite, Image, CorneredTileSprite } from './sprite';
+import { AnySpriteType } from '../../hoiformat/spritetype';
+import { Sprite, Image, CorneredTileSprite, ProgressBarSprite } from './sprite';
 import { localize } from '../i18n';
 import { error } from '../debug';
 import { DDS } from './dds';
@@ -97,6 +97,9 @@ export async function spriteCacheExpiryToken(key: string, spritePromise: Promise
     const gfxToken = await hoiFileExpiryToken(gfxFilePath);
     const sprite = await spritePromise;
     if (sprite) {
+        if (sprite instanceof ProgressBarSprite) {
+            return `${gfxToken}:${await expiryToken(sprite.image.path)}:${await expiryToken(sprite.backgroundImage.path)}`;
+        }
         return `${gfxToken}:${await expiryToken(sprite.image.path)}`;
     }
     return gfxToken;
@@ -118,6 +121,14 @@ async function getSpriteByGfxNameImpl(name: string, gfxFilePath: string): Promis
     const image = await imageCache.get(sprite.texturefile);
     if (image === undefined) {
         return undefined;
+    }
+
+    if ('texturefile2' in sprite) {
+        const backgroundImage = await imageCache.get(sprite.texturefile2);
+        if (backgroundImage === undefined) {
+            return undefined;
+        }
+        return new ProgressBarSprite(name, image, backgroundImage, sprite.size, sprite.horizontal);
     }
 
     if ('bordersize' in sprite) {
@@ -181,8 +192,8 @@ async function getImage(relativePath: string): Promise<Image | undefined> {
     }));
 }
 
-async function loadGfxMap(path: string): Promise<Record<string, (SpriteType | CorneredTileSpriteType)>> {
-    const gfxMap: Record<string, SpriteType> = {};
+async function loadGfxMap(path: string): Promise<Record<string, AnySpriteType>> {
+    const gfxMap: Record<string, AnySpriteType> = {};
     await measureAsync('image.gfxMap.load', { path }, async () => {
         try {
             const [buffer, realPath] = await readFileFromModOrHOI4(path);

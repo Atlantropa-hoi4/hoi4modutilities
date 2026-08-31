@@ -250,14 +250,11 @@ describe("previewdef/decision/schema effect blocks", () => {
 			"d",
 		);
 
-		// Nested constructs are emitted where the walk meets them and the flat statements are
-		// gathered onto the end, so a block's plain lines follow its `if` and `random_list` rather
-		// than sitting where they were written. That is how the event preview has always shown an
-		// effect block; the decision preview inherits it by using the same projection.
+		// Effect projection preserves the source order across plain lines and nested constructs.
 		const effects = found.effectBlocks[0]?.effects ?? [];
 		assert.deepStrictEqual(
 			effects.map((e) => e.kind),
-			["group", "choice", "line"],
+			["line", "group", "choice"],
 		);
 	});
 });

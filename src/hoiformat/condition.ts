@@ -438,3 +438,7 @@ export function stringValueToConditionItem(value: string): ConditionItem {
         };
     }
 }
+
+export function sortConditionExprs(exprs: ConditionItem[]): void {
+    exprs.sort((left, right) => conditionItemToStringValue(left).localeCompare(conditionItemToStringValue(right)));
+}

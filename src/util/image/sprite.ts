@@ -73,7 +73,7 @@ export class CorneredTileSprite extends Sprite {
     }
 
     public getTiles(frameId: number = 0): Image[] {
-        if (frameId > this.noOfFrames) {
+        if (frameId >= this.noOfFrames) {
             frameId = 0;
         }
 
@@ -112,6 +112,26 @@ export class CorneredTileSprite extends Sprite {
 
         this.cachedTiles[frameId] = tiles;
         return tiles;
+    }
+}
+
+export class ProgressBarSprite extends Sprite {
+    constructor(
+        id: string,
+        image: Image,
+        readonly backgroundImage: Image,
+        readonly size: NumberPosition,
+        readonly horizontal: boolean,
+    ) {
+        super(id, image, 1);
+    }
+
+    public get width(): number {
+        return this.size.x;
+    }
+
+    public get height(): number {
+        return this.size.y;
     }
 }
 

@@ -114,12 +114,18 @@ function createPreview(): TestPreview {
 }
 
 function createPanel() {
+    const postedMessages: unknown[] = [];
     return {
         webview: {
             html: '',
             onDidReceiveMessage: () => ({ dispose: () => undefined }),
+            postMessage: async (message: unknown) => {
+                postedMessages.push(message);
+                return true;
+            },
         },
         onDidDispose: () => ({ dispose: () => undefined }),
+        postedMessages,
     };
 }
 
@@ -174,6 +180,17 @@ describe('PreviewBase navigation', () => {
         preview.resolve(2, 'newer content');
         await newerRender;
         assert.strictEqual(panel.webview.html, 'newer content');
+    });
+
+    it('acknowledges a manual reload after the current document is rendered', async () => {
+        currentDocument = makeDocument(3, 'current');
+        const panel = createPanel();
+        const preview = new TestPreview({ toString: () => 'file:///preview.txt' } as any, panel as any);
+
+        await (preview as any).handleMessage({ command: 'reload' });
+
+        assert.strictEqual(panel.webview.html, '');
+        assert.deepStrictEqual(panel.postedMessages, [{ command: 'reloadComplete' }]);
     });
 
     it('copies a missing dependency directly into the only workspace folder', async () => {

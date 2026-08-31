@@ -7,6 +7,7 @@ import {
 	setState,
 	panning$,
 	currentScale,
+	subscribeRefreshButton,
 } from "./util/common";
 import { SearchBox } from "./util/searchbox";
 import { applyNav, badge } from "./util/card";
@@ -966,6 +967,7 @@ window.addEventListener(
 		// Before the first buildContent, so the restored query is applied by the first render rather
 		// than only by the next one.
 		search.wire();
+		subscribeRefreshButton();
 
 		buildContent();
 	}),

@@ -1,4 +1,4 @@
-import { setState, getState, tryRun } from "./util/common";
+import { setState, getState, subscribeRefreshButton, tryRun } from "./util/common";
 
 function filterChange(text: string) {
     text = text.toLowerCase();
@@ -26,4 +26,5 @@ window.addEventListener('load', tryRun(function() {
     element.addEventListener('keyup', changeFunc);
     element.addEventListener('paste', changeFunc);
     element.addEventListener('cut', changeFunc);
+    subscribeRefreshButton();
 }));

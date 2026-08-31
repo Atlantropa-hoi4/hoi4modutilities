@@ -1,5 +1,5 @@
 import { ContentLoader, LoadResultOD, Dependency, LoaderSession, mergeInLoadResult } from "../../util/loader/loader";
-import { convertFocusFileNodeToJson, FocusTree, getFocusTree } from "./schema";
+import { convertFocusFileNodeToJson, FocusTree, getFocusTree, getGfxNameForSearchFilter } from "./schema";
 import { parseHoi4File } from "../../hoiformat/hoiparser";
 import { localize } from "../../util/i18n";
 import { uniq, flatten } from "lodash";
@@ -175,6 +175,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 .flatMap(focus => [
                     ...focus.icon.map(icon => icon.icon),
                     focus.overlay,
+                    ...focus.searchFilters.map(getGfxNameForSearchFilter),
                 ])
                 .filter((icon): icon is string => icon !== undefined);
         const uniqueInlayFiles = Array.from(new Set([

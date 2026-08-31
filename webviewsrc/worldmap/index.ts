@@ -22,6 +22,7 @@ window.addEventListener('load', function initializeWorldMap() {
         topBar.colorSet$.subscribe(setStateForKey(stateBatcher, 'colorSet')),
         topBar.selectedProvinceId$.subscribe(setStateForKey(stateBatcher, 'selectedProvinceId')),
         topBar.selectedStateId$.subscribe(setStateForKey(stateBatcher, 'selectedStateId')),
+        topBar.selectedCountryTag$.subscribe(setStateForKey(stateBatcher, 'selectedCountryTag')),
         topBar.selectedStrategicRegionId$.subscribe(setStateForKey(stateBatcher, 'selectedStrategicRegionId')),
         topBar.warningFilter.selectedValues$.subscribe(setStateForKey(stateBatcher, 'warningFilter')),
         topBar.display.selectedValues$.subscribe(setStateForKey(stateBatcher, 'display')),

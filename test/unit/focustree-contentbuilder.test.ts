@@ -181,6 +181,7 @@ describe('focustree contentbuilder', () => {
         );
 
         assert.match(html, /id="inlay-window-container"[^>]*style="display:none;"/);
+        assert.match(html, /id="search-filters"[^>]*multiple/);
     });
 
     it('keeps the fixed toolbar above interactive focus and inlay layers', () => {

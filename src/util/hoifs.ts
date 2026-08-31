@@ -5,6 +5,7 @@ import { UserError } from './common';
 import { clearDlcZipCache } from './fileloader';
 import { sendEvent } from './telemetry';
 import { getConfiguration, isFileScheme } from './vsccommon';
+import { localize } from './i18n';
 
 const installPathContainer: { current: vscode.Uri | null } = {
     current: null,
@@ -38,6 +39,7 @@ async function selectHoiFolder(): Promise<void> {
         const conf = getConfiguration();
         await conf.update('installPath', uri.fsPath, vscode.ConfigurationTarget.Global);
     }
+    await vscode.window.showInformationMessage(localize('installpathsetto', 'Install path of Hearts of Iron IV is set to: {0}.', uri.fsPath));
 }
 
 function onChangeWorkspaceConfiguration(e: vscode.ConfigurationChangeEvent): void {

@@ -51,6 +51,7 @@ export function createPlaceholderFocus(
         },
         lintWarningCount: 0,
         lintInfoCount: 0,
+        searchFilters: [],
     };
 }
 
@@ -93,6 +94,7 @@ export function renderPendingPlaceholderFocusTemplate(
         },
         lintWarningCount: 0,
         lintInfoCount: 0,
+        searchFilters: [],
     };
     return renderFocusHtmlTemplate(placeholderFocus, new StyleTable(), focus.file, 96, 130);
 }

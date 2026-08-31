@@ -124,6 +124,7 @@ export class DefaultMapLoader extends FileLoader<ProvinceMap> {
                 continents: continents.result,
                 terrains: terrains.result,
                 rivers: rivers.result.rivers,
+                provinceDefinitionsFile: 'map/' + defaultMap.definitions,
             },
             dependencies: mergeInLoadResult(subLoaderResults, 'dependencies'),
             warnings,
@@ -287,7 +288,7 @@ function mergeProvinceDefinitions(
         colorToProvinceId[color] = useBadId;
         result.push({
             ...provinceInMap,
-            edges: [], id: useBadId, continent: 0, type: 'sea', coastal: false, terrain: ''
+            edges: [], id: useBadId, localisedName: undefined, continent: 0, type: 'sea', coastal: false, terrain: ''
         });
     }
 

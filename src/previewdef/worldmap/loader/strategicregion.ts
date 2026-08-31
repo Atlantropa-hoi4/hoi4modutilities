@@ -10,6 +10,7 @@ import { arrayToMap, UserError } from "../../../util/common";
 import { Node, parseHoi4File, Token } from "../../../hoiformat/hoiparser";
 import { LoaderSession } from "../../../util/loader/loader";
 import { flatMap } from "lodash";
+import { getLocalisedTextQuickIfReady } from "../../../util/localisationIndex";
 
 interface StrategicRegionFile {
     strategic_region: StrategicRegionDefinition[];
@@ -134,6 +135,7 @@ function parseStrategicRegionRoot(file: string, root: Node, globalWarnings: Worl
         const warnings: string[] = [];
         const id = strategicRegion.id ? strategicRegion.id : (warnings.push(localize('worldmap.warnings.strategicregionnoid', "A strategic region in \"{0}\" doesn't have id field.", file)), -1);
         const name = strategicRegion.name ? strategicRegion.name : (warnings.push(localize('worldmap.warnings.strategicregionnoname', "Strategic region {0} doesn't have name field.", id)), '');
+        const localisedName = getLocalisedTextQuickIfReady(name);
         const provinces = strategicRegion.provinces._values.map(v => parseInt(v));
         const navalTerrain = strategicRegion.naval_terrain ?? null;
         const staticModifiers = parseNumberMap(getNamedChildren(getFirstNamedChild(regionNode, 'static_modifiers'), undefined));
@@ -152,6 +154,7 @@ function parseStrategicRegionRoot(file: string, root: Node, globalWarnings: Worl
         result.push({
             id,
             name,
+            localisedName,
             provinces,
             navalTerrain,
             staticModifiers,

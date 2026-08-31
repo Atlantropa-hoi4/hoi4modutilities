@@ -215,3 +215,29 @@ const languageYmlDict: Record<PreviewLocalisation, string> = {
 export function getLanguageIdInYml(): string {
     return languageYmlDict[getConfiguration().previewLocalisation] ?? languageYmlDict['English'];
 }
+
+export async function showQuickPickAnyString(
+    items: string[] | Thenable<string[]>,
+    validate?: (value: string) => boolean,
+    placeholder?: string,
+): Promise<string | undefined> {
+    const resolvedItems = await items;
+    return new Promise<string | undefined>(resolve => {
+        const quickPick = vscode.window.createQuickPick();
+        quickPick.items = resolvedItems.map(label => ({ label }));
+        quickPick.placeholder = placeholder;
+        quickPick.onDidAccept(() => {
+            const selection = quickPick.selectedItems[0];
+            const value = selection ? selection.label : quickPick.value;
+            if (!validate || validate(value)) {
+                resolve(value);
+                quickPick.hide();
+            }
+        });
+        quickPick.onDidHide(() => {
+            quickPick.dispose();
+            resolve(undefined);
+        });
+        quickPick.show();
+    });
+}

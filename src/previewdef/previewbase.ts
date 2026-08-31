@@ -221,13 +221,13 @@ export abstract class PreviewBase {
         }
     }
 
-    protected reload() {        
+    protected async reload(): Promise<void> {
         const document = getDocumentByUri(this.uri);
         if (document === undefined) {
             return;
         }
 
-        void this.onDocumentChange(document);
+        await this.onDocumentChange(document);
     }
 
     protected abstract getContent(document: vscode.TextDocument): Promise<string>;
@@ -274,7 +274,11 @@ export abstract class PreviewBase {
                     sendByMessage(msg);
                     break;
                 case 'reload':
-                    this.reload();
+                    try {
+                        await this.reload();
+                    } finally {
+                        await this.panel.webview.postMessage({ command: 'reloadComplete' });
+                    }
                     break;
             }
         } catch (e) {

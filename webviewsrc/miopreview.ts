@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, runSafely, enableZoom } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, runSafely, enableZoom, subscribeRefreshButton } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
@@ -304,6 +304,8 @@ window.addEventListener('load', runSafely(async function() {
             warnings.style.display = visible ? 'none' : 'block';
         });
     }
+
+    subscribeRefreshButton();
     
     updateSelectedMio(false);
     await buildContent();

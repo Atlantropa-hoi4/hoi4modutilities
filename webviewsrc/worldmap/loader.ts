@@ -142,6 +142,12 @@ export class Loader extends Subscriber {
                     }
                     this.receiveData(this.loadingProvinceMap?.states, message.start, message.end, message.data);
                     this.completeMapItem();
+                    if (!this.initialLoadPending) {
+                        if (message.count !== undefined && this.loadingProvinceMap) {
+                            this.loadingProvinceMap.statesCount = message.count;
+                        }
+                        this.commitLiveUpdate();
+                    }
                     break;
                 case 'countries':
                     if (!this.isCurrentLoadMessage(message)) {
@@ -156,6 +162,12 @@ export class Loader extends Subscriber {
                     }
                     this.receiveData(this.loadingProvinceMap?.strategicRegions, message.start, message.end, message.data);
                     this.completeMapItem();
+                    if (!this.initialLoadPending) {
+                        if (message.count !== undefined && this.loadingProvinceMap) {
+                            this.loadingProvinceMap.strategicRegionsCount = message.count;
+                        }
+                        this.commitLiveUpdate();
+                    }
                     break;
                 case 'supplyareas':
                     if (!this.isCurrentLoadMessage(message)) {
@@ -363,6 +375,15 @@ export class Loader extends Subscriber {
             || message.loadGeneration === this.loadGeneration;
     }
 
+    private commitLiveUpdate(): void {
+        if (!this.loadingProvinceMap) {
+            return;
+        }
+        this.committedProvinceMap = this.loadingProvinceMap;
+        this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
+        this.emitWorldMap();
+    }
+
     private acceptLoadStatusMessage(message: ProgressMessage | ErrorMessage): boolean {
         const loadGeneration = message.loadGeneration;
         if (loadGeneration === undefined) {
@@ -418,6 +439,7 @@ function decodeMapItemData<T>(data: unknown[] | string): T[] {
 export class FEWorldMapClass implements FEWorldMap {
     width!: number;
     height!: number;
+    provinceDefinitionsFile!: string | undefined;
     countries!: Country[];
     warnings!: WorldMapWarning[];
     provincesCount!: number;
@@ -461,7 +483,7 @@ export class FEWorldMapClass implements FEWorldMap {
             provincesCount: 0, statesCount: 0, countriesCount: 0, strategicRegionsCount: 0, supplyAreasCount: 0,
             badProvincesCount: 0, badStatesCount: 0, badStrategicRegionsCount: 0, badSupplyAreasCount: 0,
             railwaysCount: 0, supplyNodesCount: 0,
-            conditionExprs: [], bookmarks: []
+            conditionExprs: [], bookmarks: [], provinceDefinitionsFile: undefined
         } as WorldMapData & ExtraMapData));
     }
 

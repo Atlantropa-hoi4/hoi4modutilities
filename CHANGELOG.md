@@ -4,6 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [Unreleased]
+
+### Added
+* Port upstream v0.14.1-v0.17.2 preview features, including progress-bar sprites, fullscreen/common GUI controls, manual preview refresh, and Focus Tree search filters.
+* Add World Map country view, localised labels, state-category colors, province warnings, scaled export, demilitarized-zone display, province-definition navigation, and state/strategic-region editing.
+
+### Changed
+* Preserve source order when projecting nested scripted effects.
+* Show the selected Hearts of Iron IV installation path after it changes.
+
 ## [0.14.0] - 2026/07/14 - Latest
 
 ### Added

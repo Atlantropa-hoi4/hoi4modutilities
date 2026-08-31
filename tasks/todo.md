@@ -731,3 +731,13 @@ Mod-aware localisation colors 2026-08-30:
 - [x] Run focused/full tests, TypeScript checks, lint, and whitespace verification.
 
 Review note: Localisation highlighting now discovers single-character custom color codes from `bitmapfonts/textcolors` blocks in workspace, selected-mod, and declared dependency GFX files. Dependency definitions load first, selected-mod/workspace definitions override them, and relevant source or GFX changes rebuild the editor decorations. Malformed unrelated GFX files are skipped without hiding the remaining palette. Verification passed 26 focused localisation/file-loader tests, all 580 unit tests, TypeScript checks, lint, and `git diff --check`; no representative mod with custom `textcolors` was available in this workspace for Extension Host visual verification.
+
+Upstream v0.17.2 feature port 2026-08-31:
+- [x] Audit `herbix/hoi4modutilities` changes from common base `0fec2f4` through pinned upstream `fe9b758` and classify equivalent versus missing behavior.
+- [x] Port missing shared preview, GUI widget, refresh, indexing, and navigation behavior without replacing the fork feature catalog or esbuild pipeline.
+- [x] Port missing Focus Tree filter/UI behavior while preserving the fork's graph editor, lint, minimap, and incremental refresh lifecycle.
+- [x] Port missing World Map views, labels, warnings, export controls, and province/state/strategic-region editing through the fork's payload and scheduler architecture.
+- [x] Add focused regression tests for every newly ported behavior and update user-facing documentation/localisation where required.
+- [x] Run `npm run verify` and `git diff --check`; record omissions and remaining manual-validation risks.
+
+Review note: Feature port complete against the pinned upstream snapshot `fe9b758`. Ported behavior includes source-ordered effects, manual refresh, progress bars, fullscreen/common GUI controls, Focus search filters, install-path confirmation, and the current upstream World Map feature set mapped onto the fork payload/scheduler. Package identity, publisher, contribution IDs, desktop-only esbuild pipeline, and fork-specific preview/editing behavior remain unchanged. Verification passed `npm run verify` (589 unit tests, 19 Extension Host UI tests, production build, lint, and VSIX packaging) and `git diff --check`. Remaining manual-validation risks are complex World Map edit gestures against a full game installation and exact country-label placement parity with upstream.

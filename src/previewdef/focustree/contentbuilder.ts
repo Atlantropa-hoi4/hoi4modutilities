@@ -666,6 +666,12 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
             />
         </div>`;
 
+    const searchFilters = `
+        <div id="search-filters-container" class="${toolbarGroupStyle()}">
+            <label for="search-filters" class="${toolbarLabelStyle()}">${localize('focustree.searchfilters', 'Filters: ')}</label>
+            <select id="search-filters" multiple class="${styleTable.style('searchFilters', () => `min-width:120px; max-width:260px; height:24px;`)}"></select>
+        </div>`;
+
     const previewLabelMode = isLocalisationIndexEnabled() ? `
         <div class="preview-label-mode ${toolbarGroupStyle()}">
             <span class="${toolbarLabelStyle()}">${localize('preview.labelmode', 'Label: ')}</span>
@@ -737,18 +743,25 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
             <i class="codicon codicon-warning"></i>
         </button>`;
 
+    const refreshButton = `
+        <button id="refresh" title="${localize('common.topbar.refresh.title', 'Refresh')}">
+            <i class="codicon codicon-refresh"></i>
+        </button>`;
+
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; min-height:${focusToolbarHeight}px; padding: 4px 6px; z-index:10;`)}">
         <div class="toolbar ${styleTable.style('toolbarAlign', () => `display:flex; flex-direction:column; align-items:stretch; gap:4px;`) }">
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; gap:10px;`) }">
                 ${focuses}
                 ${previewLabelMode}
                 ${searchbox}
+                ${searchFilters}
                 ${editToggle}
             </div>
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
                 ${isUseConditionInFocusEnabled() ? conditionPresets + conditions : allowbranch}
                 ${inlayWindows}
                 ${warningsButton}
+                ${refreshButton}
             </div>
         </div>
     </div>`;
@@ -937,7 +950,10 @@ async function prepareFocusIconStyles(
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
     const uniqueIconNames = Array.from(new Set(
-        focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
+        focuses.flatMap(focus => [
+            ...focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName),
+            ...(focus.searchFilters ?? []).map(filter => `GFX_${filter}`),
+        ]),
     ));
     const unresolvedIconNames = new Set(focusIconAssetResolution.unresolvedIconNames);
     const iconDiagnostics = {
@@ -968,6 +984,8 @@ async function prepareFocusIconStyles(
             styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
                 width: ${displaySize.width}px;
                 height: ${displaySize.height}px;
+                background-repeat: no-repeat;
+                background-size: contain;
                 ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
             `);
         }));

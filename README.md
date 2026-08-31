@@ -5,7 +5,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 ## What It Covers
 
 - Focus tree preview and editing helpers
-- World map preview with bookmark/scenario and condition-aware country history
+- World map preview with country/localised views, bookmark-aware history, scaled export, warnings, and state/strategic-region editing
 - Event tree preview
 - Technology tree preview
 - MIO preview

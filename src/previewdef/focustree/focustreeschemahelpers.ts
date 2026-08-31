@@ -39,6 +39,7 @@ export function buildFocusTreesFromFile(
             conditionExprs,
             isSharedFocues: true,
             warnings,
+            searchFilters: collectSearchFilters(focuses),
         };
         focusTrees.push(sharedFocusTree);
         linkedFocusTrees.unshift(sharedFocusTree);
@@ -62,6 +63,7 @@ export function buildFocusTreesFromFile(
             conditionExprs,
             isSharedFocues: false,
             warnings,
+            searchFilters: collectSearchFilters(focuses),
         };
         focusTrees.push(jointFocusTree);
         linkedFocusTrees.unshift(jointFocusTree);
@@ -103,6 +105,7 @@ export function buildFocusTreesFromFile(
             conditionExprs,
             isSharedFocues: false,
             warnings,
+            searchFilters: collectSearchFilters(focuses),
         });
     }
 
@@ -292,7 +295,12 @@ function getFocus(
         overlay: hoiFocus.overlay,
         lintWarningCount: 0,
         lintInfoCount: 0,
+        searchFilters: hoiFocus.search_filters?._values ?? [],
     };
+}
+
+function collectSearchFilters(focuses: Record<string, Focus>): string[] {
+    return Array.from(new Set(Object.values(focuses).flatMap(focus => focus.searchFilters)));
 }
 
 function addSharedFocus(

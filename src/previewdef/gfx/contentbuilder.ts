@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { parseHoi4File } from '../../hoiformat/hoiparser';
-import { CorneredTileSpriteType, getSpriteTypes, SpriteType } from '../../hoiformat/spritetype';
+import { AnySpriteType, getSpriteTypes } from '../../hoiformat/spritetype';
 import { getImageByPath } from '../../util/image/imagecache';
 import { localize } from '../../util/i18n';
 import { html, htmlAttributeEscape, htmlEscape } from '../../util/html';
@@ -29,6 +29,7 @@ export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webvie
                 ],
                 [
                     'common.css',
+                    'codicon.css',
                     styleTable,
                 ],
             ),
@@ -45,7 +46,7 @@ export async function renderGfxFile(fileContent: string, uri: vscode.Uri, webvie
 }
 
 async function renderSpriteTypes(
-    spriteTypes: (SpriteType | CorneredTileSpriteType)[],
+    spriteTypes: AnySpriteType[],
     styleTable: StyleTable,
 ): Promise<string> {
     const imageList = (await Promise.all(spriteTypes.map(st => renderSpriteType(st, styleTable)))).join('');
@@ -66,6 +67,9 @@ async function renderSpriteTypes(
             id="filter"
             type="text"
         />
+        <button id="refresh" title="${localize('common.topbar.refresh.title', 'Refresh')}">
+            <i class="codicon codicon-refresh"></i>
+        </button>
     </div>`;
 
     return `${filter}
@@ -75,11 +79,12 @@ async function renderSpriteTypes(
 }
 
 async function renderSpriteType(
-    spriteType: SpriteType | CorneredTileSpriteType,
+    spriteType: AnySpriteType,
     styleTable: StyleTable,
 ): Promise<string> {
     const image = await getImageByPath(spriteType.texturefile);
-    const titleText = `${spriteType.name}${image ? ` (${image.width / spriteType.noofframes}x${image.height}x${spriteType.noofframes})` : ''}\n${image ? image.path : localize('gfx.imagenotfound', 'Image not found')}`;
+    const noOfFrames = 'noofframes' in spriteType ? spriteType.noofframes : 1;
+    const titleText = `${spriteType.name}${image ? ` (${image.width / noOfFrames}x${image.height}x${noOfFrames})` : ''}\n${image ? image.path : localize('gfx.imagenotfound', 'Image not found')}`;
     return `<div
         id="${htmlAttributeEscape(spriteType.name)}"
         class="

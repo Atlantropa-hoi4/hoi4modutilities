@@ -199,6 +199,11 @@ export function subscribeRefreshButton() {
         vscode.postMessage({ command: 'reload' });
         button.disabled = true;
     });
+    window.addEventListener('message', event => {
+        if (event.data?.command === 'reloadComplete' && button) {
+            button.disabled = false;
+        }
+    });
 }
 
 export type PreviewLabelMode = 'id' | 'name';

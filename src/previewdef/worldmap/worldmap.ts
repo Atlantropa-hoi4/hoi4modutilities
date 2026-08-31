@@ -6,7 +6,7 @@ import { html } from '../../util/html';
 import { error, debug } from '../../util/debug';
 import { WorldMapMessage, WorldMapData, MapItemMessage, RequestMapItemMessage } from './definitions';
 import { matchPathEnd } from '../../util/nodecommon';
-import { writeFile, mkdirs, getDocumentByUri, dirUri } from '../../util/vsccommon';
+import { writeFile, mkdirs, getDocumentByUri, dirUri, showQuickPickAnyString } from '../../util/vsccommon';
 import { slice, forceError } from '../../util/common';
 import { getFilePathFromMod, getHoiOpenedFileOriginalUri, readFileFromModOrHOI4 } from '../../util/fileloader';
 import { WorldMapLoader } from './loader/worldmaploader';
@@ -17,6 +17,8 @@ import { getPerfSnapshot, measureAsync, recordPerf } from '../../util/perf';
 import { debounce } from 'lodash';
 import { createWorldMapSummary, getWorldMapMessageMetrics, resolveWorldMapRequest } from './worldmappayload';
 import { WorldMapLoadQueue, WorldMapLoadRequest } from './worldmaploadqueue';
+import { moveProvince } from './editor/moveprovince';
+import { addMapItem } from './editor/addmapitem';
 
 export class WorldMap {
     public panel: vscode.WebviewPanel | undefined;
@@ -135,7 +137,7 @@ export class WorldMap {
                     await this.sendRequestedMapData(msg);
                     break;
                 case 'openfile':
-                    await this.openFile(msg.file, msg.type, msg.start, msg.end);
+                    await this.openFile(msg.file, msg.type, msg.start, msg.end, msg.lineNumber);
                     break;
                 case 'telemetry':
                     await sendByMessage(msg);
@@ -145,6 +147,24 @@ export class WorldMap {
                     break;
                 case 'exportmap':
                     await this.exportMap(msg.dataUrl);
+                    break;
+                case 'moveprovince':
+                    if (!this.cachedWorldMap) {
+                        await vscode.window.showErrorMessage(localize('worldmap.edit.failed.nocache', 'Editing failed. Reload the world map and try again.'));
+                        break;
+                    }
+                    for (const update of await moveProvince(msg, this.cachedWorldMap)) {
+                        await this.postMessageToWebview(update);
+                    }
+                    break;
+                case 'addmapitem':
+                    if (!this.cachedWorldMap) {
+                        await vscode.window.showErrorMessage(localize('worldmap.add.failed.nocache', 'Adding failed. Reload the world map and try again.'));
+                        break;
+                    }
+                    for (const update of await addMapItem(msg, this.cachedWorldMap)) {
+                        await this.postMessageToWebview(update);
+                    }
                     break;
             }
         } catch (e) {
@@ -245,14 +265,21 @@ export class WorldMap {
         }
     }
 
-    private async openFile(file: string, type: 'state' | 'strategicregion' | 'supplyarea', start: number | undefined, end: number | undefined): Promise<void> {
+    private async openFile(
+        file: string,
+        type: 'state' | 'country' | 'provincedefinition' | 'strategicregion' | 'supplyarea',
+        start: number | undefined,
+        end: number | undefined,
+        lineNumber?: number,
+    ): Promise<void> {
         // TODO duplicate with previewbase.ts
         const filePathInMod = await getFilePathFromMod(file);
         if (filePathInMod !== undefined) {
             const filePathInModWithoutOpened = getHoiOpenedFileOriginalUri(filePathInMod);
             const document = getDocumentByUri(filePathInModWithoutOpened) ?? await vscode.workspace.openTextDocument(filePathInModWithoutOpened);
             await vscode.window.showTextDocument(document, {
-                selection: start !== undefined && end !== undefined ? new vscode.Range(document.positionAt(start), document.positionAt(end)) : undefined,
+                selection: lineNumber !== undefined ? new vscode.Range(lineNumber, 0, lineNumber, 0) :
+                    start !== undefined && end !== undefined ? new vscode.Range(document.positionAt(start), document.positionAt(end)) : undefined,
             });
             return;
         }
@@ -298,7 +325,7 @@ export class WorldMap {
         const changeMessages: WorldMapMessage[] = [];
         const comparisonBudget = createWorldMapComparisonBudget();
 
-        for (const key of ['width', 'height', 'provincesCount', 'statesCount', 'countriesCount', 'strategicRegionsCount', 'supplyAreasCount',
+        for (const key of ['width', 'height', 'provinceDefinitionsFile', 'provincesCount', 'statesCount', 'countriesCount', 'strategicRegionsCount', 'supplyAreasCount',
             'railwaysCount', 'supplyNodesCount',
             'badProvincesCount', 'badStatesCount', 'badStrategicRegionsCount', 'badSupplyAreasCount'] as (keyof WorldMapData)[]) {
             const equal = areEqualWithinBudget(cachedWorldMap[key], worldMap[key], comparisonBudget);
@@ -536,13 +563,25 @@ export class WorldMap {
     }
 
     private async requestExportMap() {
+        const scaleText = await showQuickPickAnyString(
+            ['1', '2', '3', '4'],
+            value => {
+                const scale = parseFloat(value);
+                return !isNaN(scale) && scale >= 1 && scale <= 10;
+            },
+            localize('worldmap.export.scale', 'Scale of the exported image (1 ~ 10)'),
+        );
+        if (!scaleText) {
+            return;
+        }
+
         const uri = await vscode.window.showSaveDialog({ filters: { [localize('pngfile', 'PNG file')]: ['png'] } });
         this.lastRequestedExportUri = uri;
         if (!uri) {
             return;
         }
 
-        await this.postMessageToWebview({ command: 'requestexportmap' });
+        await this.postMessageToWebview({ command: 'requestexportmap', scale: parseFloat(scaleText) });
     }
 
     private async exportMap(dataUrl?: string) {

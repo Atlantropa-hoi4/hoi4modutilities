@@ -30,6 +30,7 @@ export interface WorldMapData {
     conditionExprs: ConditionItem[];
     bookmarks: Bookmark[];
     warnings: WorldMapWarning[];
+    provinceDefinitionsFile: string | undefined;
 }
 
 export interface ProvinceBmp {
@@ -49,6 +50,7 @@ export interface ProvinceMap {
     continents: string[];
     terrains: Terrain[];
     rivers: River[];
+    provinceDefinitionsFile: string;
 }
 
 export interface ProvinceGraph extends Region {
@@ -59,11 +61,13 @@ export interface ProvinceGraph extends Region {
 
 export interface ProvinceDefinition {
     id: number;
+    localisedName: string | undefined;
     color: number;
     type: string;
     coastal: boolean;
     terrain: string;
     continent: number;
+    lineNumber?: number;
 }
 
 export type Province = Omit<ProvinceGraph & ProvinceDefinition, 'edges'> & {
@@ -103,13 +107,16 @@ export interface BookmarkDate {
 export interface State extends Region, TokenInFile {
     id: number;
     name: string;
+    localisedName: string | undefined;
     manpower: number;
     category: string;
+    categoryColor: number;
     owner: WithCondition<string>[];
     controller: WithCondition<string>[];
     provinces: number[];
     provinceTokens?: Record<number, Token>;
     cores: WithCondition<string>[];
+    claimBy: WithCondition<string>[];
     impassable: boolean;
     demilitarized: boolean | undefined;
     localSupplies: number;
@@ -181,6 +188,8 @@ interface WarningRiver extends WarningSourceBase {
 export interface Country {
     tag: string;
     color: number;
+    localisedName: string | undefined;
+    file: string;
 }
 
 export interface Terrain {
@@ -200,6 +209,7 @@ export interface Resource {
 export interface StrategicRegion extends Region, TokenInFile {
     id: number;
     name: string;
+    localisedName: string | undefined;
     provinces: number[];
     navalTerrain: string | null;
     staticModifiers: Record<string, number | undefined>;
@@ -215,6 +225,7 @@ export interface StrategicRegionWeatherPeriod {
 export interface SupplyArea extends Region, TokenInFile {
     id: number;
     name: string;
+    localisedName: string | undefined;
     value: number;
     states: number[];
 }
@@ -260,7 +271,8 @@ export interface TokenInFile {
     token: Token | null;
 }
 
-export type WorldMapMessage = LoadedMessage | MapReadyMessage | RequestMapItemMessage | MapItemMessage | MapUpdateCompleteMessage | ErrorMessage | ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage;
+export type WorldMapMessage = LoadedMessage | MapReadyMessage | RequestMapItemMessage | MapItemMessage | MapUpdateCompleteMessage | ErrorMessage |
+    ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage | MoveProvinceMessage | AddMapItemMessage | SelectMapItemMessage;
 
 export interface LoadedMessage {
     command: 'loaded';
@@ -285,6 +297,8 @@ export interface MapItemMessage {
     start: number;
     end: number;
     loadGeneration?: number;
+    count?: number;
+    badCount?: number;
 }
 
 export interface MapUpdateCompleteMessage {
@@ -312,15 +326,43 @@ export interface ProvinceMapSummaryMessage {
 
 export interface OpenFileMessage {
     command: 'openfile';
-    type: 'state' | 'strategicregion' | 'supplyarea';
+    type: 'state' | 'country' | 'provincedefinition' | 'strategicregion' | 'supplyarea';
     file: string;
     start: number | undefined;
     end: number | undefined;
+    lineNumber?: number;
 }
 
 export interface ExportMapMessage {
     command: 'exportmap' | 'requestexportmap';
     dataUrl?: string;
+    scale?: number;
+}
+
+export interface MoveProvinceMessage {
+    command: 'moveprovince';
+    items: MoveProvinceItem[];
+}
+
+export interface MoveProvinceItem {
+    type: 'state' | 'strategicregion';
+    provinces: number[];
+    to: number;
+    from: number | undefined;
+    toFile: string;
+    fromFile: string | undefined;
+}
+
+export interface AddMapItemMessage {
+    command: 'addmapitem';
+    type: 'state' | 'strategicregion';
+}
+
+export interface SelectMapItemMessage {
+    command: 'selectmapitem';
+    type: 'state' | 'strategicregion';
+    id: number;
+    enterEditMode: boolean;
 }
 
 export type ProgressReporter = (progress: string) => Promise<void>;

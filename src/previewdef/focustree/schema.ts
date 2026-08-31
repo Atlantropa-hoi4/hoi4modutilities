@@ -44,3 +44,7 @@ export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath
 
     return trees;
 }
+
+export function getGfxNameForSearchFilter(filter: string): string {
+    return `GFX_${filter}`;
+}

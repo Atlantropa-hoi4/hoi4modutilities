@@ -57,6 +57,7 @@ state = {
         owner = TAG
         controller = TAG
         add_core_of = TAG
+        add_claim_by = CLM
         set_demilitarized_zone = yes
         victory_points = { 10 5 }
         buildings = {
@@ -97,6 +98,7 @@ state = {
         assert.deepStrictEqual(state.owner, [{ value: 'TAG', condition: true }]);
         assert.deepStrictEqual(state.controller, [{ value: 'TAG', condition: true }]);
         assert.deepStrictEqual(state.cores, [{ value: 'TAG', condition: true }]);
+        assert.deepStrictEqual(state.claimBy, [{ value: 'CLM', condition: true }]);
         assert.strictEqual(state.datedHistory.length, 1);
         assert.strictEqual(state.datedHistory[0].date, '1939.1.1');
         assert.strictEqual(state.datedHistory[0].owner, 'OTH');
@@ -128,14 +130,17 @@ state = {
         owner = GER
         controller = GER
         add_core_of = GER
+        add_claim_by = POL
         1937.1.1 = {
             owner = FRA
             add_core_of = FRA
+            add_claim_by = CZE
         }
         1939.1.1 = {
             owner = ENG
             controller = ITA
             remove_core_of = GER
+            remove_claim_by = POL
         }
         1940.1.1 = {
             if = {
@@ -163,16 +168,19 @@ state = {
         assert.strictEqual(solve(state.owner, gatheringStorm), 'GER');
         assert.strictEqual(solve(state.controller, gatheringStorm), 'GER');
         assert.deepStrictEqual(solveSet(state.cores, gatheringStorm), ['GER']);
+        assert.deepStrictEqual(solveSet(state.claimBy, gatheringStorm), ['POL']);
 
         const blitzkrieg = scenario('1939.1.1.0');
         assert.strictEqual(solve(state.owner, blitzkrieg), 'FRA');
         assert.strictEqual(solve(state.controller, blitzkrieg), 'GER');
         assert.deepStrictEqual(solveSet(state.cores, blitzkrieg), ['GER', 'FRA']);
+        assert.deepStrictEqual(solveSet(state.claimBy, blitzkrieg), ['POL', 'CZE']);
 
         const lateGame = scenario('1941.1.1.0');
         assert.strictEqual(solve(state.owner, lateGame), 'ENG');
         assert.strictEqual(solve(state.controller, lateGame), 'ITA');
         assert.deepStrictEqual(solveSet(state.cores, lateGame), ['FRA']);
+        assert.deepStrictEqual(solveSet(state.claimBy, lateGame), ['CZE']);
         assert.strictEqual(solve(state.controller, scenario('1941.1.1.0', [
             { scopeName: '', nodeContent: 'has_global_flag = alternate_path' },
         ])), 'USA');

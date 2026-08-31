@@ -7,6 +7,7 @@
                     <select id="viewmode">
                         <option value="province">%worldmap.topbar.viewmode.province|Province%</option>
                         <option value="state">%worldmap.topbar.viewmode.state|State%</option>
+                        <option value="country">%worldmap.topbar.viewmode.country|Country%</option>
                         <option value="strategicregion">%worldmap.topbar.viewmode.strategicregion|Strategic Region%</option>
                         <option value="warnings">%worldmap.topbar.viewmode.warnings|Warnings%</option>
                     </select>
@@ -20,15 +21,16 @@
                         <option viewmode="province" value="provinceid">%worldmap.topbar.colorset.provinceid|Province ID%</option>
                         <option viewmode="province state" value="stateid">%worldmap.topbar.colorset.stateid|State ID%</option>
                         <option viewmode="province state strategicregion" value="strategicregionid">%worldmap.topbar.colorset.strategicregionid|Strategic Region ID%</option>
-                        <option viewmode="province state strategicregion" value="owner">%worldmap.topbar.colorset.owner|Owner%</option>
-                        <option viewmode="province state strategicregion" value="controller">%worldmap.topbar.colorset.controller|Controller%</option>
-                        <option viewmode="province state strategicregion" value="provincetype">%worldmap.topbar.colorset.provincetype|Province Type%</option>
-                        <option viewmode="province state strategicregion" value="terrain">%worldmap.topbar.colorset.terrain|Terrain%</option>
-                        <option viewmode="province state strategicregion" value="continent">%worldmap.topbar.colorset.continent|Continent%</option>
-                        <option viewmode="province state strategicregion" value="manpower">%worldmap.topbar.colorset.manpower|Manpower%</option>
-                        <option viewmode="province state strategicregion" value="victorypoint">%worldmap.topbar.colorset.vicotrypoint|Victory Points%</option>
-                        <option viewmode="province state strategicregion" value="resources">%worldmap.topbar.colorset.resources|Resources%</option>
-                        <option viewmode="province state strategicregion" value="localsupplies">%worldmap.topbar.colorset.localsupplies|Local Supplies%</option>
+                        <option viewmode="province state country strategicregion" value="owner">%worldmap.topbar.colorset.owner|Owner%</option>
+                        <option viewmode="province state country strategicregion" value="controller">%worldmap.topbar.colorset.controller|Controller%</option>
+                        <option viewmode="province state country strategicregion" value="provincetype">%worldmap.topbar.colorset.provincetype|Province Type%</option>
+                        <option viewmode="province state country strategicregion" value="terrain">%worldmap.topbar.colorset.terrain|Terrain%</option>
+                        <option viewmode="province state country strategicregion" value="statecategory">%worldmap.topbar.colorset.statecategory|State Category%</option>
+                        <option viewmode="province state country strategicregion" value="continent">%worldmap.topbar.colorset.continent|Continent%</option>
+                        <option viewmode="province state country strategicregion" value="manpower">%worldmap.topbar.colorset.manpower|Manpower%</option>
+                        <option viewmode="province state country strategicregion" value="victorypoint">%worldmap.topbar.colorset.vicotrypoint|Victory Points%</option>
+                        <option viewmode="province state country strategicregion" value="resources">%worldmap.topbar.colorset.resources|Resources%</option>
+                        <option viewmode="province state country strategicregion" value="localsupplies">%worldmap.topbar.colorset.localsupplies|Local Supplies%</option>
                         <option value="warnings">%worldmap.topbar.colorset.warnings|Warnings%</option>
                     </select>
                 </div>
@@ -40,10 +42,12 @@
                     <div id="display" class="select multiple-select" tabindex="0" role="combobox">
                         <span class="value"></span>
                         <div class="option" value="edge">%worldmap.topbar.display.border|Show border%</div>
+                        <div class="option" value="localisedlabel">%worldmap.topbar.display.localisedlabel|Show localised label%</div>
                         <div class="option" value="label">%worldmap.topbar.display.label|Show label%</div>
                         <div class="option" value="tooltip">%worldmap.topbar.display.tooltip|Show tooltip%</div>
                         <div class="option" value="supply">%worldmap.topbar.display.supply|Show Supply%</div>
                         <div class="option" value="river">%worldmap.topbar.display.river|Show River%</div>
+                        <div class="option" value="demilitarizedzone">%worldmap.topbar.display.demilitarizedzone|Show demilitarized zone%</div>
                         <div class="option" value="mousehighlight">%worldmap.topbar.display.mousehighlight|Mouse highlight%</div>
                         <div class="option" value="fastrending">%worldmap.topbar.display.fastrendering|Fast rendering%</div>
                         <div class="option" value="adaptzooming">%worldmap.topbar.display.adaptzooming|Adapt zooming%</div>
@@ -96,9 +100,21 @@
                 </button>
             </div>
 
-            <div class="group" viewmode="state strategicregion">
+            <div class="group" viewmode="province state country strategicregion">
                 <button id="open" title="%worldmap.topbar.open.title|Open in workspace%">
                     <i class="codicon codicon-link-external"></i>
+                </button>
+            </div>
+
+            <div class="group" viewmode="state strategicregion">
+                <button id="edit" title="%worldmap.topbar.edit.title|Edit (E)%">
+                    <i class="codicon codicon-edit"></i>
+                </button>
+                <button id="link-state-strategicregion" title="%worldmap.topbar.linkstatestrategicregion.title|Move strategic-region border with state border (S)%">
+                    <i class="codicon codicon-debug-connected"></i>
+                </button>
+                <button id="add" title="%worldmap.topbar.add.title|Add (A)%">
+                    <i class="codicon codicon-add"></i>
                 </button>
             </div>
         </div>

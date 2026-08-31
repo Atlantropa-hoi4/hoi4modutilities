@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, refreshPreviewLabelMode, setPreviewPanDisabled, startPreviewPan, subscribePreviewLabelToggle } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, refreshPreviewLabelMode, setPreviewPanDisabled, startPreviewPan, subscribePreviewLabelToggle, subscribeRefreshButton } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference } from "lodash";
 import { renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
@@ -121,6 +121,9 @@ let conditionPresetsByTree: FocusConditionPresetsByTree = initialWebviewState.co
 let selectedFocusTreeIndex: number = initialWebviewState.selectedFocusTreeIndex;
 let selectedFocusTreeId: string | undefined = initialWebviewState.selectedFocusTreeId;
 let selectedFocusIdsByTree: Record<string, string[]> = initialWebviewState.selectedFocusIdsByTree;
+let selectedSearchFilters: string[] = Array.isArray(restoredState.selectedSearchFilters)
+    ? restoredState.selectedSearchFilters.filter((value): value is string => typeof value === 'string')
+    : [];
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let conditionPresetsDropdown: DivDropdown | undefined = undefined;
@@ -888,6 +891,38 @@ function setFocusPositionEditMode(enabled: boolean) {
         clearCurrentSelectedFocusIds();
     }
     updateFocusPositionEditUi();
+}
+
+function refreshSearchFilterOptions(): void {
+    const select = document.getElementById('search-filters') as HTMLSelectElement | null;
+    const container = document.getElementById('search-filters-container') as HTMLDivElement | null;
+    const focusTree = getCurrentFocusTree();
+    if (!select || !focusTree) {
+        return;
+    }
+    const filters = focusTree.searchFilters ?? [];
+    selectedSearchFilters = selectedSearchFilters.filter(filter => filters.includes(filter));
+    replaceSelectOptions(select, filters.map(filter => ({ value: filter, text: filter })));
+    Array.from(select.options).forEach(option => {
+        option.selected = selectedSearchFilters.includes(option.value);
+        option.className = `st-focus-icon-${normalizeForStyle(`GFX_${option.value}`)}`;
+    });
+    if (container) {
+        container.style.display = filters.length > 0 ? 'flex' : 'none';
+    }
+}
+
+function applySearchFilters(): void {
+    const focusTree = getCurrentFocusTree();
+    if (!focusTree) {
+        return;
+    }
+    for (const [focusId, element] of Object.entries(currentRenderedFocusElements)) {
+        const focus = focusTree.focuses[focusId];
+        const matches = selectedSearchFilters.length === 0
+            || selectedSearchFilters.some(filter => focus?.searchFilters.includes(filter));
+        element.style.opacity = matches ? '1' : '0.2';
+    }
 }
 
 function postFocusEdit(command: string, payload: Record<string, unknown>): boolean {
@@ -2339,6 +2374,7 @@ async function buildContent(): Promise<boolean> {
     focustreeplaceholder.style.minHeight = `${minimumCanvasHeight}px`;
     contentElement.style.minHeight = `${minimumCanvasHeight}px`;
     rebuildRenderedFocusElementCache();
+    applySearchFilters();
     setupCheckedFocuses(Object.values(focusTree.focuses), currentCompletableFocusIds);
     refreshInlayWindowSelector(focusTree, renderExprs);
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
@@ -2360,6 +2396,7 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         return;
     }
     applyContinuousFocusElementPosition(focusTree);
+    refreshSearchFilterOptions();
 
     if (useConditionInFocus) {
         const conditionExprs = getTreeConditionExprKeys(focusTree).map(exprKeyToConditionItem);
@@ -2700,6 +2737,7 @@ function refreshFocusTreeSelectorOptions() {
     if (selectorContainer) {
         selectorContainer.style.display = focusTrees.length > 1 ? 'flex' : 'none';
     }
+    refreshSearchFilterOptions();
     if (!focusesElement) {
         return;
     }
@@ -3204,6 +3242,16 @@ window.addEventListener('load', runSafely(async function() {
 
         retriggerSearch = () => { searchedFocus = search(oldSearchboxValue, false); };
 
+        const searchFiltersElement = document.getElementById('search-filters') as HTMLSelectElement | null;
+        if (searchFiltersElement) {
+            refreshSearchFilterOptions();
+            searchFiltersElement.addEventListener('change', () => {
+                selectedSearchFilters = Array.from(searchFiltersElement.selectedOptions).map(option => option.value);
+                setState({ selectedSearchFilters });
+                applySearchFilters();
+            });
+        }
+
         if (useConditionInFocus) {
             const conditionPresetsElement = document.getElementById('condition-presets') as HTMLDivElement | null;
             if (conditionPresetsElement) {
@@ -3311,6 +3359,8 @@ window.addEventListener('load', runSafely(async function() {
                 warnings.style.display = visible ? 'none' : 'block';
             });
         }
+
+        subscribeRefreshButton();
 
         updateSelectedFocusTree(false);
         postFocusTreeDiagnostics('load', {

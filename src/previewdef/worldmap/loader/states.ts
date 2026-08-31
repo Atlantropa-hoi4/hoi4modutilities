@@ -14,6 +14,7 @@ import { bookmarkDateToString, BookmarksLoader, compareBookmarkDate, parseBookma
 import { ConditionComplexExpr, ConditionItem, extractConditionalExprs, simplifyCondition } from "../../../hoiformat/condition";
 import { EffectComplexExpr, EffectItem, extractEffectValue } from "../../../hoiformat/effect";
 import { Scope } from "../../../hoiformat/scope";
+import { getLocalisedTextQuickIfReady } from "../../../util/localisationIndex";
 
 interface StateFile {
     state: StateDefinition[];
@@ -38,6 +39,7 @@ interface StateHistory {
     controller: string;
     victory_points: Enum[];
     add_core_of: string[];
+    add_claim_by: string[];
     set_demilitarized_zone: boolean;
 }
 
@@ -56,6 +58,10 @@ const stateFileSchema: SchemaDef<StateFile> = {
                     _type: "array",
                 },
                 add_core_of: {
+                    _innerType: "string",
+                    _type: "array",
+                },
+                add_claim_by: {
                     _innerType: "string",
                     _type: "array",
                 },
@@ -147,6 +153,8 @@ export class StatesLoader extends FolderLoader<StateLoaderResult, StateNoBoundin
                         relatedFiles: [ state.file ],
                         text: localize('worldmap.warnings.statecategorynotexist', "State category of state {0} is not defined: {1}.", i, state.category),
                     });
+                } else {
+                    state.categoryColor = stateCategories.result[state.category].color;
                 }
 
                 for (const key in state.resources) {
@@ -290,9 +298,10 @@ function parseStateRoot(
         const warnings: string[] = [];
         const id = state.id ? state.id : (warnings.push(localize('worldmap.warnings.statenoid', "A state in {0} doesn't have id field.", stateFile)), -1);
         const name = state.name ? state.name : (warnings.push(localize('worldmap.warnings.statenoname', "The state doesn't have name field.")), '');
+        const localisedName = getLocalisedTextQuickIfReady(name);
         const manpower = state.manpower ?? 0;
         const category = state.state_category ? state.state_category : (warnings.push(localize('worldmap.warnings.statenocategory', "The state doesn't have category field.")), '');
-        const { owner, controller, cores } = loadStateHistory(id, state.history, historyNode, bookmarks, conditionExprs);
+        const { owner, controller, cores, claimBy } = loadStateHistory(id, state.history, historyNode, bookmarks, conditionExprs);
         const provinces = state.provinces._values.map(v => parseInt(v));
         const provinceTokens = collectProvinceTokens(stateNode);
         const impassable = state.impassable ?? false;
@@ -327,7 +336,8 @@ function parseStateRoot(
         })));
 
         result.push({
-            id, name, manpower, category, owner, controller, provinces, provinceTokens, cores, impassable, demilitarized, localSupplies,
+            id, name, localisedName, manpower, category, categoryColor: 0, owner, controller, provinces, provinceTokens, cores, claimBy,
+            impassable, demilitarized, localSupplies,
             buildingsMaxLevelFactor, buildings, provinceBuildings, victoryPoints, resources, datedHistory,
             file: stateFile,
             token: state._token ?? null,
@@ -442,7 +452,7 @@ function loadStateHistory(
     historyNode: Node | undefined,
     bookmarks: Bookmark[],
     conditionExprs: ConditionItem[],
-): Pick<State, 'owner' | 'controller' | 'cores'> {
+): Pick<State, 'owner' | 'controller' | 'cores' | 'claimBy'> {
     const owner: WithCondition<string>[] = history?.owner ? [{ value: history.owner, condition: true }] : [];
     const controller: WithCondition<string>[] = history?.controller ? [{ value: history.controller, condition: true }] : [];
     const cores: WithCondition<string>[] = uniqBy(
@@ -451,9 +461,15 @@ function loadStateHistory(
             .map(value => ({ value, condition: true as ConditionComplexExpr })) ?? [],
         item => item.value,
     );
+    const claimBy: WithCondition<string>[] = uniqBy(
+        history?.add_claim_by
+            .filter((value): value is string => value !== undefined)
+            .map(value => ({ value, condition: true as ConditionComplexExpr })) ?? [],
+        item => item.value,
+    );
 
     if (bookmarks.length === 0) {
-        return { owner, controller, cores };
+        return { owner, controller, cores, claimBy };
     }
 
     const scope: Scope = { scopeName: `State ${stateId}`, scopeType: 'state' };
@@ -476,7 +492,7 @@ function loadStateHistory(
     dateHistoryEffects.sort((left, right) => compareBookmarkDate(left.date, right.date));
 
     if (dateHistoryEffects.every(entry => entry.effects.length === 0)) {
-        return { owner, controller, cores };
+        return { owner, controller, cores, claimBy };
     }
 
     const sortedBookmarks = [...bookmarks].sort((left, right) => compareBookmarkDate(left.date, right.date));
@@ -509,6 +525,7 @@ function loadStateHistory(
                 owner,
                 controller,
                 cores,
+                claimBy,
                 conditionExprs,
             );
         }
@@ -517,13 +534,14 @@ function loadStateHistory(
 
     owner.reverse();
     controller.reverse();
-    return { owner, controller, cores };
+    return { owner, controller, cores, claimBy };
 }
 
 const historyItemTypes = [
     'owner', 'transfer_state_to', 'transfer_state',
     'controller', 'set_state_controller', 'set_state_controller_to',
     'add_core_of', 'remove_core_of',
+    'add_claim_by', 'remove_claim_by', 'add_state_claim', 'remove_state_claim',
 ];
 
 function findHistoryItems(
@@ -560,6 +578,7 @@ function extractFromHistoryEffect(
     owner: WithCondition<string>[],
     controller: WithCondition<string>[],
     cores: WithCondition<string>[],
+    claimBy: WithCondition<string>[],
     conditionExprs: ConditionItem[],
 ): void {
     const nodeName = effect.node.name?.toLowerCase();
@@ -597,6 +616,16 @@ function extractFromHistoryEffect(
         return;
     }
 
+    if ((nodeName === 'add_claim_by' || nodeName === 'remove_claim_by') && effect.scopeName === scope.scopeName) {
+        updateConditionalCountrySet(claimBy, value, nodeName === 'add_claim_by', combinedCondition, conditionExprs);
+        return;
+    }
+
+    if ((nodeName === 'add_state_claim' || nodeName === 'remove_state_claim') && referencesCurrentState) {
+        updateConditionalCountrySet(claimBy, effect.scopeName, nodeName === 'add_state_claim', combinedCondition, conditionExprs);
+        return;
+    }
+
     if (effect.scopeName !== scope.scopeName || (nodeName !== 'add_core_of' && nodeName !== 'remove_core_of')) {
         return;
     }
@@ -615,6 +644,32 @@ function extractFromHistoryEffect(
             items: [core.condition, { type: 'ornot', items: [combinedCondition] }],
         });
         extractConditionalExprs(core.condition, conditionExprs);
+    }
+}
+
+function updateConditionalCountrySet(
+    items: WithCondition<string>[],
+    value: string,
+    add: boolean,
+    condition: ConditionComplexExpr,
+    conditionExprs: ConditionItem[],
+): void {
+    let item = items.find(candidate => candidate.value === value);
+    if (add) {
+        if (!item) {
+            item = { value, condition: false };
+            items.push(item);
+        }
+        item.condition = simplifyCondition({ type: 'or', items: [item.condition, condition] });
+    } else if (item) {
+        item.condition = simplifyCondition({
+            type: 'and',
+            items: [item.condition, { type: 'ornot', items: [condition] }],
+        });
+    }
+
+    if (item) {
+        extractConditionalExprs(item.condition, conditionExprs);
     }
 }
 

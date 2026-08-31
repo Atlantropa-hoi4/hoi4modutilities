@@ -10,6 +10,8 @@ import { RailwayLoader, SupplyNodeLoader } from "./railway";
 import { ResourceDefinitionLoader } from "./resource";
 import { bookmarkToConditionItem, BookmarksLoader } from "./bookmarks";
 import { flatMap, uniqBy } from "lodash";
+import { sortConditionExprs } from "../../../hoiformat/condition";
+import { whenLocalisationIndexReady } from '../../../util/localisationIndex';
 
 export class WorldMapLoader extends Loader<WorldMapData> {
     private defaultMapLoader: DefaultMapLoader;
@@ -56,6 +58,9 @@ export class WorldMapLoader extends Loader<WorldMapData> {
     public async loadImpl(session: LoaderSession): Promise<LoadResult<WorldMapData>> {
         this.shouldReloadValue = false;
 
+        await whenLocalisationIndexReady({ showStatusBar: false });
+        session.throwIfCancelled();
+
         const provinceMap = await this.defaultMapLoader.load(session);
         session.throwIfCancelled();
 
@@ -89,6 +94,7 @@ export class WorldMapLoader extends Loader<WorldMapData> {
             ...bookmarks.result.bookmarks.map(bookmarkToConditionItem),
             ...flatMap(subLoaderResults, result => result.conditionExprs ?? []),
         ], condition => `${condition.scopeName}\0${condition.nodeContent}`);
+        sortConditionExprs(conditionExprs);
 
         const worldMap: WorldMapData = {
             ...provinceMap.result,
@@ -114,7 +120,7 @@ export class WorldMapLoader extends Loader<WorldMapData> {
         delete (worldMap as unknown as Partial<ProvinceMap>)['colorByPosition'];
         this.defaultMapLoader.releaseTransientCache(provinceMap.result);
 
-        const dependencies = mergeInLoadResult(subLoaderResults, 'dependencies');
+        const dependencies = [...mergeInLoadResult(subLoaderResults, 'dependencies'), 'localisation/*', 'localisation/*/*'];
         debug('World map dependencies', dependencies);
 
         return {

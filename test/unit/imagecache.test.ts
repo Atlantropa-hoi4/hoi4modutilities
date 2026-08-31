@@ -56,4 +56,20 @@ describe('image cache', () => {
 
         assert.strictEqual(await spriteCacheExpiryToken('interface/test.gfx?sprite', Promise.resolve(sprite)), 'gfx-token:image-token');
     });
+
+    it('includes both progress bar textures in the cache expiry token', async () => {
+        const spriteModule = require('../../src/util/image/sprite') as typeof import('../../src/util/image/sprite');
+        const sprite = new spriteModule.ProgressBarSprite(
+            'GFX_progress',
+            { path: {} } as any,
+            { path: {} } as any,
+            { x: 100, y: 20 },
+            true,
+        );
+
+        assert.strictEqual(
+            await spriteCacheExpiryToken('interface/test.gfx?sprite', Promise.resolve(sprite)),
+            'gfx-token:image-token:image-token',
+        );
+    });
 });

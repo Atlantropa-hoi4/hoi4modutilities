@@ -2,7 +2,7 @@ import * as path from 'path';
 import { ConditionItem, ConditionComplexExpr, extractConditionValue } from "../../hoiformat/condition";
 import { Node, Token } from "../../hoiformat/hoiparser";
 import { ContainerWindowType } from "../../hoiformat/gui";
-import { CustomMap, HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
+import { CustomMap, Enum, HOIPartial, SchemaDef, Position, convertNodeToJson, positionSchema, Raw } from "../../hoiformat/schema";
 import { countryScope } from "../../hoiformat/scope";
 import { Warning } from "../../util/common";
 import { localize } from "../../util/i18n";
@@ -25,6 +25,7 @@ export interface FocusTree {
     continuousFocusPositionX?: number;
     continuousFocusPositionY?: number;
     warnings: FocusWarning[];
+    searchFilters: string[];
 }
 
 interface FocusIconWithCondition {
@@ -61,6 +62,7 @@ export interface Focus {
     lintWarningCount: number;
     lintInfoCount: number;
     lintMessages?: string[];
+    searchFilters: string[];
 }
 
 export interface FocusWarning extends Warning<string> {
@@ -147,6 +149,7 @@ export interface FocusDef {
     _token: Token;
     text?: string;
     overlay?: string;
+    search_filters: Enum;
 }
 
 interface FocusIconDef {
@@ -223,6 +226,7 @@ const focusSchema: SchemaDef<FocusDef> = {
     },
     text: "string",
     overlay: "string",
+    search_filters: "enum",
 };
 
 const focusTreeSchema: SchemaDef<FocusTreeDef> = {

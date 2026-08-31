@@ -6,6 +6,7 @@ import { FolderLoader, FileLoader, Loader, LoadResult, LoadResultOD, mergeInLoad
 import { localize } from "../../../util/i18n";
 import { LoaderSession } from "../../../util/loader/loader";
 import { flatMap } from "lodash";
+import { getLocalisedTextQuickIfReady } from "../../../util/localisationIndex";
 
 interface CountryTagsFile extends CustomMap<string> {
 }
@@ -209,6 +210,8 @@ async function loadCountry(tag: string, countryFile: string): Promise<Country | 
         return {
             tag,
             color: convertColor(data.color),
+            localisedName: getLocalisedTextQuickIfReady(tag),
+            file: countryFile,
         };
     } catch (e) {
         error(e);

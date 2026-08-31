@@ -52,9 +52,10 @@ function createWorldMapForTest(): WorldMapData {
     return {
         width: 10,
         height: 10,
+        provinceDefinitionsFile: 'map/definition.csv',
         provinces: [null],
         states: [null],
-        countries: [{ tag: 'TAG', color: 1 }],
+        countries: [{ tag: 'TAG', color: 1, localisedName: 'Test Country', file: 'common/countries/TAG.txt' }],
         strategicRegions: [null],
         supplyAreas: [null],
         railways: [{ level: 1, provinces: [1, 2] }],

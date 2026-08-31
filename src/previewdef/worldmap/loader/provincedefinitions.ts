@@ -2,6 +2,7 @@ import { readFileFromModOrHOI4 } from "../../../util/fileloader";
 import { localize } from "../../../util/i18n";
 import { ProgressReporter, ProvinceDefinition, WorldMapWarning } from "../definitions";
 import { FileLoader, LoadResultOD } from "./common";
+import { getLocalisedTextQuickIfReady } from "../../../util/localisationIndex";
 
 export class DefinitionsLoader extends FileLoader<ProvinceDefinition[]> {
     protected async loadFromFile(): Promise<LoadResultOD<ProvinceDefinition[]>> {
@@ -21,12 +22,15 @@ async function loadDefinitions(definitionsFile: string, progressReporter: Progre
     await progressReporter(localize('worldmap.progress.loadingprovincedef', 'Loading province definitions...'));
 
     const [definitionsBuffer] = await readFileFromModOrHOI4(definitionsFile);
-    const definition = definitionsBuffer.toString().split(/(?:\r\n|\n|\r)/).map(line => line.split(/[,;]/)).filter(v => v.length >= 8);
+    const definition = definitionsBuffer.toString().split(/(?:\r\n|\n|\r)/)
+        .map((line, index) => ({ row: line.split(/[,;]/), lineNumber: index }))
+        .filter(value => value.row.length >= 8);
 
-    return definition.map(row => convertRowToProvince(row, warnings));
+    return definition.map(({ row, lineNumber }) => convertRowToProvince(row, lineNumber, warnings));
 }
 
-function convertRowToProvince(row: string[], warnings: WorldMapWarning[]): ProvinceDefinition {
+function convertRowToProvince(row: string[], lineNumber: number, warnings: WorldMapWarning[]): ProvinceDefinition {
+    const id = parseInt(row[0]);
     const r = parseInt(row[1]);
     const g = parseInt(row[2]);
     const b = parseInt(row[3]);
@@ -34,11 +38,13 @@ function convertRowToProvince(row: string[], warnings: WorldMapWarning[]): Provi
     const continent = parseInt(row[7]);
 
     return {
-        id: parseInt(row[0]),
+        id,
+        localisedName: getLocalisedTextQuickIfReady(`VICTORY_POINTS_${id}`),
         color: (r << 16) | (g << 8) | b,
         type,
         coastal: row[5].trim().toLowerCase() === 'true',
         terrain: row[6],
         continent,
+        lineNumber,
     };
 }

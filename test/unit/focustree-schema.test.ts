@@ -326,6 +326,21 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(focus.icon[4].condition, true);
         assert.strictEqual(focus.overlay, 'GFX_focus_overlay');
     });
+
+    it('collects focus search filters for the tree toolbar', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const [tree] = getFocusTree(parseHoi4File(`
+            focus_tree = {
+                id = filter_tree
+                focus = { id = ROOT x = 0 y = 0 search_filters = { industry army } }
+                focus = { id = CHILD x = 1 y = 1 search_filters = { army navy } }
+            }
+        `), [], 'common/national_focus/filter-tree.txt');
+
+        assert.deepStrictEqual(tree.searchFilters, ['industry', 'army', 'navy']);
+        assert.deepStrictEqual(tree.focuses.ROOT.searchFilters, ['industry', 'army']);
+        assert.deepStrictEqual(tree.focuses.CHILD.searchFilters, ['army', 'navy']);
+    });
 });
 
 function purgeFocusTreeSchemaModules(): void {
