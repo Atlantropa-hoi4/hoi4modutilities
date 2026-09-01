@@ -741,3 +741,10 @@ Upstream v0.17.2 feature port 2026-08-31:
 - [x] Run `npm run verify` and `git diff --check`; record omissions and remaining manual-validation risks.
 
 Review note: Feature port complete against the pinned upstream snapshot `fe9b758`. Ported behavior includes source-ordered effects, manual refresh, progress bars, fullscreen/common GUI controls, Focus search filters, install-path confirmation, and the current upstream World Map feature set mapped onto the fork payload/scheduler. Package identity, publisher, contribution IDs, desktop-only esbuild pipeline, and fork-specific preview/editing behavior remain unchanged. Verification passed `npm run verify` (589 unit tests, 19 Extension Host UI tests, production build, lint, and VSIX packaging) and `git diff --check`. Remaining manual-validation risks are complex World Map edit gestures against a full game installation and exact country-label placement parity with upstream.
+
+Formatter idempotence repair 2026-09-01:
+- [x] Reproduce nested inline-block changes across repeated formatter runs.
+- [x] Collapse eligible nested blocks to a fixed point in one formatter invocation.
+- [x] Add regression coverage and run focused formatter verification, TypeScript checks, lint, and whitespace checks.
+
+Review note: Nested inline-preferred blocks now collapse from the inside out within one formatter invocation, so formatting an already formatted document does not introduce an additional outer-block change. Verification passed 21 focused formatter/provider tests, TypeScript checks, lint, a 15-file fixture idempotence scan, and `git diff --check`.

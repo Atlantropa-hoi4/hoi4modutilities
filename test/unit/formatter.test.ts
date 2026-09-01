@@ -193,6 +193,27 @@ describe('HOI4 formatter', () => {
         ].join('\n'));
     });
 
+    it('collapses nested inline-preferred blocks to an idempotent result', () => {
+        const input = [
+            'limit = {',
+            '\tKOR = {',
+            '\t\tNOT = {',
+            '\t\t\thas_research = basic_medium_airframe',
+            '\t\t}',
+            '\t}',
+            '}',
+        ].join('\n');
+        const expected = [
+            'limit = {',
+            '\tKOR = { NOT = { has_research = basic_medium_airframe } }',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
+    });
+
     it('keeps multiline-preferred simple blocks expanded for readability', () => {
         const input = [
             'every_country = {',

@@ -244,6 +244,19 @@ function formatLines(lines: string[], profile: Hoi4FormatterProfile, initialDept
 }
 
 function collapseSimpleScriptBlocks(lines: string[]): string[] {
+    let currentLines = lines;
+
+    while (true) {
+        const collapsedLines = collapseSimpleScriptBlocksOnce(currentLines);
+        if (collapsedLines.length === currentLines.length) {
+            return collapsedLines;
+        }
+
+        currentLines = collapsedLines;
+    }
+}
+
+function collapseSimpleScriptBlocksOnce(lines: string[]): string[] {
     const result: string[] = [];
 
     for (let index = 0; index < lines.length; index++) {
