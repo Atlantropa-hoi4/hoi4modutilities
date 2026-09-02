@@ -26,6 +26,7 @@ export interface FocusTree {
     continuousFocusPositionY?: number;
     warnings: FocusWarning[];
     searchFilters: string[];
+    searchFilterLabels?: Record<string, string>;
 }
 
 interface FocusIconWithCondition {

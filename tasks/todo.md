@@ -748,3 +748,17 @@ Formatter idempotence repair 2026-09-01:
 - [x] Add regression coverage and run focused formatter verification, TypeScript checks, lint, and whitespace checks.
 
 Review note: Nested inline-preferred blocks now collapse from the inside out within one formatter invocation, so formatting an already formatted document does not introduce an additional outer-block change. Verification passed 21 focused formatter/provider tests, TypeScript checks, lint, a 15-file fixture idempotence scan, and `git diff --check`.
+
+Focus Tree filter UI/localisation repair 2026-09-02:
+- [x] Replace the clipped native multi-select with the shared compact dropdown control.
+- [x] Resolve filter display labels through the configured HOI4 preview localisation while preserving filter IDs.
+- [x] Run focused tests, TypeScript checks, lint, development build, Extension Host UI tests, and whitespace verification.
+
+Review note: Focus search filters now use the shared compact multi-select dropdown and display configured HOI4 localisation text while retaining raw IDs for filtering. Verification passed 24 focused content/payload tests, TypeScript checks, lint, development and production builds, 19 Extension Host UI tests, and `git diff --check`; the fixture workspace has no game localisation assets, so translated labels were verified at the payload boundary rather than by a rendered Extension Host screenshot.
+
+Focus Tree default focus scaffold 2026-09-02:
+- [x] Update generated focus defaults for icon, cost, AI weight, completion reward, and search filter.
+- [x] Reuse the selected-parent branch-root rule for generated `relative_position_id` and preserve clicked absolute placement through local coordinates.
+- [x] Add focused generation coverage and run TypeScript, lint, development/production builds, Extension Host UI tests, and whitespace verification.
+
+Review note: Double-click focus creation now keeps selected prerequisites, anchors `relative_position_id` to the selected parents' top branch focus, and writes coordinates relative to that anchor. The generated scaffold uses `icon = GFX`, `cost = 1`, AI factor 1, and empty completion reward/search filters; creation without a selected parent retains absolute coordinates. Verification passed 39 focused position/relation tests, TypeScript checks, lint, development/production builds, 19 Extension Host UI tests, and `git diff --check`.

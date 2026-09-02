@@ -34,11 +34,13 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
     }
 
     if ((request.endsWith('/util/localisationIndex') || request === '../../util/localisationIndex')
-        && parent?.filename?.includes('focusrender')) {
+        && parent?.filename?.includes('focustree')) {
         const resolveText = (key: string) => {
             localisationCalls.push(key);
             return key === 'FOCUS_A'
                 ? 'Localized focus A'
+                : key === 'FOCUS_FILTER_ARMY_BONUS'
+                    ? 'Army bonus'
                 : key === 'FOCUS_DYNAMIC'
                     ? 'Dynamic $COUNTRY$ [Root.GetName]'
                     : undefined;
@@ -46,6 +48,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
         return {
             getLocalisedTextQuick: async (key: string) => resolveText(key),
             getLocalisedTextQuickIfReady: resolveText,
+            isLocalisationIndexReady: () => localisationIndexEnabled,
             createLocalisedTextQuickIfReadyResolver: () => localisationIndexEnabled
                 ? resolveText
                 : (key: string) => key,
@@ -181,7 +184,43 @@ describe('focustree contentbuilder', () => {
         );
 
         assert.match(html, /id="inlay-window-container"[^>]*style="display:none;"/);
-        assert.match(html, /id="search-filters"[^>]*multiple/);
+        assert.match(html, /id="search-filters"[^>]*role="combobox"[^>]*aria-multiselectable="true"/);
+        assert.doesNotMatch(html, /<select id="search-filters"/);
+    });
+
+    it('resolves focus search filter labels without changing their ids', async () => {
+        localisationIndexEnabled = true;
+        const focusTree = {
+            id: 'tree_a',
+            focuses: {},
+            inlayWindows: [],
+            warnings: [],
+            searchFilters: ['FOCUS_FILTER_ARMY_BONUS'],
+        };
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState({
+            focusTrees: [focusTree],
+            allFocuses: [],
+            allInlays: [],
+            focusById: {},
+            gfxFiles: [],
+            focusIconGfxFileByName: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            loadDurationMs: 1,
+            deferredAssetLoad: true,
+        } as any);
+
+        assert.deepStrictEqual(result.payload.focusTrees[0].searchFilters, ['FOCUS_FILTER_ARMY_BONUS']);
+        assert.deepStrictEqual(result.payload.focusTrees[0].searchFilterLabels, {
+            FOCUS_FILTER_ARMY_BONUS: 'Army bonus',
+        });
     });
 
     it('keeps the fixed toolbar above interactive focus and inlay layers', () => {

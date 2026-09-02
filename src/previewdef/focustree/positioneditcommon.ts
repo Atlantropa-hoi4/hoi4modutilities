@@ -79,6 +79,10 @@ export interface CreateFocusTemplateAtPositionMessage extends FocusEditRequestBa
     treeEditKey: string;
     targetAbsoluteX: number;
     targetAbsoluteY: number;
+    targetLocalX?: number;
+    targetLocalY?: number;
+    parentFocusId?: string;
+    parentFocusIds?: string[];
 }
 
 export interface ApplyFocusLinkEditMessage extends FocusEditRequestBase {

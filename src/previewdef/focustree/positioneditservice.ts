@@ -147,8 +147,16 @@ export function buildCreateFocusTemplateTextChanges(
     treeEditKey: string,
     targetAbsoluteX: number,
     targetAbsoluteY: number,
+    parentFocusId?: string,
+    parentFocusIds?: readonly string[],
+    targetLocalX?: number,
+    targetLocalY?: number,
 ): CreateFocusTemplateTextChangeResult {
     if (!Number.isFinite(targetAbsoluteX) || !Number.isFinite(targetAbsoluteY)) {
+        return { error: 'Focus positions must use finite numeric coordinates.' };
+    }
+    if ((targetLocalX !== undefined && !Number.isFinite(targetLocalX))
+        || (targetLocalY !== undefined && !Number.isFinite(targetLocalY))) {
         return { error: 'Focus positions must use finite numeric coordinates.' };
     }
     const { root, bomOffset } = parseEditableFocusContext(content);
@@ -170,13 +178,22 @@ export function buildCreateFocusTemplateTextChanges(
 
     const lineEnding = detectLineEnding(content);
     const existingFocusIds = new Set(collectEditableFocuses(root).map(meta => meta.focusId));
+    const normalizedParentFocusIds = parentFocusId
+        ? Array.from(new Set((parentFocusIds?.length ? parentFocusIds : [parentFocusId]).filter(Boolean)))
+        : [];
+    const hasParentRelation = !!parentFocusId && normalizedParentFocusIds.length > 0;
+    if (hasParentRelation && (targetLocalX === undefined || targetLocalY === undefined)) {
+        return { error: 'A parent-linked focus requires local numeric coordinates.' };
+    }
     const change = createFocusTemplateInsertionChange(
         content,
         treeMeta,
-        Math.round(targetAbsoluteX),
-        Math.round(targetAbsoluteY),
+        Math.round(hasParentRelation && targetLocalX !== undefined ? targetLocalX : targetAbsoluteX),
+        Math.round(hasParentRelation && targetLocalY !== undefined ? targetLocalY : targetAbsoluteY),
         lineEnding,
         existingFocusIds,
+        hasParentRelation ? parentFocusId : undefined,
+        normalizedParentFocusIds,
     );
 
     return {
@@ -192,6 +209,10 @@ export function buildCreateFocusTemplateWorkspaceEdit(
     treeEditKey: string,
     targetAbsoluteX: number,
     targetAbsoluteY: number,
+    parentFocusId?: string,
+    parentFocusIds?: readonly string[],
+    targetLocalX?: number,
+    targetLocalY?: number,
 ): { edit?: vscode.WorkspaceEdit; placeholderFocusId?: string; placeholderRange?: TextRange; error?: string } {
     const result = buildCreateFocusTemplateTextChanges(
         document.getText(),
@@ -199,6 +220,10 @@ export function buildCreateFocusTemplateWorkspaceEdit(
         treeEditKey,
         targetAbsoluteX,
         targetAbsoluteY,
+        parentFocusId,
+        parentFocusIds,
+        targetLocalX,
+        targetLocalY,
     );
     const workspaceEditResult = buildWorkspaceEditResult(document, result.error, result.changes);
     return {

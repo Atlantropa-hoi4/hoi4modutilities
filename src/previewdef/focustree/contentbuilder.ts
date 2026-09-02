@@ -30,7 +30,7 @@ import {
     resolveFocusLocalizationTextByIdIfReady,
 } from './focusrender';
 import { sortFocusWarnings } from './focuslint';
-import { isLocalisationIndexReady } from '../../util/localisationIndex';
+import { createLocalisedTextQuickIfReadyResolver, isLocalisationIndexReady } from '../../util/localisationIndex';
 import {
     focusTreeRenderCancellationBatchSize,
     throwIfFocusTreeRenderCancelled,
@@ -187,6 +187,7 @@ export async function buildFocusTreeRenderBaseState(
     debug('Loader session focus tree', session.getLoadedLoaderNames());
 
     const focusTrees = loadResult.result.focusTrees;
+    resolveSearchFilterLabels(focusTrees);
     const xGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.x, defaultXGridSize);
     const yGridSize = normalizeFocusSpacingValue(loadResult.result.focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
@@ -236,6 +237,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     isCancelled?: () => boolean,
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
     throwIfFocusTreeRenderCancelled(isCancelled);
+    resolveSearchFilterLabels(baseState.focusTrees);
     const focusIconAssetResolution = baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution();
     const focusIconStyleSignature = baseState.focusIconStyleSignature ?? focusIconAssetResolution.styleSignature;
     const styleTable = new StyleTable();
@@ -353,6 +355,20 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
     };
+}
+
+export function resolveSearchFilterLabels(focusTrees: FocusTree[]): void {
+    const resolveText = createLocalisedTextQuickIfReadyResolver();
+    for (const focusTree of focusTrees) {
+        const searchFilters = focusTree.searchFilters ?? [];
+        if (searchFilters.length === 0) {
+            delete focusTree.searchFilterLabels;
+            continue;
+        }
+        focusTree.searchFilterLabels = Object.fromEntries(
+            searchFilters.map(filter => [filter, resolveText?.(filter) ?? filter]),
+        );
+    }
 }
 
 const unsupportedLocalisationWarningCode = 'focus-localisation-dynamic-token';
@@ -669,7 +685,11 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
     const searchFilters = `
         <div id="search-filters-container" class="${toolbarGroupStyle()}">
             <label for="search-filters" class="${toolbarLabelStyle()}">${localize('focustree.searchfilters', 'Filters: ')}</label>
-            <select id="search-filters" multiple class="${styleTable.style('searchFilters', () => `min-width:120px; max-width:260px; height:24px;`)}"></select>
+            <div class="select-container">
+                <div id="search-filters" class="select multiple-select ${styleTable.style('searchFilters', () => `min-width:120px; max-width:260px;`)}" tabindex="0" role="combobox" aria-multiselectable="true">
+                    <span class="value"></span>
+                </div>
+            </div>
         </div>`;
 
     const previewLabelMode = isLocalisationIndexEnabled() ? `

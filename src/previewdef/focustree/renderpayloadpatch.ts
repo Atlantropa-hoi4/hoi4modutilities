@@ -2,7 +2,7 @@ import { HOIPartial } from "../../hoiformat/schema";
 import { GridBoxType } from "../../hoiformat/gui";
 import { StyleTable } from "../../util/styletable";
 import { recordPerf } from "../../util/perf";
-import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from "./contentbuilder";
+import { resolveSearchFilterLabels, type FocusTreeRenderBaseState, type FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
 import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
 import {
@@ -161,6 +161,7 @@ export async function createFocusTreeRenderUpdate(
     isCancelled?: () => boolean,
 ): Promise<FocusTreeRenderUpdatePlan> {
     throwIfFocusTreeRenderCancelled(isCancelled);
+    resolveSearchFilterLabels(nextBaseState.focusTrees);
     const nextMetadata = await deriveRenderStateMetadataWithCancellation(
         nextBaseState.focusTrees,
         nextBaseState.xGridSize,
@@ -537,6 +538,8 @@ function toTreePatchComparable(focusTree: FocusTree) {
         inlayWindowRefs: focusTree.inlayWindowRefs,
         inlayWindows: inlayEntries,
         warnings: focusTree.warnings,
+        searchFilters: focusTree.searchFilters,
+        searchFilterLabels: focusTree.searchFilterLabels,
         focuses: focusEntries,
     };
 }

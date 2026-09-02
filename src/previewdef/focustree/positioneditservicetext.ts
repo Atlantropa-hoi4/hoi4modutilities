@@ -181,6 +181,8 @@ export function createFocusTemplateInsertionChange(
     targetAbsoluteY: number,
     lineEnding: string,
     existingFocusIds: Set<string>,
+    parentFocusId?: string,
+    parentFocusIds: readonly string[] = [],
 ): { change: FocusPositionTextChange; placeholderId: string; placeholderRange: TextRange } {
     const blockName = treeMeta.kind === 'shared'
         ? 'shared_focus'
@@ -189,8 +191,8 @@ export function createFocusTemplateInsertionChange(
             : 'focus';
     const placeholder = createUniquePlaceholderId(`${treeMeta.focusIdPrefix ?? 'TAG'}_FOCUS_ID`, existingFocusIds);
     const blockText = treeMeta.kind === 'focus'
-        ? buildNestedFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding)
-        : buildTopLevelFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding);
+        ? buildNestedFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding, parentFocusId, parentFocusIds)
+        : buildTopLevelFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding, parentFocusId, parentFocusIds);
 
     const placeholderOffset = blockText.text.indexOf(placeholder);
     return {
@@ -416,6 +418,8 @@ function buildNestedFocusTemplateBlock(
     x: number,
     y: number,
     lineEnding: string,
+    parentFocusId?: string,
+    parentFocusIds: readonly string[] = [],
 ): { insertPosition: number; text: string } {
     const insertPosition = getBlockClosingLineStart(content, blockRange);
     const { childIndent } = getBlockIndentation(content, blockRange);
@@ -428,12 +432,16 @@ function buildNestedFocusTemplateBlock(
         `${nestedIndent}icon = GFX${lineEnding}` +
         `${nestedIndent}cost = 1${lineEnding}` +
         `${lineEnding}` +
+        (parentFocusId ? `${nestedIndent}relative_position_id = ${parentFocusId}${lineEnding}` : '') +
         `${nestedIndent}x = ${x}${lineEnding}` +
         `${nestedIndent}y = ${y}${lineEnding}` +
         `${lineEnding}` +
+        `${nestedIndent}ai_will_do = { factor = 1 }${lineEnding}` +
+        (parentFocusIds.length > 0 ? buildInsertedFocusReferenceField(nestedIndent, 'prerequisite', parentFocusIds, lineEnding) : '') +
         `${nestedIndent}completion_reward = {${lineEnding}` +
         `${lineEnding}` +
         `${nestedIndent}}${lineEnding}` +
+        `${nestedIndent}search_filters = { }${lineEnding}` +
         `${childIndent}}${lineEnding}`;
     return {
         insertPosition,
@@ -449,6 +457,8 @@ function buildTopLevelFocusTemplateBlock(
     x: number,
     y: number,
     lineEnding: string,
+    parentFocusId?: string,
+    parentFocusIds: readonly string[] = [],
 ): { insertPosition: number; text: string } {
     const insertPosition = blockRange.end;
     const blockIndent = getLineIndent(content, blockRange.start);
@@ -462,12 +472,16 @@ function buildTopLevelFocusTemplateBlock(
         `${childIndent}icon = GFX${lineEnding}` +
         `${childIndent}cost = 1${lineEnding}` +
         `${lineEnding}` +
+        (parentFocusId ? `${childIndent}relative_position_id = ${parentFocusId}${lineEnding}` : '') +
         `${childIndent}x = ${x}${lineEnding}` +
         `${childIndent}y = ${y}${lineEnding}` +
         `${lineEnding}` +
+        `${childIndent}ai_will_do = { factor = 1 }${lineEnding}` +
+        (parentFocusIds.length > 0 ? buildInsertedFocusReferenceField(childIndent, 'prerequisite', parentFocusIds, lineEnding) : '') +
         `${childIndent}completion_reward = {${lineEnding}` +
         `${lineEnding}` +
         `${childIndent}}${lineEnding}` +
+        `${childIndent}search_filters = { }${lineEnding}` +
         `${blockIndent}}${suffix}`;
     return {
         insertPosition,

@@ -333,6 +333,10 @@ export class FocusTreeEditCommandHandler {
             msg.treeEditKey,
             msg.targetAbsoluteX,
             msg.targetAbsoluteY,
+            msg.parentFocusId,
+            msg.parentFocusIds,
+            msg.targetLocalX,
+            msg.targetLocalY,
         );
         if (error) {
             await this.reportError(msg, error);

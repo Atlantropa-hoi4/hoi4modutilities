@@ -124,6 +124,7 @@ let selectedFocusIdsByTree: Record<string, string[]> = initialWebviewState.selec
 let selectedSearchFilters: string[] = Array.isArray(restoredState.selectedSearchFilters)
     ? restoredState.selectedSearchFilters.filter((value): value is string => typeof value === 'string')
     : [];
+let searchFiltersDropdown: DivDropdown | undefined = undefined;
 let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let conditionPresetsDropdown: DivDropdown | undefined = undefined;
@@ -151,6 +152,7 @@ let pendingFocusLinkParentIds: string[] = [];
 let pendingFocusLinkType: PendingFocusLinkType | undefined = undefined;
 let hoveredRelationFocusId: string | undefined = undefined;
 let focusNavigateTimer: number | undefined = undefined;
+let blankFocusSelectionClearTimer: number | undefined = undefined;
 let focusContextMenuTargetId: string | undefined = undefined;
 let suppressConditionSelectionChange = false;
 let suppressConditionPresetSelectionChange = false;
@@ -807,6 +809,23 @@ function clearCurrentSelectedFocusIds() {
     setCurrentSelectedFocusIds([]);
 }
 
+function cancelBlankFocusSelectionClear() {
+    if (blankFocusSelectionClearTimer === undefined) {
+        return;
+    }
+
+    window.clearTimeout(blankFocusSelectionClearTimer);
+    blankFocusSelectionClearTimer = undefined;
+}
+
+function scheduleBlankFocusSelectionClear() {
+    cancelBlankFocusSelectionClear();
+    blankFocusSelectionClearTimer = window.setTimeout(() => {
+        blankFocusSelectionClearTimer = undefined;
+        clearCurrentSelectedFocusIds();
+    }, 250);
+}
+
 function isFocusSelected(focusId: string | undefined): boolean {
     return !!focusId && currentSelectedFocusIds.has(focusId);
 }
@@ -894,7 +913,7 @@ function setFocusPositionEditMode(enabled: boolean) {
 }
 
 function refreshSearchFilterOptions(): void {
-    const select = document.getElementById('search-filters') as HTMLSelectElement | null;
+    const select = document.getElementById('search-filters') as HTMLDivElement | null;
     const container = document.getElementById('search-filters-container') as HTMLDivElement | null;
     const focusTree = getCurrentFocusTree();
     if (!select || !focusTree) {
@@ -902,11 +921,14 @@ function refreshSearchFilterOptions(): void {
     }
     const filters = focusTree.searchFilters ?? [];
     selectedSearchFilters = selectedSearchFilters.filter(filter => filters.includes(filter));
-    replaceSelectOptions(select, filters.map(filter => ({ value: filter, text: filter })));
-    Array.from(select.options).forEach(option => {
-        option.selected = selectedSearchFilters.includes(option.value);
-        option.className = `st-focus-icon-${normalizeForStyle(`GFX_${option.value}`)}`;
+    replaceDivDropdownOptions(select, filters.map(filter => ({
+        value: filter,
+        text: focusTree.searchFilterLabels?.[filter] ?? filter,
+    })));
+    select.querySelectorAll<HTMLDivElement>('.option').forEach(option => {
+        option.classList.add(`st-focus-icon-${normalizeForStyle(`GFX_${option.getAttribute('value') ?? ''}`)}`);
     });
+    searchFiltersDropdown?.selectedValues$.next(selectedSearchFilters);
     if (container) {
         container.style.display = filters.length > 0 ? 'flex' : 'none';
     }
@@ -1460,10 +1482,12 @@ function setupFocusPositionDragHandlers() {
 
         if (!focusElement) {
             if (getBlankCanvasPanTarget(event)) {
-                clearCurrentSelectedFocusIds();
+                scheduleBlankFocusSelectionClear();
             }
             return;
         }
+
+        cancelBlankFocusSelectionClear();
 
         clearPendingFocusNavigate();
         event.preventDefault();
@@ -1819,11 +1843,23 @@ function setupFocusTemplateCreateHandler() {
         event.preventDefault();
         event.stopPropagation();
         clearPendingFocusNavigate();
+        cancelBlankFocusSelectionClear();
+
+        const parentFocusIds = Array.from(currentSelectedFocusIds)
+            .filter(focusId => !!currentRenderedFocusTree?.focuses[focusId]);
+        const parentFocusId = parentFocusIds.length > 0
+            ? resolvePendingFocusLinkAnchorId(parentFocusIds, parentFocusIds[0])
+            : undefined;
+        const parentPosition = parentFocusId ? currentFocusPositions[parentFocusId] : undefined;
 
         postFocusEdit('createFocusTemplateAtPosition', {
             treeEditKey: currentRenderedFocusTree.createTemplate?.editKey ?? '',
             targetAbsoluteX: targetPosition.x,
             targetAbsoluteY: targetPosition.y,
+            targetLocalX: parentPosition ? targetPosition.x - parentPosition.x : undefined,
+            targetLocalY: parentPosition ? targetPosition.y - parentPosition.y : undefined,
+            parentFocusId,
+            parentFocusIds: parentFocusIds.length > 0 ? parentFocusIds : undefined,
         });
     }, true);
 }
@@ -3242,11 +3278,14 @@ window.addEventListener('load', runSafely(async function() {
 
         retriggerSearch = () => { searchedFocus = search(oldSearchboxValue, false); };
 
-        const searchFiltersElement = document.getElementById('search-filters') as HTMLSelectElement | null;
+        const searchFiltersElement = document.getElementById('search-filters') as HTMLDivElement | null;
         if (searchFiltersElement) {
+            searchFiltersDropdown = new DivDropdown(searchFiltersElement, true, {
+                empty: feLocalize('combobox.all', '(All)'),
+            });
             refreshSearchFilterOptions();
-            searchFiltersElement.addEventListener('change', () => {
-                selectedSearchFilters = Array.from(searchFiltersElement.selectedOptions).map(option => option.value);
+            searchFiltersDropdown.selectedValues$.subscribe(selection => {
+                selectedSearchFilters = [...selection];
                 setState({ selectedSearchFilters });
                 applySearchFilters();
             });
