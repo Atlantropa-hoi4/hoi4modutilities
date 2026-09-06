@@ -64,6 +64,12 @@ describe('character preview', () => {
         clearStubbedModuleCache();
     });
 
+    it('detects a character roster outside the canonical folder', () => {
+        assert.strictEqual(getCharacterPreviewPriority('file:///draft.txt', '/draft.txt', 'characters = { }'), 0);
+        assert.strictEqual(getCharacterPreviewPriority('file:///draft.gui', '/draft.gui', 'characters = { }'), undefined);
+        assert.strictEqual(getCharacterPreviewPriority('file:///draft.txt', '/draft.txt', '# characters = { }'), undefined);
+    });
+
     it('detects direct common/characters text files', () => {
         assert.strictEqual(
             getCharacterPreviewPriority('file:///workspace/common/characters/TAG.txt', '/workspace/common/characters/TAG.txt'),

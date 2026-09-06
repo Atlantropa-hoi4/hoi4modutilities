@@ -1,0 +1,6 @@
+leader_traits = {
+    sample_honest = {
+        sprite = 2
+        stability_factor = 0.05
+    }
+}

@@ -19,6 +19,15 @@ export function getState(): Record<string, any> {
     return vscode.getState() || {};
 }
 
+export function previewOption(key: string, fallback: boolean): boolean {
+	const value = ((window as any).previewOptions ?? {})[key];
+	return typeof value === "boolean" ? value : fallback;
+}
+
+export function setPreviewOption(key: string, value: boolean): void {
+	vscode.postMessage({ command: "setPreviewOption", key, value });
+}
+
 export function scrollToState() {
     const state = getState();
     const xOffset = state.xOffset || 0;

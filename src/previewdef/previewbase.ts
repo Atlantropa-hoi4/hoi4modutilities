@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { setPreviewOption } from '../util/previewoptions';
+import { ensureCopyTargetIsInsideWorkspace } from '../util/previewcopytarget';
 import { localize } from '../util/i18n';
 import { error, debug } from '../util/debug';
 import { dirUri, getDocumentByUri } from '../util/vsccommon';
@@ -134,6 +136,9 @@ export abstract class PreviewBase {
     }
 
     public async initializePanelContent(document: vscode.TextDocument): Promise<void> {
+        if (this.isDisposed) {
+            return;
+        }
         this.panel.webview.html = localize('loading', 'Loading...');
         await this.onDocumentChange(document);
     }
@@ -203,6 +208,7 @@ export abstract class PreviewBase {
             const targetFolder = targetFolderUri;
             const [buffer] = await readFileFromModOrHOI4(file);
             const targetPath = vscode.Uri.joinPath(targetFolder, file);
+            await ensureCopyTargetIsInsideWorkspace(targetPath, targetFolder);
             await mkdirs(dirUri(targetPath));
             await writeFile(targetPath, buffer);
 
@@ -233,7 +239,9 @@ export abstract class PreviewBase {
     protected abstract getContent(document: vscode.TextDocument): Promise<string>;
 
     protected applyContent(content: string): void | Promise<void> {
-        this.panel.webview.html = content;
+        if (!this.isDisposed) {
+            this.panel.webview.html = content;
+        }
     }
 
     private async handleMessage(msg: any): Promise<void> {
@@ -272,6 +280,11 @@ export abstract class PreviewBase {
                     break;
                 case 'telemetry':
                     sendByMessage(msg);
+                    break;
+                case 'setPreviewOption':
+                    if (typeof msg.key === 'string') {
+                        setPreviewOption(msg.key, msg.value);
+                    }
                     break;
                 case 'reload':
                     try {

@@ -99,27 +99,11 @@ const lowerIsBetterKeys = new Set([
 export async function loadModifierDefinitions(): Promise<ModifierDefinitions> {
 	const result: ModifierDefinitions = {};
 
-	let files: string[];
-	try {
-		files = await listFilesFromModOrHOI4(modifierDefinitionsDir);
-	} catch (e) {
-		// A workspace with no modifier_definitions folder at all is normal, not an error: every
-		// modifier then falls back to the heuristic.
-		debug("No modifier definitions to read", e);
-		return result;
-	}
-
-	for (const file of files) {
-		if (!file.toLowerCase().endsWith(".txt")) {
-			continue;
-		}
-
+	for (const file of await listModifierDefinitionFiles()) {
 		try {
-			const [content] = await readFileFromModOrHOI4(`${modifierDefinitionsDir}/${file}`);
-			const node = parseHoi4File(content.toString());
-			Object.assign(result, readModifierDefinitions(node));
+			const [content] = await readFileFromModOrHOI4(file);
+			Object.assign(result, readModifierDefinitions(parseHoi4File(content.toString())));
 		} catch (e) {
-			// One unparseable file must not cost the preview every other definition.
 			debug(`Failed to read modifier definitions from ${file}`, e);
 		}
 	}
@@ -388,4 +372,15 @@ function symbolOf(value: Node["value"]): string | undefined {
 		return value.name;
 	}
 	return undefined;
+}
+
+export async function listModifierDefinitionFiles(): Promise<string[]> {
+	try {
+		return (await listFilesFromModOrHOI4(modifierDefinitionsDir))
+			.filter(file => file.toLowerCase().endsWith('.txt'))
+			.map(file => `${modifierDefinitionsDir}/${file}`);
+	} catch (e) {
+		debug('No modifier definitions to read', e);
+		return [];
+	}
 }

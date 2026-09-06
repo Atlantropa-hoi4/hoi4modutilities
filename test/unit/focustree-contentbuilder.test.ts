@@ -25,7 +25,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
     }
 
     if ((request.endsWith('/util/featureflags') || request === '../../util/featureflags')
-        && parent?.filename?.includes('focustree')) {
+        && parent?.filename?.includes('focustree') && !/previewsession(?:\.test)?\.js$/.test(parent.filename)) {
         return {
             isUseConditionInFocusEnabled: () => false,
             isLocalisationIndexEnabled: () => localisationIndexEnabled,
@@ -34,7 +34,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
     }
 
     if ((request.endsWith('/util/localisationIndex') || request === '../../util/localisationIndex')
-        && parent?.filename?.includes('focustree')) {
+        && parent?.filename?.includes('focustree') && !/previewsession(?:\.test)?\.js$/.test(parent.filename)) {
         const resolveText = (key: string) => {
             localisationCalls.push(key);
             return key === 'FOCUS_A'

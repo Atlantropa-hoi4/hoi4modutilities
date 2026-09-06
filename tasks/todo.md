@@ -762,3 +762,17 @@ Focus Tree default focus scaffold 2026-09-02:
 - [x] Add focused generation coverage and run TypeScript, lint, development/production builds, Extension Host UI tests, and whitespace verification.
 
 Review note: Double-click focus creation now keeps selected prerequisites, anchors `relative_position_id` to the selected parents' top branch focus, and writes coordinates relative to that anchor. The generated scaffold uses `icon = GFX`, `cost = 1`, AI factor 1, and empty completion reward/search filters; creation without a selected parent retains absolute coordinates. Verification passed 39 focused position/relation tests, TypeScript checks, lint, development/production builds, 19 Extension Host UI tests, and `git diff --check`.
+
+MD v1.1.32 integration 2026-09-06:
+- [x] Compare v1.1.30 through v1.1.32 with local implementations.
+- [x] Port applicable preview fixes and character role/trait cards while preserving feature registration and lazy watchers.
+- [x] Add regression coverage and run type checks, lint, builds, unit/UI tests, and whitespace validation.
+
+Review note: Integrated applicable changes from MillenniumDawn/MD-VSCode-Utility-Tool v1.1.32 (`3ba502f`). Fixed restored-filter startup for idea/event/decision cards, added character role cards with trait medals, modifiers, search, filters, source navigation and dependency refresh, and added persistent MIO inherited-trait/grid/overlap toggles with scrollbar clearance. Preview copies reject symlink/junction escapes and async preview completion no longer assigns HTML to disposed panels. Existing GFX owner checks, quoted-list decoding, trailing-dot numbers and empty adjacency rules already implement the corresponding upstream behavior. Preserved the feature catalog, lazy watcher lifecycle, portrait asset fallbacks, extension identity and dependency versions; upstream issue automation and the unrelated World Map renderer split were not imported. Added English/Korean/Russian/Chinese messages and repaired a pre-existing missing comma exposed by compiling the legacy localisation tables. Verification passed the full unit suite, TypeScript, lint, development/production builds, 19 Extension Host integration tests, local VSIX packaging via `npm run verify`, and whitespace validation. Generated ignored bundles and VSIX were rebuilt to include the new character stylesheet and webview behavior. Manual interaction in a representative real mod workspace remains unverified.
+
+MD v1.1.32 master merge 2026-09-06:
+- [x] Commit the MD integration and merge it with the existing master changes.
+- [x] Preserve MIO refresh controls, persistent toggles, and both task histories while resolving conflicts.
+- [x] Verify the merged source and finalize the local merge commit.
+
+Review note: Merged `codex/millennium` (`90e0e96`) into master while preserving its v0.17.2 features and MIO refresh button. Resolved the three merge conflicts by combining the controls/imports and task histories. The initial aggregate verification exposed cross-suite Focus Tree localisation mocks; narrowed their scope to preserve the preview-session tests' shared readiness module. Verification of the merged tree passed 672 unit tests, TypeScript checks, lint, production build, the Extension Host integration suite and VSIX packaging. Local merge only; no remote changes.

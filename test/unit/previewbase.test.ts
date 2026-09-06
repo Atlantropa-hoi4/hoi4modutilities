@@ -56,9 +56,10 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
     }
 
     if ((request.endsWith('/util/vsccommon') || request === '../util/vsccommon')
-        && parent?.filename?.includes('previewbase')) {
+        && (parent?.filename?.includes('previewbase') || parent?.filename?.includes('loaderpreview'))) {
         return {
             dirUri: (uri: unknown) => uri,
+            getRelativePathInWorkspace: () => "common/characters/test.txt",
             getDocumentByUri: () => currentDocument,
             mkdirs: async () => undefined,
             writeFile: async (uri: unknown, buffer: unknown) => {
@@ -80,6 +81,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { PreviewBase } = require('../../src/previewdef/previewbase') as typeof import('../../src/previewdef/previewbase');
+const { LoaderPreview } = require('../../src/previewdef/loaderpreview') as typeof import('../../src/previewdef/loaderpreview');
+nodeModule._load = originalLoad;
 
 class TestPreview extends PreviewBase {
     protected async getContent(): Promise<string> {
@@ -130,10 +133,6 @@ function createPanel() {
 }
 
 describe('PreviewBase navigation', () => {
-    after(() => {
-        nodeModule._load = originalLoad;
-    });
-
     beforeEach(() => {
         currentDocument = undefined;
         shownTextDocuments.length = 0;
@@ -203,5 +202,62 @@ describe('PreviewBase navigation', () => {
         assert.strictEqual(workspaceFolderPickCount, 0);
         assert.strictEqual(writtenFiles.length, 1);
         assert.strictEqual(shownTextDocuments.length, 1);
+    });
+});
+
+describe('PreviewBase disposal', () => {
+    it('does not assign a loading page after disposal', async () => {
+        const panel = createPanel();
+        const preview = new TestPreview({} as any, panel as any);
+        preview.dispose();
+        await preview.initializePanelContent(makeDocument(1, '') as any);
+        assert.strictEqual(panel.webview.html, '');
+    });
+
+    it('does not assign an async render completed after disposal', async () => {
+        const panel = createPanel();
+        const preview = new DeferredPreview({} as any, panel as any);
+        const rendering = preview.onDocumentChange(makeDocument(1, '') as any);
+        await new Promise(resolve => setImmediate(resolve));
+        preview.dispose();
+        preview.resolve(1, 'stale');
+        await rendering;
+        assert.strictEqual(panel.webview.html, '');
+    });
+
+    it('does not fall back to HTML when disposal happens during postMessage', async () => {
+        const panel = { ...createPanel(), visible: true };
+        let finishPost: (accepted: boolean) => void = () => undefined;
+        (panel.webview as any).postMessage = () => new Promise(resolve => { finishPost = resolve; });
+        class UpdatingPreview extends LoaderPreview<any> {}
+        const preview = new UpdatingPreview({} as any, panel as any,
+            () => ({ onLoadDone: () => undefined }),
+            async () => ({ html: 'page', update: { data: { version: currentDocument?.version } } }));
+        currentDocument = makeDocument(1, 'first');
+        await preview.onDocumentChange(currentDocument as any);
+        currentDocument = makeDocument(2, 'second');
+        const rendering = preview.onDocumentChange(currentDocument as any);
+        await new Promise(resolve => setImmediate(resolve));
+        panel.webview.html = 'unchanged';
+        preview.dispose();
+        finishPost(false);
+        await rendering;
+        assert.strictEqual(panel.webview.html, 'unchanged');
+    });
+
+    it('passes a dependency invalidation through a superseding document render', async () => {
+        const options: boolean[] = [];
+        class UpdatingPreview extends LoaderPreview<any> {}
+        const preview = new UpdatingPreview({} as any, createPanel() as any,
+            () => ({ onLoadDone: () => undefined }),
+            async (_loader, _uri, _webview, reason) => {
+                options.push(reason?.dependencyChanged ?? false);
+                return { html: 'page' };
+            });
+        const dependency = preview.onDocumentChange(makeDocument(1, '') as any, { source: 'dependency' });
+        const document = preview.onDocumentChange(makeDocument(2, '') as any, { source: 'document' });
+        await Promise.all([dependency, document]);
+        await preview.onDocumentChange(makeDocument(3, '') as any);
+        assert.deepStrictEqual(options, [true, false]);
     });
 });
