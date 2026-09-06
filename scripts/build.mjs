@@ -100,6 +100,7 @@ async function copyStaticAssets() {
     await ensureDir(staticDir);
     const codiconRoot = path.dirname(require.resolve('@vscode/codicons/package.json'));
     await copyAsset(path.join(rootDir, 'resource/common.css'), path.join(staticDir, 'common.css'));
+    await copyAsset(path.join(rootDir, 'resource/characterpreview.css'), path.join(staticDir, 'characterpreview.css'));
     await copyAsset(path.join(rootDir, 'resource/hoicard.css'), path.join(staticDir, 'hoicard.css'));
     await copyAsset(path.join(rootDir, 'resource/ideapreview.css'), path.join(staticDir, 'ideapreview.css'));
     await copyAsset(path.join(rootDir, 'resource/hoigraph.css'), path.join(staticDir, 'hoigraph.css'));

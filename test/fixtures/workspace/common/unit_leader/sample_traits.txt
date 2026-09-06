@@ -1,0 +1,7 @@
+leader_traits = {
+    sample_planner = {
+        type = land
+        modifier = { planning_speed = 0.1 }
+        attack_skill = 1
+    }
+}

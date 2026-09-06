@@ -18,6 +18,7 @@ export interface MioWarning extends Warning<string> {
 export type TraitEffect = 'equiment' | 'production' | 'organization';
 
 export interface MioTrait {
+    sourceMioId?: string;
     id: string;
     name: string;
     icon: string | undefined;
@@ -146,7 +147,8 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
     const id = mioDefItem._key;
     const mioDef = mioDefItem._value;
     const baseMio = mioDef.include ? dependentMios.find(m => m.id === mioDef.include) : undefined;
-    const traits = baseMio?.traits ? {...baseMio.traits} : {};
+    const traits: Record<string, MioTrait> = Object.fromEntries(
+        Object.entries(baseMio?.traits ?? {}).map(([key, trait]) => [key, { ...trait }]));
     const conditionExprs = baseMio?.conditionExprs ? [...baseMio.conditionExprs] : [];
     const warnings: MioWarning[] = [];
 
@@ -166,6 +168,7 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
 
     for (const traitDef of [...mioDef.trait, ...mioDef.add_trait]) {
         const trait = getTrait(traitDef, filePath, warnings, conditionExprs);
+        trait.sourceMioId = id;
         if (traits[trait.id]) {
             warnings.push({
                 source: id,
@@ -177,6 +180,9 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
 
     for (const traitDef of mioDef.override_trait) {
         overrideTrait(traitDef, traits, filePath, warnings, conditionExprs);
+        if (traitDef.token && traits[traitDef.token]) {
+            traits[traitDef.token].sourceMioId = id;
+        }
     }
 
     for (const traitId of mioDef.remove_trait._values) {

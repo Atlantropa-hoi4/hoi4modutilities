@@ -1,6 +1,7 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, runSafely, enableZoom } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, runSafely, enableZoom, previewOption, setPreviewOption } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
-import { minBy } from "lodash";
+import { toggleBinder } from "./util/toolbar";
+import { minBy, maxBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
 import { StyleTable } from "../src/util/styletable";
 import { applyCondition, ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
@@ -26,6 +27,9 @@ const restoredState = getState();
 
 let selectedExprs = restoreArrayState<ConditionItem>(restoredState.selectedExprs);
 let selectedMioIndex = restoreSelectionIndex(restoredState.selectedMioIndex, mios.length);
+let showIncludedTraits = previewOption('mio.showIncludedTraits', true);
+let showGrid = previewOption('mio.showGrid', false);
+let showOverlaps = previewOption('mio.showOverlaps', true);
 let conditions: DivDropdown | undefined = undefined;
 
 function conditionItemToExprKey(expr: ConditionItem): string {
@@ -69,6 +73,9 @@ async function buildContent() {
     
     const styleTable = new StyleTable();
     const mio = mios[selectedMioIndex];
+    if (!mio) {
+        return;
+    }
     const renderedTrait: Record<string, string> = window.renderedTrait[mio.id];
     const traits = Object.values(mio.traits);
 
@@ -84,7 +91,8 @@ async function buildContent() {
 
     const traitPosition: Record<string, NumberPosition> = {};
     calculateTraitVisible(mio, allowBranchOptionsValue);
-    const traitGrixBoxItems = traits.map(trait => traitToGridItem(trait, mio, allowBranchOptionsValue, traitPosition)).filter((v): v is GridBoxItem => !!v);
+    const visibleTraits = showIncludedTraits ? traits : traits.filter(trait => trait.sourceMioId === mio.id);
+    const traitGrixBoxItems = visibleTraits.map(trait => traitToGridItem(trait, mio, allowBranchOptionsValue, traitPosition)).filter((v): v is GridBoxItem => !!v);
     
     const minX = minBy(Object.values(traitPosition), 'x')?.x ?? 0;
     const leftPadding = gridbox.position.x._value - Math.min(minX * window.xGridSize, 0);
@@ -100,9 +108,119 @@ async function buildContent() {
         cornerPosition: 0.5,
     });
 
-    miopreviewplaceholder.innerHTML = traitPreviewContent + styleTable.toStyleElement(window.styleNonce);
+    const gridGuideLayer = showGrid ? buildGridGuide(styleTable, gridbox, window.xGridSize, leftPadding, traitPosition) : '';
+    const overlapLayer = showOverlaps ? buildOverlapOverlay(styleTable, gridbox, window.xGridSize, leftPadding, findOverlaps(traitGrixBoxItems)) : '';
+    miopreviewplaceholder.innerHTML = traitPreviewContent + gridGuideLayer + overlapLayer + styleTable.toStyleElement(window.styleNonce);
 
     subscribeNavigators();
+}
+
+// Column grid overlay. Draws a faint vertical line at every column boundary (k = 0..10) anchored to
+// the same grid origin as the traits/headers, and emphasizes the k = 10 line — the right edge of
+// column 9. The in-game MIO tree window only renders columns 0..9, so any trait with x > 9 bugs out;
+// this marks where that limit falls. The layer sits inside #miopreviewplaceholder so it scales with
+// zoom and shifts together with the grid.
+function buildGridGuide(
+    styleTable: StyleTable,
+    gridbox: GridBoxType,
+    xGridSize: number,
+    leftPadding: number,
+    traitPosition: Record<string, NumberPosition>,
+): string {
+    const limitColumn = 10; // right edge of column 9 (valid columns are 0..9)
+    const yGridSize = gridbox.slotsize?.height?._value ?? 117;
+    const top = gridbox.position.y._value;
+    const maxY = maxBy(Object.values(traitPosition), 'y')?.y ?? 0;
+    const height = (maxY + 1) * yGridSize;
+
+    let lines = '';
+    for (let k = 0; k <= limitColumn; k++) {
+        const isLimit = k === limitColumn;
+        const cls = isLimit
+            ? styleTable.style('mio-grid-limit', () => `position:absolute; top:0; width:2px; background:#e06c3b; opacity:0.85; pointer-events:none;`)
+            : styleTable.style('mio-grid-line', () => `position:absolute; top:0; width:1px; background:#ffffff; opacity:0.12; pointer-events:none;`);
+        lines += `<div class="${cls} ${styleTable.oneTimeStyle('mio-grid-x-' + k, () => `left:${k * xGridSize}px; height:${height}px;`)}"></div>`;
+    }
+
+    const label = `<div class="${styleTable.style('mio-grid-label', () => `position:absolute; top:-14px; font-size:10px; color:#e06c3b; white-space:nowrap; pointer-events:none;`)} ${styleTable.oneTimeStyle('mio-grid-label-pos', () => `left:${limitColumn * xGridSize + 4}px;`)}">${feLocalize("miopreview.gridlimit", "x = 9 limit")}</div>`;
+
+    return `<div class="${styleTable.oneTimeStyle('mio-grid-layer', () => `position:absolute; left:${leftPadding}px; top:${top}px;`)}">${lines}${label}</div>`;
+}
+
+interface TraitOverlap {
+    x: number;
+    y: number;
+    count: number;
+}
+
+// Traits that resolve to the same grid slot are drawn on top of each other, so all but the last
+// one rendered are invisible — the tree just silently "loses" a trait. Collisions are detected on
+// the grid items rather than on mio.traits so traits hidden by a condition, by remove_trait or by
+// the inherited-traits toggle can't raise a false positive.
+export function findOverlaps(items: GridBoxItem[]): TraitOverlap[] {
+    const countByCell: Record<string, TraitOverlap> = {};
+    for (const item of items) {
+        const key = item.gridX + ',' + item.gridY;
+        const cell = countByCell[key];
+        if (cell) {
+            cell.count++;
+        } else {
+            countByCell[key] = { x: item.gridX, y: item.gridY, count: 1 };
+        }
+    }
+
+    return Object.values(countByCell).filter(cell => cell.count > 1);
+}
+
+// Marks every grid slot holding more than one trait with a red box, so an overlap is visible
+// instead of silently hiding a trait. Anchored like the grid guide above, so it lives inside
+// #miopreviewplaceholder and follows zoom and pan. The boxes are pointer-events:none on purpose:
+// the click must still reach the trait's .navigator underneath so the user can jump to the
+// definition and fix the position. z-index beats the trait label spans (z-index 5), whose .trait
+// wrapper has no stacking context of its own, so the border isn't painted over.
+function buildOverlapOverlay(
+    styleTable: StyleTable,
+    gridbox: GridBoxType,
+    xGridSize: number,
+    leftPadding: number,
+    overlaps: TraitOverlap[],
+): string {
+    if (overlaps.length === 0) {
+        return '';
+    }
+
+    const yGridSize = gridbox.slotsize?.height?._value ?? 117;
+    const top = gridbox.position.y._value;
+
+    const boxClass = styleTable.style('mio-overlap-box', () => `
+        position:absolute;
+        box-sizing:border-box;
+        border:2px solid #e33;
+        background:rgba(255,0,0,0.18);
+        pointer-events:none;
+    `);
+    const countClass = styleTable.style('mio-overlap-count', () => `
+        position:absolute;
+        top:1px;
+        right:3px;
+        font-size:10px;
+        font-weight:bold;
+        color:#fff;
+        text-shadow:0 0 3px #000;
+        pointer-events:none;
+    `);
+
+    const boxes = overlaps.map(overlap => {
+        const positionClass = styleTable.oneTimeStyle('mio-overlap-pos', () => `
+            left:${overlap.x * xGridSize}px;
+            top:${overlap.y * yGridSize}px;
+            width:${xGridSize}px;
+            height:${yGridSize}px;
+        `);
+        return `<div class="${boxClass} ${positionClass}"><span class="${countClass}">&times;${overlap.count}</span></div>`;
+    }).join('');
+
+    return `<div class="${styleTable.oneTimeStyle('mio-overlap-layer', () => `position:absolute; left:${leftPadding}px; top:${top}px; z-index:6;`)}">${boxes}</div>`;
 }
 
 function calculateTraitVisible(mio: Mio, allowBranchOptionsValue: Record<string, boolean>) {
@@ -292,7 +410,7 @@ window.addEventListener('load', runSafely(async function() {
 
     // Zoom
     const contentElement = document.getElementById('miopreviewcontent') as HTMLDivElement;
-    enableZoom(contentElement, 0, 40);
+    enableZoom(contentElement, 0, (window as any).toolbarHeight ?? 52);
 
     // Toggle warnings
     const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
@@ -305,6 +423,19 @@ window.addEventListener('load', runSafely(async function() {
         });
     }
     
+    const bindToggle = toggleBinder(() => { void buildContent(); });
+    bindToggle('show-included-traits', showIncludedTraits, value => {
+        showIncludedTraits = value;
+        setPreviewOption('mio.showIncludedTraits', value);
+    });
+    bindToggle('show-grid', showGrid, value => {
+        showGrid = value;
+        setPreviewOption('mio.showGrid', value);
+    });
+    bindToggle('show-overlaps', showOverlaps, value => {
+        showOverlaps = value;
+        setPreviewOption('mio.showOverlaps', value);
+    });
     updateSelectedMio(false);
     await buildContent();
     scrollToState();

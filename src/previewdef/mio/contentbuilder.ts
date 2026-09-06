@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { getPreviewOptions, mioPreviewOptionKeys } from '../../util/previewoptions';
 import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
 import { forceError, randomString } from '../../util/common';
@@ -71,6 +72,7 @@ const leftPadding = 50;
 const topPadding = 50;
 const xGridSize = 87;
 const yGridSize = 117;
+const toolbarHeight = 52;
 
 async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[], jsCodes: string[], styleNonce: string, file: string): Promise<string> {
 
@@ -94,6 +96,8 @@ async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[
     jsCodes.push('window.gridBox = ' + JSON.stringify(gridBox));
     jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
     jsCodes.push('window.xGridSize = ' + xGridSize);
+    jsCodes.push('window.toolbarHeight = ' + toolbarHeight);
+    jsCodes.push('window.previewOptions = ' + JSON.stringify(getPreviewOptions(mioPreviewOptionKeys)));
 
     return (
         `<div id="dragger" additionalDraggerHostId="miopreviewcontent" class="${styleTable.oneTimeStyle('dragger', () => `
@@ -103,7 +107,7 @@ async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[
             left:0;
             top:0;
         `)}"></div>` +
-        `<div id="miopreviewcontent" class="${styleTable.oneTimeStyle('miopreviewcontent', () => `top:40px;left:-20px;position:relative`)}">
+        `<div id="miopreviewcontent" class="${styleTable.oneTimeStyle('miopreviewcontent', () => `top:${toolbarHeight}px;left:-20px;position:relative`)}">
             <div id="miopreviewplaceholder"></div>
         </div>` +
         renderWarningContainer(styleTable) +
@@ -120,7 +124,7 @@ function renderWarningContainer(styleTable: StyleTable) {
         position: fixed;
         top: 0;
         left: 0;
-        padding-top: 40px;
+        padding-top: ${toolbarHeight}px;
         background: var(--vscode-editor-background);
         box-sizing: border-box;
         display: none;
@@ -167,11 +171,18 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
             <i class="codicon codicon-warning"></i>
         </button>`;
 
-    return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
+    const toggles = [
+        ['show-included-traits', localize('miopreview.showIncludedTraits', 'Show included traits')],
+        ['show-grid', localize('miopreview.showGrid', 'Show grid')],
+        ['show-overlaps', localize('miopreview.showOverlaps', 'Show overlapping traits')],
+    ].map(([id, label]) => `<label for="${id}">${htmlTextEscape(label)}</label><input type="checkbox" id="${id}">`).join('');
+
+    return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: ${toolbarHeight}px;`)}">
         <div class="toolbar">
             ${mioSelect}
             ${conditions}
             ${warningsButton}
+            ${toggles}
         </div>
     </div>`;
 }
