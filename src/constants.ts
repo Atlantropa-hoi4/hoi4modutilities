@@ -19,6 +19,7 @@ export namespace ContextName {
 }
 
 export namespace Commands {
+    export const FormatWorkspace = 'server.hoi4modutilities.formatWorkspace';
     export const Preview = 'server.hoi4modutilities.preview';
     export const PreviewWorld = 'server.hoi4modutilities.previewworld';
     export const ScanReferences = 'server.hoi4modutilities.scanreferences';

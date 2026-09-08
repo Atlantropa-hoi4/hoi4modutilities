@@ -177,6 +177,12 @@
         "command": "server.hoi4modutilities.test",
         "title": "HOI4 test",
         "category": "%hoi4modutilities.category%"
+      },
+      {
+        "command": "server.hoi4modutilities.formatWorkspace",
+        "title": "%hoi4modutilities.formatWorkspace.title%",
+        "category": "%hoi4modutilities.category%",
+        "enablement": "workspaceFolderCount > 0"
       }
     ],
     "customEditors": [
@@ -248,6 +254,10 @@
           "command": "server.hoi4modutilities.test",
           "when": "server.hoi4MUInDev",
           "group": "9_dev@1"
+        },
+        {
+          "command": "server.hoi4modutilities.formatWorkspace",
+          "group": "2_tools@4"
         }
       ]
     }

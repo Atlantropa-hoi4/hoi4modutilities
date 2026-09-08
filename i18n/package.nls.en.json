@@ -16,5 +16,6 @@
     "hoi4modutilities.previewworld.title": "Preview World Map",
     "hoi4modutilities.scanreferences.title": "Scan References",
     "hoi4modutilities.selecthoifolder.title": "Select HOI4 Install Path",
-    "hoi4modutilities.selectmodfile.title": "Select Mod File"
+    "hoi4modutilities.selectmodfile.title": "Select Mod File",
+    "hoi4modutilities.formatWorkspace.title": "Format Workspace HOI4 Files"
 }

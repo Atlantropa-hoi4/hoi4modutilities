@@ -18,5 +18,6 @@
     "hoi4modutilities.selecthoifolder.title": "选择钢四安装路径",
     "hoi4modutilities.selectmodfile.title": "选择模组定义文件",
     "hoi4modutilities.previewLocalisation.title": "预览内容语言",
-    "hoi4modutilities.previewLocalisation.desc": "事件预览中显示的语言。"
+    "hoi4modutilities.previewLocalisation.desc": "事件预览中显示的语言。",
+    "hoi4modutilities.formatWorkspace.title": "格式化工作区 HOI4 文件"
 }

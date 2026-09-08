@@ -319,5 +319,10 @@
   "Show included traits": "Показать унаследованные черты",
   "Show grid": "Показать сетку",
   "Show overlapping traits": "Показать перекрывающиеся черты",
-  "x = 9 limit": "Граница x = 9"
+  "x = 9 limit": "Граница x = 9",
+  "Open a workspace folder to format HOI4 files.": "Откройте папку рабочей области для форматирования файлов HOI4.",
+  "Format Workspace HOI4 Files": "Форматировать файлы HOI4 рабочей области",
+  "Failed to find workspace HOI4 files: {0}": "Не удалось найти файлы HOI4 рабочей области: {0}",
+  "Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.": "Форматирование рабочей области: изменено {0}, без изменений {1}, ошибок {2}. Изменения не сохраняются автоматически.",
+  "Formatting cancelled. {0}": "Форматирование отменено. {0}"
 }

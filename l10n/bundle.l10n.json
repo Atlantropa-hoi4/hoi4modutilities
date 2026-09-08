@@ -319,5 +319,10 @@
   "Show included traits": "Show included traits",
   "Show grid": "Show grid",
   "Show overlapping traits": "Show overlapping traits",
-  "x = 9 limit": "x = 9 limit"
+  "x = 9 limit": "x = 9 limit",
+  "Open a workspace folder to format HOI4 files.": "Open a workspace folder to format HOI4 files.",
+  "Format Workspace HOI4 Files": "Format Workspace HOI4 Files",
+  "Failed to find workspace HOI4 files: {0}": "Failed to find workspace HOI4 files: {0}",
+  "Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.": "Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.",
+  "Formatting cancelled. {0}": "Formatting cancelled. {0}"
 }

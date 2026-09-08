@@ -319,5 +319,10 @@
   "Show included traits": "显示继承的特质",
   "Show grid": "显示网格",
   "Show overlapping traits": "显示重叠的特质",
-  "x = 9 limit": "x = 9 边界"
+  "x = 9 limit": "x = 9 边界",
+  "Open a workspace folder to format HOI4 files.": "请打开工作区文件夹以格式化 HOI4 文件。",
+  "Format Workspace HOI4 Files": "格式化工作区 HOI4 文件",
+  "Failed to find workspace HOI4 files: {0}": "查找工作区 HOI4 文件失败：{0}",
+  "Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.": "工作区格式化：已更改 {0} 个，未更改 {1} 个，失败 {2} 个。更改不会自动保存。",
+  "Formatting cancelled. {0}": "格式化已取消。{0}"
 }

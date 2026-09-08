@@ -15,5 +15,6 @@
     "hoi4modutilities.preview.title": "Предпросмотр файла HOI4",
     "hoi4modutilities.previewworld.title": "Предпросмотр карты мира",
     "hoi4modutilities.scanreferences.title": "Найти похожее",
-    "hoi4modutilities.selectmodfile.title": "Выбрать файл мода"
+    "hoi4modutilities.selectmodfile.title": "Выбрать файл мода",
+    "hoi4modutilities.formatWorkspace.title": "Форматировать файлы HOI4 рабочей области"
 }

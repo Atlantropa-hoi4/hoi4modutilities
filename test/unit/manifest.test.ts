@@ -7,6 +7,23 @@ import chineseBundle from '../../l10n/bundle.l10n.zh-cn.json';
 import packageNls from '../../package.nls.json';
 
 describe('extension manifest', () => {
+    it('contributes workspace formatting with translated UI messages', () => {
+        const command = manifest.contributes.commands.find(entry => entry.command === 'server.hoi4modutilities.formatWorkspace');
+        assert.ok(command);
+        assert.strictEqual(command.enablement, 'workspaceFolderCount > 0');
+        for (const message of [
+            'Format Workspace HOI4 Files',
+            'Open a workspace folder to format HOI4 files.',
+            'Failed to find workspace HOI4 files: {0}',
+            'Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.',
+            'Formatting cancelled. {0}',
+        ]) {
+            for (const bundle of [defaultBundle, koreanBundle, russianBundle, chineseBundle]) {
+                assert.ok((bundle as Record<string, string>)[message]);
+            }
+        }
+    });
+
     it('uses contextual activation with runtime l10n metadata', () => {
         assert.ok(!manifest.activationEvents.includes('onStartupFinished'));
         assert.ok(!manifest.activationEvents.some(event => event.startsWith('onLanguage:')));

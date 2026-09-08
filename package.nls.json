@@ -21,5 +21,6 @@
     "hoi4modutilities.selecthoifolder.desc": "Heart of Iron IV install path.",
     "hoi4modutilities.selectmodfile.title": "Set Working Mod File",
     "hoi4modutilities.previewLocalisation.title": "Preview Localization",
-    "hoi4modutilities.previewLocalisation.desc": "Language of content in event tree preview."
+    "hoi4modutilities.previewLocalisation.desc": "Language of content in event tree preview.",
+    "hoi4modutilities.formatWorkspace.title": "Format Workspace HOI4 Files"
 }
