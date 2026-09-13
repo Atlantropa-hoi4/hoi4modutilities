@@ -11,6 +11,7 @@ export interface FocusTreeMessageApplyContext {
     setSelectedFocusTreeById: (treeId: string | undefined) => void;
     setFocusTrees: (focusTrees: FocusTree[]) => void;
     applyFocusTreePatches: (focusTreePatches: Array<{ treeId: string; tree: FocusTree }> | undefined) => void;
+    setContinuousFocusHtml?: (html: string) => void;
     setRenderedFocus: (renderedFocus: Record<string, string>) => void;
     patchRenderedFocus: (changedEntries: Record<string, string> | undefined, removedKeys: string[] | undefined) => void;
     setRenderedInlayWindows: (renderedInlayWindows: Record<string, string>) => void;
@@ -59,6 +60,7 @@ export function applyFocusTreeContentUpdate(
                 : (message.selectedTreeId ?? previousSelectedTreeId),
         );
     }
+    if (message.continuousFocusHtml !== undefined) { context.setContinuousFocusHtml?.(message.continuousFocusHtml); }
     if (changedSlots.has('treeBody') && message.renderedFocus) {
         context.setRenderedFocus(message.renderedFocus);
     } else if (changedSlots.has('treeBody')) {

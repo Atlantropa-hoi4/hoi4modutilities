@@ -33,6 +33,9 @@ export function getPreviewOptions(keys: string[]): Record<string, unknown> {
 }
 
 export function setPreviewOption(key: string, value: unknown): void {
+    if (key === 'technology.country' && typeof value === 'string' && /^[a-z0-9_]{0,32}$/i.test(value)) {
+        void contextContainer.current?.globalState.update(prefix + key, value);
+    }
     if (mioPreviewOptionKeys.includes(key) && typeof value === 'boolean') {
         void contextContainer.current?.globalState.update(prefix + key, value);
     }

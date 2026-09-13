@@ -143,6 +143,7 @@ export function renderFocusHtmlTemplate(
     xGridSize: number,
     yGridSize: number,
     localizedText: string | undefined = resolveFocusLocalizationText(focus),
+    guiContent?: string,
 ): string {
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
@@ -175,7 +176,8 @@ export function renderFocusHtmlTemplate(
         <div class="focus-checkbox ${sharedStyles.checkboxClass}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>
-        ${focus.overlay ? `<div class="${sharedStyles.overlayClass} ${styleTable.name('focus-overlay-' + normalizeForStyle(focus.overlay))}"></div>` : ''}
+        ${guiContent ?? `
+        ${focus.overlay ? `<div class="focus-decoration-gfx ${sharedStyles.overlayClass} ${styleTable.name('focus-overlay-' + normalizeForStyle(focus.overlay))}"></div>` : ''}
         <div
         class="${sharedStyles.iconSlotClass}">
             <div
@@ -187,7 +189,7 @@ export function renderFocusHtmlTemplate(
         <span
         class="${sharedStyles.spanClass}">
         ${textContent}
-        </span>
+        </span>`}
     </div>`;
 }
 

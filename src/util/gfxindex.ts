@@ -30,7 +30,8 @@ const gfxIndexBuildConcurrency = 8;
 
 const gfxIndexService = new IndexService<GfxIndexSnapshot>({
     global: {
-        build: estimatedSize => buildGlobalGfxIndex(estimatedSize),
+        cache: { folder: 'interface', extension: '.gfx', layer: 'global' },
+        build: (estimatedSize, signal) => buildGlobalGfxIndex(estimatedSize, signal),
         commit: snapshot => {
             globalGfxIndex = snapshot.index;
             dlcGfxIndex = snapshot.dlcIndex ?? {};
@@ -43,7 +44,8 @@ const gfxIndexService = new IndexService<GfxIndexSnapshot>({
         telemetryEvent: 'gfxIndex',
     },
     workspace: {
-        build: estimatedSize => buildWorkspaceGfxIndex(estimatedSize),
+        cache: { folder: 'interface', extension: '.gfx', layer: 'workspace' },
+        build: (estimatedSize, signal) => buildWorkspaceGfxIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceGfxUpdates.invalidateAll();
             workspaceGfxIndex = snapshot.index;
@@ -131,7 +133,7 @@ export async function getGfxContainerFiles(gfxNames: (string | undefined)[]): Pr
     return uniq((await Promise.all(gfxNames.map(getGfxContainerFile))).filter((v): v is string => v !== undefined));
 }
 
-async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<GfxIndexSnapshot> {
+async function buildGlobalGfxIndex(estimatedSize: [number], signal?: AbortSignal): Promise<GfxIndexSnapshot> {
     const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
     const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
     const rebuiltGlobalGfxIndex: Record<string, GfxIndexItem | undefined> = {};
@@ -144,23 +146,29 @@ async function buildGlobalGfxIndex(estimatedSize: [number]): Promise<GfxIndexSna
         mapWithConcurrency(
             baseGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
             gfxIndexBuildConcurrency,
-            f => fillGfxItems('interface/' + f, rebuiltGlobalGfxIndex, baseOptions, estimatedSize),
+            f => fillGfxItems('interface/' + f, rebuiltGlobalGfxIndex, baseOptions, estimatedSize, signal),
         ),
         mapWithConcurrency(
             dlcGfxFiles.filter(f => f.toLocaleLowerCase().endsWith('.gfx')),
             gfxIndexBuildConcurrency,
-            f => fillGfxItems('interface/' + f, rebuiltDlcGfxIndex, dlcOptions, estimatedSize),
+            f => fillGfxItems('interface/' + f, rebuiltDlcGfxIndex, dlcOptions, estimatedSize, signal),
         ),
     ]);
     return { index: rebuiltGlobalGfxIndex, dlcIndex: rebuiltDlcGfxIndex };
 }
 
-async function buildWorkspaceGfxIndex(estimatedSize: [number]): Promise<GfxIndexSnapshot> {
+export async function getIndexedGfxNames(): Promise<string[]> {
+    if (!isGfxIndexEnabled()) { return []; }
+    await Promise.all([ensureGlobalGfxIndex(), ensureWorkspaceGfxIndex()]);
+    return [...new Set([...Object.keys(globalGfxIndex), ...Object.keys(dlcGfxIndex), ...Object.keys(workspaceGfxIndex)])];
+}
+
+async function buildWorkspaceGfxIndex(estimatedSize: [number], signal?: AbortSignal): Promise<GfxIndexSnapshot> {
     const options = { mod: true, hoi4: false, dlc: false, recursively: true };
     const rebuiltWorkspaceGfxIndex: Record<string, GfxIndexItem | undefined> = {};
     const gfxFiles = (await listFilesFromModOrHOI4('interface', options)).filter(f => f.toLocaleLowerCase().endsWith('.gfx'));
     await mapWithConcurrency(gfxFiles, gfxIndexBuildConcurrency, f =>
-        fillGfxItems('interface/' + f, rebuiltWorkspaceGfxIndex, options, estimatedSize));
+        fillGfxItems('interface/' + f, rebuiltWorkspaceGfxIndex, options, estimatedSize, signal));
     return { index: rebuiltWorkspaceGfxIndex };
 }
 
@@ -196,7 +204,8 @@ export function isGfxIndexReady(): boolean {
         || (gfxIndexService.isReady('global') && gfxIndexService.isReady('workspace'));
 }
 
-async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean, dlc?: boolean }, estimatedSize?: [number]): Promise<void> {
+async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexItem | undefined>, options: { mod?: boolean, hoi4?: boolean, dlc?: boolean }, estimatedSize?: [number], signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     try {
         if (estimatedSize) {
             estimatedSize[0] += gfxFile.length;

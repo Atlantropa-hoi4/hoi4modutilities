@@ -3,6 +3,9 @@ import { BehaviorSubject } from 'rxjs';
 import { AnimationFrameScheduler } from '../../webviewsrc/worldmap/framescheduler';
 import { ResourceImageCache } from '../../webviewsrc/worldmap/resourceimagecache';
 import { nextBehaviorSubjectIfChanged } from '../../webviewsrc/worldmap/subject';
+import { buildSync } from 'esbuild';
+import * as path from 'path';
+import * as vm from 'vm';
 
 describe('world map webview frame scheduling', () => {
     it('coalesces work into one frame and cancels pending work on dispose', () => {
@@ -97,13 +100,21 @@ describe('world map webview frame scheduling', () => {
 
     it('coalesces ViewPoint state emissions while publishing immediate render invalidations', () => {
         const previousDocument = (global as any).document;
+        const previousWindow = (global as any).window;
         const previousRequestAnimationFrame = (global as any).requestAnimationFrame;
         const previousCancelAnimationFrame = (global as any).cancelAnimationFrame;
         const callbacks = new Map<number, FrameRequestCallback>();
         let nextHandle = 0;
 
         try {
-            (global as any).document = { body: new EventTarget() };
+            class ElementStub extends EventTarget {
+                public dataset = { previewWheel: 'zoom' };
+                public append(..._children: unknown[]): void { }
+                public setAttribute(_name: string, _value: string): void { }
+                public remove(): void { }
+            }
+            (global as any).document = { body: new ElementStub(), createElement: () => new ElementStub() };
+            (global as any).window = Object.assign(new EventTarget(), { __i18ntable: {} });
             (global as any).requestAnimationFrame = (callback: FrameRequestCallback) => {
                 const handle = ++nextHandle;
                 callbacks.set(handle, callback);
@@ -111,8 +122,17 @@ describe('world map webview frame scheduling', () => {
             };
             (global as any).cancelAnimationFrame = (handle: number) => callbacks.delete(handle);
 
-            const { ViewPoint } = require('../../webviewsrc/worldmap/viewpoint') as typeof import('../../webviewsrc/worldmap/viewpoint');
+            // Execute the browser bundle so other unit suites' host i18n mocks cannot leak in.
+            const bundle = buildSync({ entryPoints: [path.resolve(__dirname, '../../..', 'webviewsrc/worldmap/viewpoint.ts')],
+                bundle: true, write: false, platform: 'browser', format: 'cjs' });
+            const module = { exports: {} };
+            vm.runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports,
+                document: (global as any).document, window: (global as any).window,
+                requestAnimationFrame: (global as any).requestAnimationFrame,
+                cancelAnimationFrame: (global as any).cancelAnimationFrame, setTimeout, clearTimeout, console });
+            const { ViewPoint } = module.exports as typeof import('../../webviewsrc/worldmap/viewpoint');
             const canvas = new EventTarget() as EventTarget & { width: number; height: number };
+            (canvas as any).getBoundingClientRect = () => ({ left: 0, top: 0 });
             canvas.width = 800;
             canvas.height = 600;
             const viewPoint = new ViewPoint(canvas as unknown as HTMLCanvasElement, {
@@ -144,6 +164,7 @@ describe('world map webview frame scheduling', () => {
             assert.strictEqual(states.length, 2);
         } finally {
             (global as any).document = previousDocument;
+            (global as any).window = previousWindow;
             (global as any).requestAnimationFrame = previousRequestAnimationFrame;
             (global as any).cancelAnimationFrame = previousCancelAnimationFrame;
             delete require.cache[require.resolve('../../webviewsrc/worldmap/viewpoint')];
@@ -240,7 +261,7 @@ describe('world map webview indexes', () => {
 });
 
 function createWheelEvent(deltaY: number, pageX: number, pageY: number): Event {
-    return Object.assign(new Event('wheel'), { deltaY, pageX, pageY });
+    return Object.assign(new Event('wheel'), { deltaY, pageX, pageY, clientX: pageX, clientY: pageY });
 }
 
 interface FakeImage {

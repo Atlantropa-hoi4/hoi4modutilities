@@ -20,6 +20,8 @@ export function previewedFileUriScript(uri: vscode.Uri): DynamicScript {
 }
 
 export function html(webview: vscode.Webview, body: string, scripts: (string | DynamicScript)[], styles?: (string | StyleTable | DynamicScript | NonceOnly)[]): string {
+    const configuredWheel = vscode.workspace?.getConfiguration?.('hoi4ModUtilities')?.previewWheel;
+    const wheelMode = configuredWheel === 'zoom' || configuredWheel === 'scroll' ? configuredWheel : 'auto';
     const preparedScripts = scripts.map<[string, string]>(script => {
         if (typeof script === 'string') {
             const uri = contextContainer.current ?
@@ -85,7 +87,7 @@ export function html(webview: vscode.Webview, body: string, scripts: (string | D
         ${preparedScripts.map(v => v[0]).join('')}
         ${preparedStyles.map(v => v[0]).join('')}
     </head>
-    <body class="vscode-body" data-extension-id="${contextContainer.current?.extension.id ?? ''}">${body.replace(/\s\s+/g, ' ')}</body>
+    <body class="vscode-body" data-preview-wheel="${wheelMode}" data-extension-id="${contextContainer.current?.extension.id ?? ''}">${body.replace(/\s\s+/g, ' ')}</body>
 </html>
 `;
 }

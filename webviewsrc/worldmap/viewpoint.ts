@@ -1,3 +1,5 @@
+import { shouldZoomWheel } from '../../src/util/previewwheel';
+import { installZoomControls } from '../util/zoomcontrols';
 import { Subscriber } from "../util/event";
 import { FEWorldMap } from "./loader";
 import { Zone, Point } from "./definitions";
@@ -16,6 +18,7 @@ export class ViewPoint extends Subscriber {
 
     private writableObservable$: BehaviorSubject<ViewPointObj>;
     private writableChanged$ = new Subject<void>();
+    private zoomControls?: ReturnType<typeof installZoomControls>;
     private observableScheduler: AnimationFrameScheduler;
 
     constructor(
@@ -35,9 +38,11 @@ export class ViewPoint extends Subscriber {
             this.writableObservable$.next(this.toJson());
         });
         this.enableDragger();
+        this.zoomControls = installZoomControls(direction => this.zoom(direction, this.canvas.width / 2, this.canvas.height / 2), () => this.scale);
     }
 
     public dispose(): void {
+        this.zoomControls?.dispose();
         this.observableScheduler.dispose();
         this.writableChanged$.complete();
         this.writableObservable$.complete();
@@ -155,32 +160,31 @@ export class ViewPoint extends Subscriber {
             }
         }));
     
-        this.addSubscription(fromEvent<WheelEvent>(this.canvas, 'wheel').subscribe((e) => {
-            this.x += e.pageX / this.scale;
-            this.y += e.pageY / this.scale;
-    
-            if (e.deltaY > 0) {
-                if (this.scale <= 1) {
-                    if (this.scale > 0.25) {
-                        this.scale /= 2;
-                    }
-                } else {
-                    this.scale = Math.max(1, this.scale - 1);
-                }
-            } else if (e.deltaY < 0) {
-                if (this.scale < 1) {
-                    this.scale *= 2;
-                } else {
-                    this.scale = Math.min(16, Math.floor(this.scale + 1));
-                }
+        this.addSubscription(fromEvent<WheelEvent>(this.canvas, 'wheel', { passive: false }).subscribe(e => {
+            if (!this.loader.worldMap) { return; }
+            e.preventDefault();
+            if (shouldZoomWheel(e, document.body.dataset.previewWheel)) {
+                const rect = this.canvas.getBoundingClientRect();
+                this.zoom(-Math.sign(e.deltaY), e.clientX - rect.left, e.clientY - rect.top);
+            } else {
+                const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.canvas.height : 1;
+                this.x += e.deltaX * unit / this.scale;
+                this.y += e.deltaY * unit / this.scale;
+                this.alignViewPointXY();
+                this.updateObservable();
             }
-    
-            this.x -= e.pageX / this.scale;
-            this.y -= e.pageY / this.scale;
-    
-            this.alignViewPointXY();
-            this.updateObservable();
         }));
+    }
+
+    private zoom(direction: number, x: number, y: number): void {
+        if (!this.loader.worldMap || !direction) { return; }
+        const previous = this.scale;
+        this.scale = direction > 0 ? (previous < 1 ? previous * 2 : Math.min(16, Math.floor(previous + 1)))
+            : (previous <= 1 ? Math.max(0.25, previous / 2) : Math.max(1, previous - 1));
+        this.x += x / previous - x / this.scale;
+        this.y += y / previous - y / this.scale;
+        this.alignViewPointXY();
+        this.updateObservable();
     }
 
     private alignViewPointXY() {
@@ -209,6 +213,7 @@ export class ViewPoint extends Subscriber {
     }
 
     private updateObservable() {
+        this.zoomControls?.();
         this.writableChanged$.next();
         this.observableScheduler.schedule();
     }

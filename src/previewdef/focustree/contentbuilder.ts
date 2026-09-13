@@ -37,6 +37,8 @@ import {
     yieldToFocusTreeRenderCancellation,
 } from './rendercancellation';
 
+import { FocusPresentation, renderFocusGui, renderContinuousFocusGui } from './presentation';
+
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
 const focusTreeAssetRenderBatchSize = 32;
@@ -44,6 +46,7 @@ const focusTreeAssetRenderBatchSize = 32;
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTree[];
     selectedTreeId?: string;
+    continuousFocusHtml?: string;
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     gfxFiles: string[];
@@ -66,6 +69,7 @@ export interface FocusTreeRenderPayload {
 }
 
 export interface FocusTreeRenderBaseState {
+    presentation?: FocusPresentation;
     focusTrees: FocusTree[];
     allFocuses: Focus[];
     allInlays: FocusTree["inlayWindows"][number][];
@@ -217,7 +221,8 @@ export async function buildFocusTreeRenderBaseState(
         gfxFiles: loadResult.result.gfxFiles,
         focusIconGfxFileByName: loadResult.result.focusIconGfxFileByName,
         focusIconAssetResolution: loadResult.result.focusIconAssetResolution,
-        focusIconStyleSignature: loadResult.result.focusIconAssetResolution.styleSignature,
+        presentation: loadResult.result.presentation,
+        focusIconStyleSignature: loadResult.result.focusIconAssetResolution.styleSignature + JSON.stringify(loadResult.result.presentation ?? null),
         gridBox,
         xGridSize,
         yGridSize,
@@ -262,6 +267,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.xGridSize,
             baseState.yGridSize,
             isCancelled,
+            !!baseState.presentation?.item,
         );
     }
     throwIfFocusTreeRenderCancelled(isCancelled);
@@ -290,6 +296,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.xGridSize,
             baseState.yGridSize,
             focusLocalizationTextById[focus.id],
+            await renderFocusGui(focus, baseState.presentation, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize, focusLocalizationTextById[focus.id]),
         ).replace(/\s\s+/g, ' ');
     }
     const focusTemplateRenderDurationMs = Date.now() - focusTemplateRenderStart;
@@ -315,6 +322,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             }
         }
     }
+    const continuousFocusHtml = await renderContinuousFocusGui(baseState.presentation, styleTable, baseState.gfxFiles);
     const inlayRenderDurationMs = Date.now() - inlayRenderStart;
     throwIfFocusTreeRenderCancelled(isCancelled);
 
@@ -323,6 +331,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             focusTrees: baseState.focusTrees,
             selectedTreeId: baseState.focusTrees[0]?.id,
             renderedFocus,
+            continuousFocusHtml,
             renderedInlayWindows,
             gfxFiles: baseState.gfxFiles,
             focusIconGfxFileByName: baseState.focusIconGfxFileByName,
@@ -450,6 +459,7 @@ export async function renderFocusTreeFocusHtmlMap(
             baseState.xGridSize,
             baseState.yGridSize,
             focusLocalizationTextById[focus.id],
+            await renderFocusGui(focus, baseState.presentation, styleTable, baseState.gfxFiles, baseState.xGridSize, baseState.yGridSize, focusLocalizationTextById[focus.id]),
         ).replace(/\s\s+/g, ' ');
     }
 
@@ -482,6 +492,7 @@ function buildFocusTreeBootstrapScripts(payload: FocusTreeRenderPayload): string
         'window.focusTreeTraceEnabled = ' + JSON.stringify(process.env.HOI4MU_FOCUSTREE_TRACE === '1'),
         'window.renderedFocus = ' + JSON.stringify(payload.renderedFocus),
         'window.renderedInlayWindows = ' + JSON.stringify(payload.renderedInlayWindows),
+        'window.continuousFocusHtml = ' + JSON.stringify(payload.continuousFocusHtml ?? '').replace(/</g, '\\u003c'),
         'window.gridBox = ' + JSON.stringify(payload.gridBox),
         'window.styleNonce = ' + JSON.stringify(payload.styleNonce),
         'window.useConditionInFocus = ' + isUseConditionInFocusEnabled(),
@@ -542,9 +553,16 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             display: none;
             pointer-events: none;
             z-index: 4;
-        `)}">Continuous focuses</div>`;
+        `)}">${payload.continuousFocusHtml || htmlEscape(localize('focustree.continuousFocuses', 'Continuous focuses'))}</div>`;
 
     styleTable.raw('#focustreeplaceholder', 'pointer-events: none;');
+    styleTable.raw('body[data-focus-frames="false"] .focus-frame-gfx', 'display:none;');
+    styleTable.raw('body[data-focus-decorations="false"] .focus-decoration-gfx', 'display:none;');
+    styleTable.raw('#focus-gfx-controls', 'flex-shrink:0;gap:4px;');
+    styleTable.raw('#focus-gfx-controls button', 'width:auto;min-width:max-content;flex-shrink:0;white-space:nowrap;padding:0 8px;box-sizing:border-box;border:1px solid var(--vscode-panel-border);');
+    styleTable.raw('#focus-gfx-controls button[aria-pressed="true"]', 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);');
+    styleTable.raw('#focus-gfx-controls button:focus-visible', 'outline:1px solid var(--vscode-focusBorder);outline-offset:1px;');
+    styleTable.raw('#focus-gfx-controls button:active', 'transform:none;');
     styleTable.raw('#focustreeplaceholder [data-focus-id], #focustreeplaceholder [data-focus-id] *, #focustreeplaceholder .navigator, #focustreeplaceholder .navigator *', 'pointer-events: auto;');
     styleTable.raw('#inlaywindowplaceholder', 'pointer-events: none;');
     styleTable.raw('#inlaywindowplaceholder .navigator, #inlaywindowplaceholder .navigator *, #inlaywindowplaceholder button, #inlaywindowplaceholder button *', 'pointer-events: auto;');
@@ -780,6 +798,10 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
             <div class="${styleTable.style('toolbarRow', () => `display:flex; align-items:center; flex-wrap:wrap; gap:10px;`) }">
                 ${isUseConditionInFocusEnabled() ? conditionPresets + conditions : allowbranch}
                 ${inlayWindows}
+                <div id="focus-gfx-controls" class="${toolbarGroupStyle()}">
+                    <button type="button" id="focus-frame-gfx" aria-pressed="true">${localize('focustree.framegfx', 'Focus frame GFX')}</button>
+                    <button type="button" id="focus-decoration-gfx" aria-pressed="true">${localize('focustree.decorationgfx', 'Focus decoration GFX')}</button>
+                </div>
                 ${warningsButton}
                 ${refreshButton}
             </div>
@@ -965,6 +987,7 @@ async function prepareFocusIconStyles(
     xGridSize: number,
     yGridSize: number,
     isCancelled?: () => boolean,
+    useNativeSize = false,
 ): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
@@ -998,7 +1021,8 @@ async function prepareFocusIconStyles(
             }
 
             const displaySize = iconResolution.image
-                ? fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
+                ? useNativeSize ? { width: iconResolution.image.width, height: iconResolution.image.height }
+                    : fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
                 : { width: focusPlaceholderSize, height: focusPlaceholderSize };
 
             styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `

@@ -5,6 +5,25 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 describe('build packaging', () => {
+    it('packages tracked manifest translations with default fallbacks on a clean checkout', async () => {
+        const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hoi4mu-manifest-'));
+        try {
+            await fs.mkdir(path.join(testRoot, 'i18n'));
+            await fs.writeFile(path.join(testRoot, 'package.nls.json'), '{"title":"Default","fallback":"Fallback"}');
+            for (const language of ['en', 'ko', 'ru', 'zh-cn']) {
+                await fs.writeFile(path.join(testRoot, 'i18n', `package.nls.${language}.json`), JSON.stringify({ title: language }));
+            }
+            const helperPath = path.resolve(__dirname, '../../../scripts/manifest-localisation.mjs');
+            const { copyManifestLocalisations } = await import(pathToFileURL(helperPath).href) as {
+                copyManifestLocalisations(root: string): Promise<void>;
+            };
+            await copyManifestLocalisations(testRoot);
+            for (const language of ['en', 'ko', 'ru', 'zh-cn']) {
+                const actual = JSON.parse(await fs.readFile(path.join(testRoot, `package.nls.${language}.json`), 'utf8'));
+                assert.deepStrictEqual(actual, { title: language, fallback: 'Fallback' });
+            }
+        } finally { await fs.rm(testRoot, { recursive: true, force: true }); }
+    });
     it('removes only generated build directories before rebuilding', async () => {
         const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hoi4mu-build-output-'));
         try {

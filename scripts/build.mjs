@@ -5,6 +5,7 @@ import * as fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createRequire, builtinModules } from 'node:module';
 import { cleanBuildOutputDirectories } from './build-output.mjs';
+import { copyManifestLocalisations } from './manifest-localisation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -148,6 +149,7 @@ async function buildWebviews() {
 
 async function main() {
     await cleanBuildOutputDirectories(rootDir);
+    await copyManifestLocalisations(rootDir);
     await copyStaticAssets();
     await Promise.all([buildHost(), buildWebviews()]);
     console.log(isWatch ? `Watching bundles (${mode}).` : `Build complete (${mode}).`);

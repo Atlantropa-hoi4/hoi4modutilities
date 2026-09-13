@@ -145,6 +145,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 delete require.cache[require.resolve('../../src/util/loader/loader')];
 delete require.cache[require.resolve('../../src/previewdef/focustree/focusspacing')];
 delete require.cache[require.resolve('../../src/previewdef/focustree/loader')];
+delete require.cache[require.resolve('../../src/previewdef/focustree/presentation')];
+delete require.cache[require.resolve('../../src/previewdef/gui/loader')];
 
 const {
     FocusTreeLoader,

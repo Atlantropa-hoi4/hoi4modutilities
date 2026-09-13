@@ -26,6 +26,24 @@ function childrenOf(event: HOIEvent, optionName: string): ChildEvent[] {
 }
 
 describe('previewdef/event/schema option triggers', () => {
+    it('preserves repeated conditional descriptions and AI choice metadata separately from effects', () => {
+        const [event] = eventsOf(`add_namespace = detail
+            country_event = { id = detail.1 desc = detail.plain
+                desc = { text = detail.conditional trigger = { tag = GER } }
+                option = { name = detail.a original_recipient_only = yes
+                    ai_chance = { factor = 5 modifier = { factor = 0 tag = FRA } }
+                    add_political_power = 10
+                }
+                after = { country_event = { id = detail.2 days = 1 } }
+            }`);
+        assert.deepStrictEqual(event.descriptions?.map(description => description.text), ['detail.plain', 'detail.conditional']);
+        assert.match(event.descriptions?.[1].trigger ?? '', /tag = GER/);
+        assert.strictEqual(event.options[0].originalRecipientOnly, true);
+        assert.match(event.options[0].aiChanceScript ?? '', /factor = 5/);
+        assert.match(event.options[0].aiChanceScript ?? '', /tag = FRA/);
+        assert.strictEqual(event.after.childEvents[0].eventName, 'detail.2');
+        assert.doesNotMatch(JSON.stringify(event.options[0].effects), /ai_chance|original_recipient_only/);
+    });
     it('keeps the option trigger instead of discarding it', () => {
         const events = eventsOf(`
             add_namespace = arab_spring

@@ -4,6 +4,7 @@ declare module 'vscode' {
             readonly installPath: string;
             readonly loadDlcContents: boolean;
             readonly modFile: string;
+            readonly previewWheel: 'auto' | 'zoom' | 'scroll';
             readonly featureFlags: string[];
             readonly previewLocalisation: 'Brazilian Portuguese' | 'English' | 'French' | 'German' | 'Japanese' | 'Korean' | 'Polish' | 'Russian' | 'Simplified Chinese' | 'Spanish';
         };

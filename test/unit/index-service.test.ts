@@ -41,6 +41,27 @@ const {
 nodeModule._load = originalLoad;
 
 describe('index service', () => {
+    it('cancels an in-flight build without committing it and permits a fresh retry', async () => {
+        const deferred = createDeferred<string>();
+        const commits: string[] = [];
+        let builds = 0;
+        let signal: AbortSignal | undefined;
+        const service = new IndexService({ test: {
+            build: async (_size, currentSignal) => { signal = currentSignal; return builds++ === 0 ? deferred.promise : 'retry'; },
+            commit: snapshot => commits.push(snapshot), reset: () => undefined,
+            statusMessage: 'Building', telemetryEvent: 'test',
+        } });
+        const pending = service.ensure('test', { showStatusBar: false });
+        const rejected = assert.rejects(pending, /cancelled/);
+        service.cancel('test');
+        assert.strictEqual(signal?.aborted, true);
+        deferred.resolve('cancelled snapshot');
+        await rejected;
+        assert.deepStrictEqual(commits, []);
+        assert.strictEqual(service.isReady('test'), false);
+        await service.ensure('test', { showStatusBar: false });
+        assert.deepStrictEqual(commits, ['retry']);
+    });
     it('commits only the newest snapshot and makes stale callers wait for it', async () => {
         const builds: Deferred<string>[] = [];
         const commits: string[] = [];

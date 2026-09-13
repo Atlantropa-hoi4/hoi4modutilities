@@ -19,5 +19,9 @@
     "hoi4modutilities.selectmodfile.title": "选择模组定义文件",
     "hoi4modutilities.previewLocalisation.title": "预览内容语言",
     "hoi4modutilities.previewLocalisation.desc": "事件预览中显示的语言。",
-    "hoi4modutilities.formatWorkspace.title": "格式化工作区 HOI4 文件"
+    "hoi4modutilities.formatWorkspace.title": "格式化工作区 HOI4 文件",
+  "hoi4modutilities.previewWheel.title": "预览滚轮行为",
+  "hoi4modutilities.previewWheel.desc": "Auto：鼠标滚轮缩放，触控板平移。Zoom：始终缩放。Scroll：平移。所有模式下 Ctrl/Cmd + 滚轮均可缩放。",
+  "hoi4modutilities.showIndexStatus.title": "查看索引构建状态",
+  "hoi4modutilities.cancelIndexBuild.title": "取消索引构建"
 }

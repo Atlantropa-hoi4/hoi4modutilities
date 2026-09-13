@@ -163,3 +163,13 @@
 	stroke-linecap: round;
 }
 
+.event-details-dialog {
+	color: var(--vscode-editor-foreground);
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-panel-border);
+	max-width: min(720px, 80vw);
+	max-height: 75vh;
+	overflow: auto;
+}
+.event-details-dialog pre, .event-details-dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.event-details-button { margin: 4px 8px; }

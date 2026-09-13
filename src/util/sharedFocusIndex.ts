@@ -47,7 +47,8 @@ const workspaceFocusUpdates = new LatestUpdateCoordinator<string>();
 const sharedFocusIndexBuildConcurrency = 8;
 const sharedFocusIndexService = new IndexService<FocusIndexSnapshot>({
     global: {
-        build: estimatedSize => buildGlobalFocusIndex(estimatedSize),
+        cache: { folder: 'common/national_focus', extension: '.txt', layer: 'global' },
+        build: (estimatedSize, signal) => buildGlobalFocusIndex(estimatedSize, signal),
         commit: snapshot => {
             globalFocusIndex = snapshot.index;
             dlcFocusIndex = snapshot.dlcIndex ?? createEmptyFocusIndexState();
@@ -60,7 +61,8 @@ const sharedFocusIndexService = new IndexService<FocusIndexSnapshot>({
         telemetryEvent: 'sharedFocusIndex',
     },
     workspace: {
-        build: estimatedSize => buildWorkspaceFocusIndex(estimatedSize),
+        cache: { folder: 'common/national_focus', extension: '.txt', layer: 'workspace' },
+        build: (estimatedSize, signal) => buildWorkspaceFocusIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceFocusUpdates.invalidateAll();
             workspaceFocusIndex = snapshot.index;
@@ -122,7 +124,7 @@ export function registerSharedFocusIndex(): vscode.Disposable {
     return vscode.Disposable.from(...disposables);
 }
 
-async function buildGlobalFocusIndex(estimatedSize: [number]): Promise<FocusIndexSnapshot> {
+async function buildGlobalFocusIndex(estimatedSize: [number], signal?: AbortSignal): Promise<FocusIndexSnapshot> {
     const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
     const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
     const rebuiltGlobalFocusIndex = createEmptyFocusIndexState();
@@ -133,19 +135,19 @@ async function buildGlobalFocusIndex(estimatedSize: [number]): Promise<FocusInde
     ]);
     await Promise.all([
         mapWithConcurrency(baseFocusFiles, sharedFocusIndexBuildConcurrency, f =>
-            fillFocusItems('common/national_focus/' + f, rebuiltGlobalFocusIndex, baseOptions, estimatedSize)),
+            fillFocusItems('common/national_focus/' + f, rebuiltGlobalFocusIndex, baseOptions, estimatedSize, signal)),
         mapWithConcurrency(dlcFocusFiles, sharedFocusIndexBuildConcurrency, f =>
-            fillFocusItems('common/national_focus/' + f, rebuiltDlcFocusIndex, dlcOptions, estimatedSize)),
+            fillFocusItems('common/national_focus/' + f, rebuiltDlcFocusIndex, dlcOptions, estimatedSize, signal)),
     ]);
     return { index: rebuiltGlobalFocusIndex, dlcIndex: rebuiltDlcFocusIndex };
 }
 
-async function buildWorkspaceFocusIndex(estimatedSize: [number]): Promise<FocusIndexSnapshot> {
+async function buildWorkspaceFocusIndex(estimatedSize: [number], signal?: AbortSignal): Promise<FocusIndexSnapshot> {
     const options = { mod: true, hoi4: false, dlc: false, recursively: true };
     const rebuiltWorkspaceFocusIndex = createEmptyFocusIndexState();
     const focusFiles = await listFilesFromModOrHOI4('common/national_focus', options);
     await mapWithConcurrency(focusFiles, sharedFocusIndexBuildConcurrency, f =>
-        fillFocusItems('common/national_focus/' + f, rebuiltWorkspaceFocusIndex, options, estimatedSize));
+        fillFocusItems('common/national_focus/' + f, rebuiltWorkspaceFocusIndex, options, estimatedSize, signal));
     return { index: rebuiltWorkspaceFocusIndex };
 }
 
@@ -194,7 +196,9 @@ async function fillFocusItems(
     focusIndex: FocusIndexState,
     options: { mod?: boolean; hoi4?: boolean; dlc?: boolean },
     estimatedSize?: [number],
+    signal?: AbortSignal,
 ): Promise<void> {
+    signal?.throwIfAborted();
     try {
         const [fileBuffer] = await readFileFromModOrHOI4(focusFile, options);
         const fileContent = fileBuffer.toString();

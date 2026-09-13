@@ -33,6 +33,8 @@ export interface EventNode {
 }
 
 export interface OptionNode {
+	aiChanceScript?: string;
+	originalRecipientOnly?: boolean;
 	optionName: string;
 	trigger: ConditionComplexExpr;
 	children: EventEdge[];
@@ -163,6 +165,8 @@ function eventToNode(
 				? "immediate"
 				: source;
 		const optionNode: OptionNode = {
+			aiChanceScript: option.aiChanceScript,
+			originalRecipientOnly: option.originalRecipientOnly,
 			optionName: option.name ?? ":" + source,
 			trigger: option.trigger,
 			children: [],
@@ -495,6 +499,9 @@ async function makeEventGraphNode(
 		eventType: event.type,
 		scope: scopeContext.currentScopeName,
 		title: await localise(event.title),
+		descriptions: await Promise.all((event.descriptions ?? []).map(async description => ({
+			text: await localise(description.text), trigger: description.trigger,
+		}))),
 		major: event.major,
 		hidden: event.hidden,
 		fireOnlyOnce: event.fire_only_once,
@@ -514,11 +521,11 @@ async function makeEventGraphNode(
 					styleKey: context.styleTable.style(
 						"event-picture-" + normalizeForStyle(event.picture ?? "-empty"),
 						() => `
-                            background-image: url(${picture.image.uri});
-                            background-size: ${picture.image.width}px;
-                            width: ${picture.image.width}px;
-                            height: ${picture.image.height}px;
-                        `,
+							background-image: url(${picture.image.uri});
+							background-size: ${picture.image.width}px;
+							width: ${picture.image.width}px;
+							height: ${picture.image.height}px;
+						`,
 					),
 					width: picture.image.width,
 				}
@@ -535,6 +542,8 @@ async function makeOptionGraphNode(
 		id,
 		kind: "option",
 		name: await localise(node.optionName),
+		aiChanceScript: node.aiChanceScript,
+		originalRecipientOnly: node.originalRecipientOnly,
 		trigger: node.trigger,
 		effectsRef: internEffects(node.effects, context),
 		nav: node.token

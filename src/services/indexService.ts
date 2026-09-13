@@ -2,9 +2,12 @@ import * as vscode from 'vscode';
 import { localizer } from './localizer';
 import { sendEvent } from '../util/telemetry';
 import { incrementPerfCounter, measureAsync } from '../util/perf';
+import { indexCacheUri, indexFingerprint, readIndexCache, saveIndexCache, IndexCacheSpec } from './indexCache';
+import { Commands } from '../constants';
 
 export interface IndexTarget<TSnapshot> {
-    build(estimatedSize: [number]): Promise<TSnapshot>;
+    build(estimatedSize: [number], signal: AbortSignal): Promise<TSnapshot>;
+    cache?: IndexCacheSpec;
     commit(snapshot: TSnapshot): void;
     reset(): void;
     statusMessage: string;
@@ -14,6 +17,28 @@ export interface IndexTarget<TSnapshot> {
 interface IndexTask {
     generation: number;
     promise: Promise<void>;
+    controller: AbortController;
+}
+
+const liveBuilds = new Set<{ label: string; phase: string; size: [number]; controller: AbortController }>();
+
+class IndexBuildCancelledError extends Error {
+    constructor() { super(localizer.t('Index build cancelled.')); }
+}
+
+export function registerIndexCommands(): vscode.Disposable {
+    return vscode.Disposable.from(
+        vscode.commands.registerCommand(Commands.ShowIndexStatus, () => {
+            const message = [...liveBuilds].map(build => `${localizer.t(build.label)} ${localizer.t(build.phase)} (${Math.round(build.size[0] / 1024)} KB)`).join('\n');
+            return vscode.window.showInformationMessage(message || localizer.t('No index build is running.'));
+        }),
+        vscode.commands.registerCommand(Commands.CancelIndexBuild, async () => {
+            const options = [...liveBuilds].map(build => ({ label: localizer.t(build.label), build }));
+            if (!options.length) { await vscode.window.showInformationMessage(localizer.t('No index build is running.')); return; }
+            const selected = await vscode.window.showQuickPick(options, { placeHolder: localizer.t('Choose an index build to cancel') });
+            selected?.build.controller.abort(new IndexBuildCancelledError());
+        }),
+    );
 }
 
 export class IndexService<TSnapshot> {
@@ -40,7 +65,34 @@ export class IndexService<TSnapshot> {
 
         const target = this.targets[targetId];
         const estimatedSize: [number] = [0];
-        const buildTask = measureAsync('index.build', { target: targetId }, () => target.build(estimatedSize));
+        const controller = new AbortController();
+        const live = { label: target.statusMessage, phase: 'Building', size: estimatedSize, controller };
+        liveBuilds.add(live);
+        const buildTask = measureAsync('index.build', { target: targetId }, async () => {
+            const cacheUri = target.cache ? indexCacheUri(target.telemetryEvent) : undefined;
+            let fingerprint: string | undefined;
+            if (cacheUri && target.cache) {
+                live.phase = 'Checking cache';
+                try {
+                    fingerprint = await indexFingerprint(target.cache, controller.signal);
+                    const cached = await readIndexCache<TSnapshot>(cacheUri, fingerprint);
+                    if (cached !== undefined) { incrementPerfCounter('index.disk.hit', { target: targetId }); return cached; }
+                } catch { controller.signal.throwIfAborted(); }
+            }
+            live.phase = 'Building';
+            const result = await target.build(estimatedSize, controller.signal);
+            controller.signal.throwIfAborted();
+            if (cacheUri && fingerprint && target.cache && this.getGeneration(targetId) === generation) {
+                live.phase = 'Saving cache';
+                // Never bless a snapshot built across a source edit with the new fingerprint.
+                try {
+                    if (fingerprint === await indexFingerprint(target.cache, controller.signal)) {
+                        await saveIndexCache(cacheUri, fingerprint, result, controller.signal);
+                    }
+                } catch { controller.signal.throwIfAborted(); }
+            }
+            return result;
+        });
         const showStatusBar = options?.showStatusBar ?? true;
         if (showStatusBar) {
             vscode.window.setStatusBarMessage('$(loading~spin) ' + localizer.t(target.statusMessage), buildTask);
@@ -50,6 +102,7 @@ export class IndexService<TSnapshot> {
             let snapshot: TSnapshot;
             try {
                 snapshot = await buildTask;
+                controller.signal.throwIfAborted();
             } catch (e) {
                 if (this.getGeneration(targetId) !== generation) {
                     return this.ensure(targetId, options);
@@ -64,12 +117,13 @@ export class IndexService<TSnapshot> {
             this.readyTargets.add(targetId);
             sendEvent(target.telemetryEvent, { size: estimatedSize[0].toString() });
         })().finally(() => {
+            liveBuilds.delete(live);
             const currentTask = this.tasks.get(targetId);
             if (currentTask?.generation === generation && currentTask.promise === task) {
                 this.tasks.delete(targetId);
             }
         });
-        this.tasks.set(targetId, { generation, promise: task });
+        this.tasks.set(targetId, { generation, promise: task, controller });
         return task;
     }
 
@@ -80,6 +134,7 @@ export class IndexService<TSnapshot> {
     public invalidate(targetId: string): void {
         incrementPerfCounter('index.invalidate', { target: targetId });
         const target = this.targets[targetId];
+        this.tasks.get(targetId)?.controller.abort();
         target.reset();
         this.readyTargets.delete(targetId);
         this.tasks.delete(targetId);
@@ -88,6 +143,10 @@ export class IndexService<TSnapshot> {
 
     public isReady(targetId: string): boolean {
         return this.readyTargets.has(targetId);
+    }
+
+    public cancel(targetId: string): void {
+        this.tasks.get(targetId)?.controller.abort(new IndexBuildCancelledError());
     }
 
     public isActive(targetId: string): boolean {
@@ -100,7 +159,9 @@ export class IndexService<TSnapshot> {
         }
         this.invalidate(targetId);
         queueMicrotask(() => {
-            void this.ensure(targetId, options);
+            void this.ensure(targetId, options).catch(reason => {
+                if (!(reason instanceof IndexBuildCancelledError)) { console.error(reason); }
+            });
         });
         return true;
     }

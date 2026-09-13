@@ -7,6 +7,7 @@ import { isEventTreePreviewEnabled } from '../../util/featureflags';
 import { ConfigurationKey } from '../../constants';
 import { findDocumentRegexPreviewPriority } from '../previewdetect';
 import { LoaderPreview } from '../loaderpreview';
+import { invalidateEventIndex } from '../../util/eventIndex';
 
 function canPreviewEvent(document: vscode.TextDocument) {
     if (!isEventTreePreviewEnabled()) {
@@ -31,6 +32,11 @@ function canPreviewEvent(document: vscode.TextDocument) {
 }
 
 class EventPreview extends LoaderPreview<EventsLoader> {
+    public override shouldRefreshOnExternalFileChange(uri: vscode.Uri): boolean {
+        const affected = /\/events\/.*\.txt$/i.test(uri.path);
+        if (affected) { invalidateEventIndex(); }
+        return affected;
+    }
     private configurationHandler: vscode.Disposable;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {

@@ -6,6 +6,7 @@ import { uniq, uniqBy, flatten } from "lodash";
 import { YamlLoader } from "../../util/loader/yaml";
 import { getGfxContainerFiles } from "../../util/gfxindex";
 import { getLanguageIdInYml } from "../../util/vsccommon";
+import { findEventFiles } from '../../util/eventIndex';
 
 export interface EventsLoaderResult {
     events: HOIEvents;
@@ -31,9 +32,16 @@ export class EventsLoader extends ContentLoader<EventsLoaderResult> {
         this.languageKey = getLanguageIdInYml();
 
         const eventsDependencies = dependencies.filter(d => d.type === 'event').map(d => d.path);
+        const events = getEvents(parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file)), this.file);
+        const localEvents = Object.values(events.eventItemsByNamespace).flat();
+        const localIds = new Set(localEvents.map(event => event.id));
+        const calledIds = localEvents.flatMap(event => [event.immediate, event.after, ...event.options])
+            .flatMap(option => option.childEvents).map(child => child.eventName).filter(id => !localIds.has(id));
+        for (const file of await findEventFiles(calledIds)) {
+            if (file !== this.file && !eventsDependencies.includes(file)) { eventsDependencies.push(file); }
+        }
         const eventsDepFiles = await this.loaderDependencies.loadMultiple(eventsDependencies, session, EventsLoader);
 
-        const events = getEvents(parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file)), this.file);
         const mergedEvents = mergeEvents(events, ...eventsDepFiles.map(f => f.result.events));
         
         const localizationDependencies = dependencies.filter(d => d.type.match(/^locali[sz]ation$/) && d.path.endsWith('.yml')).map(d => d.path);
@@ -71,8 +79,13 @@ export class EventsLoader extends ContentLoader<EventsLoaderResult> {
 }
 
 function mergeEvents(...events: HOIEvents[]): HOIEvents {
+    const eventItemsByNamespace: HOIEvents['eventItemsByNamespace'] = Object.create(null);
+    const seen = new Set<string>();
+    for (const group of events) { for (const event of Object.values(group.eventItemsByNamespace).flat()) {
+        if (!seen.has(event.id)) { (eventItemsByNamespace[event.namespace] ??= []).push(event); seen.add(event.id); }
+    } }
     return {
-        eventItemsByNamespace: events.map(e => e.eventItemsByNamespace).reduce((p, c) => Object.assign(p, c), {}),
+        eventItemsByNamespace,
         conditionExprs: uniqBy(
             flatten(events.map(e => e.conditionExprs)),
             e => e.scopeName + '@' + e.nodeContent,

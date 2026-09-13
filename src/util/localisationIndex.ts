@@ -42,7 +42,8 @@ let workspaceLocalisationFileIndexes: Record<string, LocalisationData> = {};
 const workspaceLocalisationUpdates = new LatestUpdateCoordinator<string>();
 const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
     global: {
-        build: estimatedSize => buildGlobalLocalisationIndex(estimatedSize),
+        cache: { folder: 'localisation', extension: '.yml', layer: 'global' },
+        build: (estimatedSize, signal) => buildGlobalLocalisationIndex(estimatedSize, signal),
         commit: snapshot => {
             globalLocalisationIndex = snapshot.index;
         },
@@ -53,7 +54,8 @@ const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
         telemetryEvent: 'localisationIndex',
     },
     workspace: {
-        build: estimatedSize => buildWorkspaceLocalisationIndex(estimatedSize),
+        cache: { folder: 'localisation', extension: '.yml', layer: 'workspace' },
+        build: (estimatedSize, signal) => buildWorkspaceLocalisationIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceLocalisationUpdates.invalidateAll();
             workspaceLocalisationIndex = snapshot.index;
@@ -268,7 +270,7 @@ function resolveLocalisedTextFromAvailableWorkspaceLanguage(
     return undefined;
 }
 
-async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<LocalisationIndexSnapshot> {
+async function buildGlobalLocalisationIndex(estimatedSize: [number], signal?: AbortSignal): Promise<LocalisationIndexSnapshot> {
     const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
     const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
     const [baseFiles, dlcFiles] = await Promise.all([
@@ -279,6 +281,7 @@ async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<Lo
         files.filter(isLocalisationIndexFilePath),
         localisationIndexBuildConcurrency,
         async f => {
+            signal?.throwIfAborted();
             const fileIndex: LocalisationData = {};
             await fillLocalisationItems('localisation/' + f, fileIndex, options, estimatedSize);
             return fileIndex;
@@ -292,11 +295,12 @@ async function buildGlobalLocalisationIndex(estimatedSize: [number]): Promise<Lo
     return { index: rebuilt };
 }
 
-async function buildWorkspaceLocalisationIndex(estimatedSize: [number]): Promise<LocalisationIndexSnapshot> {
+async function buildWorkspaceLocalisationIndex(estimatedSize: [number], signal?: AbortSignal): Promise<LocalisationIndexSnapshot> {
     const options = { mod: true, hoi4: false, dlc: false, recursively: true };
     const localisationFiles = (await listFilesFromModOrHOI4('localisation', options))
         .filter(isLocalisationIndexFilePath);
     const fileIndexes = await mapWithConcurrency(localisationFiles, localisationIndexBuildConcurrency, async f => {
+        signal?.throwIfAborted();
         const relativePath = 'localisation/' + f;
         const fileIndex: LocalisationData = {};
         await fillLocalisationItems(relativePath, fileIndex, options, estimatedSize);

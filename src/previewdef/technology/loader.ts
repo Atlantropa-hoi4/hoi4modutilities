@@ -6,6 +6,7 @@ import { parseHoi4File } from "../../hoiformat/hoiparser";
 import { localize } from "../../util/i18n";
 import { flatMap, chain } from "lodash";
 import { GuiFileLoader } from "../gui/loader";
+import { loadTechnologyPresentation } from './presentation';
 
 export interface TechnologyTreeLoaderResult {
     technologyTrees: TechnologyTree[];
@@ -29,6 +30,7 @@ export class TechnologyTreeLoader extends ContentLoader<TechnologyTreeLoaderResu
         const guiDependencies = [...guiFilePath, ...dependencies.filter(d => d.type === 'gui').map(d => d.path)];
         
         const guiDepFiles = await this.loaderDependencies.loadMultiple(guiDependencies, session, GuiFileLoader);
+        const presentationFiles = await loadTechnologyPresentation(technologyTrees);
 
         return {
             result: {
@@ -36,7 +38,7 @@ export class TechnologyTreeLoader extends ContentLoader<TechnologyTreeLoaderResu
                 gfxFiles: chain(gfxDependencies).concat(flatMap(guiDepFiles, r => r.result.gfxFiles)).uniq().value(),
                 guiFiles: chain(guiDepFiles).flatMap(r => r.result.guiFiles).uniq().value(),
             },
-            dependencies: chain([this.file]).concat(gfxDependencies, guiDependencies, mergeInLoadResult(guiDepFiles, 'dependencies')).uniq().value(),
+            dependencies: chain([this.file]).concat(presentationFiles, gfxDependencies, guiDependencies, mergeInLoadResult(guiDepFiles, 'dependencies')).uniq().value(),
         };
     }
 

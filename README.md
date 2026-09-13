@@ -4,10 +4,11 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 
 ## What It Covers
 
-- Focus tree preview and editing helpers
+- Focus tree preview and editing helpers, including GUI-defined focus items, `text_icon` titlebar styles, and continuous-focus windows
+  - Use the **Focus frame GFX** and **Focus decoration GFX** toolbar buttons to toggle frames and decorations independently. Focus icons and labels stay visible, and the choices are saved with the preview.
 - World map preview with country/localised views, bookmark-aware history, scaled export, warnings, and state/strategic-region editing
-- Event tree preview
-- Technology tree preview
+- Event tree preview with automatic cross-file event references and details for conditional descriptions, AI choice weights, and original-recipient restrictions
+- Technology tree preview with country-specific icons and ID, technology-name, short-equipment-name, and full-equipment-name labels
 - MIO preview
 - GUI preview
 - `.gfx` sprite preview
@@ -36,6 +37,8 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - Focus Tree refreshes coalesce dependency bursts and cancel stale work early, so rapid document edits and asset updates should stay more responsive.
 - Focus inlay windows, scripted GUI windows, and interface GFX fallback data are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
 - Shared indexes for GFX, localisation, and shared focuses limit file-read pressure while they build in the background.
+- GFX, localisation, shared-focus, and event indexes reuse disk snapshots after checking their source files and selected mod. Unsaved document changes invalidate stale snapshots. Use `HOI4 Mod Utilities: Show index build status` or `Cancel index build` to inspect or cancel active builds; a later preview request can retry a cancelled build.
+- GFX previews share embedded texture data across sprites and render at most eight cards concurrently. DLC ZIP files retain bounded directory metadata and read/decompress only the requested entry.
 - Set `HOI4MU_PERF_TRACE=1` when launching the extension host to mirror local performance trace entries to debug logs.
 
 ## Settings
@@ -46,11 +49,14 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 | `hoi4ModUtilities.loadDlcContents` | `boolean` | Loads DLC image content for previews. Uses more memory. |
 | `hoi4ModUtilities.modFile` | `string` | Working `.mod` file used for `replace_path` resolution. |
 | `hoi4ModUtilities.previewLocalisation` | `string enum` | Preview language used by localisation-aware previews. |
+| `hoi4ModUtilities.previewWheel` | `auto`, `zoom`, `scroll` | Defaults to `auto`: discrete mouse wheels zoom and smooth trackpad input pans. Select an explicit mode if device detection differs. Ctrl/Cmd + wheel always zooms. Tree and map previews also provide +/− buttons and keyboard shortcuts outside text inputs. |
 | `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced flows. Choose supported values directly in VS Code settings. GFX/localisation indexes are enabled without flags; use `!gfxIndex` or `!localisationIndex` to disable them. Use `technologyShowId` to show raw technology IDs in the technology tree preview. |
 
 ## Development
 
 This fork targets desktop VS Code only and uses the esbuild-based build pipeline in this repository.
+
+The build copies tracked manifest translations from `i18n/package.nls.*.json` into the generated root bundles, filling missing keys from `package.nls.json`. Runtime `l10n` bundles remain maintained directly.
 
 Recommended environment:
 

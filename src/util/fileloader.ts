@@ -14,7 +14,7 @@ import {
 } from './modfile';
 import { getConfiguration, getDocumentByUri } from './vsccommon';
 import { UserError } from './common';
-import type * as AdmZip from 'adm-zip';
+import { ZipArchive } from './zipArchive';
 import { Hoi4FsSchema } from '../constants';
 import { trimStart } from 'lodash';
 import { incrementPerfCounter, measureAsync, recordPerf } from './perf';
@@ -29,7 +29,7 @@ const dlcPathsCache = new PromiseCache({
     life: 10 * 60 * 1000,
 });
 
-let dlcZipCache: PromiseCache<AdmZip> | null = null;
+let dlcZipCache: PromiseCache<ZipArchive> | null = null;
 const readFileFromModOrHOI4InFlight = new Map<string, Promise<[Buffer, vscode.Uri]>>();
 const listFilesFromModOrHOI4InFlight = new Map<string, Promise<string[]>>();
 const fileReadConcurrencyLimit = 12;
@@ -58,6 +58,7 @@ const selectedModRootFoldersCache = new PromiseCache<SelectedModRootCacheEntry>(
 });
 const selectedModRootFoldersInFlight = new Map<string, Promise<SelectedModRootCacheEntry>>();
 let fileContentSourceGeneration = 0;
+export function getFileContentSourceGeneration(): number { return fileContentSourceGeneration; }
 
 export function refreshFileContentSource(): number {
     return ++fileContentSourceGeneration;
@@ -73,7 +74,7 @@ interface ListFilesOptions extends FileLoaderOptions {
     recursively?: boolean;
 }
 
-type DlcZipEntry = Pick<AdmZip.IZipEntry, 'entryName' | 'isDirectory'>;
+type DlcZipEntry = { entryName: string; isDirectory: boolean };
 
 export function listFilesInDlcZipEntries(
     entries: readonly DlcZipEntry[],
@@ -105,7 +106,7 @@ export function listFilesInDlcZipEntries(
     return result;
 }
 
-function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
+function getDlcZip(dlcZipPath: string): Promise<ZipArchive> {
     const uri = vscode.Uri.parse(dlcZipPath);
     if (uri.scheme === Hoi4FsSchema) {
         dlcZipPath = path.join(getConfiguration().installPath, trimStart(uri.path, '/'));
@@ -114,15 +115,16 @@ function getDlcZip(dlcZipPath: string): Promise<AdmZip> {
         dlcZipPath = uri.fsPath;
     }
 
-    const AdmZip = require('adm-zip');
-    return Promise.resolve(new AdmZip(dlcZipPath));
+    return ZipArchive.open(dlcZipPath);
 }
 
 dlcZipCache = new PromiseCache({
     factory: getDlcZip,
     expireWhenChange: key => getLastModifiedAsync(vscode.Uri.parse(key)),
-    life: 15 * 1000,
-    maxSize: 8,
+    life: 60 * 1000,
+    maxSize: 64,
+    maxBytes: 64 * 1024 * 1024,
+    weigher: archive => archive.estimatedBytes,
 });
 
 export function clearDlcZipCache(): void {
@@ -277,7 +279,7 @@ export async function readFileFromPath(realPath: vscode.Uri, relativePath?: stri
             const dlcZip = await dlcZipCache.get(dlc.toString());
             const entry = dlcZip.getEntry(filePath);
             if (entry !== null) {
-                return [await new Promise<Buffer>(resolve => entry.getDataAsync(resolve)), realPath];
+                return [await dlcZip.readEntry(filePath), realPath];
             }
         }
 

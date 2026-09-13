@@ -4,6 +4,8 @@ import { vscode } from './vscode';
 import { sendException } from './telemetry';
 import { forceError } from '../../src/util/common';
 import { normalizePreviewScale } from '../../src/util/previewscale';
+import { shouldZoomWheel } from '../../src/util/previewwheel';
+import { installZoomControls, isZoomInput } from './zoomcontrols';
 import { BehaviorSubject } from 'rxjs';
 export { arrayToMap } from '../../src/util/common';
 
@@ -156,19 +158,10 @@ export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOff
     }
     contentElement.style.transform = `scale(${scale})`;
     contentElement.style.transformOrigin = '0 0';
-    window.addEventListener('wheel', function(e) {
-        if (shouldDisableZoom) {
-            return;
-        }
-
-        e.preventDefault();
+    const zoom = (direction: number, pageX: number, pageY: number) => {
+        if (shouldDisableZoom) { return; }
         const oldScale = scale;
-
-        if (e.deltaY > 0) {
-            scale = Math.max(0.2, scale - 0.2);
-        } else if (e.deltaY < 0) {
-            scale = Math.min(1, scale + 0.2);
-        }
+        scale = normalizePreviewScale(Math.round((scale + direction * 0.1) * 100) / 100);
 
         const oldScrollX = window.scrollX;
         const oldScrollY = window.scrollY;
@@ -176,9 +169,18 @@ export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOff
         contentElement.style.transform = `scale(${scale})`;
         setState({ scale });
 
-        const nextScrollX = (e.pageX - xOffset) * scale / oldScale + xOffset - (e.pageX - oldScrollX);
-        const nextScrollY = (e.pageY - yOffset) * scale / oldScale + yOffset - (e.pageY - oldScrollY);
+        const nextScrollX = (pageX - xOffset) * scale / oldScale + xOffset - (pageX - oldScrollX);
+        const nextScrollY = (pageY - yOffset) * scale / oldScale + yOffset - (pageY - oldScrollY);
         window.scrollTo(nextScrollX, nextScrollY);
+    };
+    const updateControls = installZoomControls(direction => zoom(direction,
+        window.scrollX + window.innerWidth / 2, window.scrollY + (window.innerHeight + yOffset) / 2), () => scale);
+    window.addEventListener('wheel', function(e) {
+        if (shouldDisableZoom || isZoomInput(e.target)
+            || !shouldZoomWheel(e, document.body.dataset.previewWheel)) { return; }
+        e.preventDefault();
+        if (e.deltaY !== 0) { zoom(e.deltaY < 0 ? 1 : -1, e.pageX, e.pageY); }
+        updateControls();
     },
     {
         passive: false

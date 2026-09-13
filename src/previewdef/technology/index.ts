@@ -10,6 +10,7 @@ import { TechnologyEditCommandHandler } from './edithandler';
 import { TechnologyEditMessage, TechnologyEditRenderContext } from './editcommon';
 import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
 import { TechnologyPreviewRenderCoordinator } from './renderruntime';
+import { getPreviewOptions, setPreviewOption } from '../../util/previewoptions';
 
 function canPreviewTechnology(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -38,6 +39,8 @@ class TechnologyTreePreview extends PreviewBase {
     private readonly renderCoordinator = new TechnologyPreviewRenderCoordinator();
     private renderQueue: Promise<void> = Promise.resolve();
     private pendingLocalisationRefreshVersion: number | undefined;
+    private country = String(getPreviewOptions(['technology.country'])['technology.country'] ?? '');
+    private forceRefresh = false;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -60,7 +63,8 @@ class TechnologyTreePreview extends PreviewBase {
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
         this.content = document.getText();
-        const result = await renderTechnologyFile(this.technologyTreeLoader, document.uri, this.panel.webview, document.version);
+        const result = await renderTechnologyFile(this.technologyTreeLoader, document.uri, this.panel.webview, document.version, { country: this.country, force: this.forceRefresh });
+        this.forceRefresh = false;
         this.content = undefined;
         this.editContext = result.editContext;
         this.scheduleLocalisationReadyRefresh(document.version);
@@ -92,7 +96,7 @@ class TechnologyTreePreview extends PreviewBase {
         });
     }
 
-    public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
+    public override async onDocumentChange(document: vscode.TextDocument, options?: { source?: 'document' | 'dependency' }): Promise<void> {
         const request = this.renderCoordinator.begin(document.version);
         if (request.skipRender) {
             return;
@@ -103,6 +107,7 @@ class TechnologyTreePreview extends PreviewBase {
                 if (this.isDisposed || !this.renderCoordinator.isCurrent(request.generation)) {
                     return;
                 }
+                this.forceRefresh = options?.source === 'dependency';
                 const html = await this.getContent(document);
                 if (!this.isDisposed && this.renderCoordinator.isCurrent(request.generation)) {
                     this.panel.webview.html = html;
@@ -115,7 +120,19 @@ class TechnologyTreePreview extends PreviewBase {
         return 75;
     }
 
-    protected async onDidReceiveMessage(message: TechnologyEditMessage): Promise<boolean> {
+    public override shouldRefreshOnExternalFileChange(uri: vscode.Uri): boolean {
+        return /\/(common\/(country_tags|units\/equipment)\/|interface\/.*\.gfx$)/i.test(uri.path);
+    }
+
+    protected async onDidReceiveMessage(message: TechnologyEditMessage | { command: 'selectTechnologyCountry'; country: string }): Promise<boolean> {
+        if (message.command === 'selectTechnologyCountry') {
+            if (typeof message.country !== 'string' || !/^[a-z0-9_]{0,32}$/i.test(message.country)) { return true; }
+            this.country = message.country;
+            setPreviewOption('technology.country', this.country);
+            const document = getDocumentByUri(this.uri);
+            if (document) { await this.onDocumentChange(document); }
+            return true;
+        }
         return this.editCommandHandler.handleMessage(message);
     }
 }

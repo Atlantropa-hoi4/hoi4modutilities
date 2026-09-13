@@ -125,6 +125,17 @@
               ]
             },
             "description": "%hoi4modutilities.featureFlags.desc%"
+          },
+          "hoi4ModUtilities.previewWheel": {
+            "title": "%hoi4modutilities.previewWheel.title%",
+            "type": "string",
+            "default": "auto",
+            "enum": [
+              "auto",
+              "zoom",
+              "scroll"
+            ],
+            "description": "%hoi4modutilities.previewWheel.desc%"
           }
         }
       }
@@ -183,6 +194,16 @@
         "title": "%hoi4modutilities.formatWorkspace.title%",
         "category": "%hoi4modutilities.category%",
         "enablement": "workspaceFolderCount > 0"
+      },
+      {
+        "command": "server.hoi4modutilities.showIndexStatus",
+        "title": "%hoi4modutilities.showIndexStatus.title%",
+        "category": "%hoi4modutilities.category%"
+      },
+      {
+        "command": "server.hoi4modutilities.cancelIndexBuild",
+        "title": "%hoi4modutilities.cancelIndexBuild.title%",
+        "category": "%hoi4modutilities.category%"
       }
     ],
     "customEditors": [

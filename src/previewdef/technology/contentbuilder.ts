@@ -21,6 +21,7 @@ import { getLocalisedTextQuickIfReady } from "../../util/localisationIndex";
 import { featureFlagsAsScript, isLocalisationIndexEnabled, isTechnologyShowIdEnabled } from "../../util/featureflags";
 import { TechnologyEditRenderContext } from './editcommon';
 import { tryGetGfxContainerFile } from '../../util/gfxindex';
+import { allTechnologies, technologyIconNames } from './presentation';
 
 const techTreeViewName = 'countrytechtreeview';
 const doctrineTreeViewName = 'countrydoctrineview';
@@ -35,6 +36,7 @@ export async function renderTechnologyFile(
     uri: vscode.Uri,
     webview: vscode.Webview,
     documentVersion: number,
+    options: { country?: string; force?: boolean } = {},
 ): Promise<RenderTechnologyFileResult> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
     const editContext: TechnologyEditRenderContext = {
@@ -42,11 +44,14 @@ export async function renderTechnologyFile(
         gridLayoutsByFolder: {},
     };
     try {
-        const session = new LoaderSession(false);
+        const session = new LoaderSession(options.force ?? false);
         const loadResult = await loader.load(session);
         debug('Loader session tech tree', session.getLoadedLoaderNames());
 
         const technologyTrees = loadResult.result.technologyTrees;
+        const technologies = allTechnologies(technologyTrees);
+        const country = technologies.some(tech => tech.countryTags?.includes(options.country ?? '')) ? options.country : '';
+        technologies.forEach(tech => { tech.previewCountry = country; });
         const folders = uniq(technologyTrees.map(tt => tt.folder));
 
         if (folders.length === 0) {
@@ -56,6 +61,9 @@ export async function renderTechnologyFile(
 
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
+        jsCodes.push('window.technologyCountry = ' + JSON.stringify(country).replace(/</g, '\\u003c'));
+        jsCodes.push('window.technologyCountriesByFolder = ' + JSON.stringify(Object.fromEntries(folders.map(folder => [folder,
+            [...new Set(technologyTrees.filter(tree => tree.folder === folder).flatMap(tree => allTechnologies([tree]).flatMap(tech => tech.countryTags ?? [])))].sort()]))).replace(/</g, '\\u003c'));
         const styleNonce = randomString(32);
         const baseContent = await renderTechnologyFolders(technologyTrees, folders, styleTable, loadResult.result, jsCodes, editContext);
         jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
@@ -189,6 +197,8 @@ async function renderToolbar(folders: string[], styleTable: StyleTable): Promise
             ${editToggle}
             ${isLocalisationIndexEnabled() ? renderPreviewLabelModeControl(styleTable) : ''}
             ${folderSelect}
+            <label for="technology-country">${localize('technology.country', 'Country')}</label>
+            <select id="technology-country"><option value="">${localize('technology.generic', 'Generic')}</option></select>
             ${conditions}
             <button id="refresh" title="${localize('common.topbar.refresh.title', 'Refresh')}">
                 <i class="codicon codicon-refresh"></i>
@@ -200,8 +210,12 @@ async function renderToolbar(folders: string[], styleTable: StyleTable): Promise
 function renderPreviewLabelModeControl(styleTable: StyleTable): string {
     return `<div class="preview-label-mode ${styleTable.oneTimeStyle('previewLabelModeContainer', () => `margin-right:10px`)}">
         <span class="${styleTable.style('previewLabelModeLabel', () => `margin-right:5px`)}">${localize('preview.labelmode', 'Label: ')}</span>
-        <button type="button" data-preview-label-mode-value="id" aria-pressed="true">${localize('preview.labelmode.id', 'ID')}</button>
-        <button type="button" data-preview-label-mode-value="name" aria-pressed="false">${localize('preview.labelmode.name', 'Name')}</button>
+        <select id="technology-name-mode" aria-label="${localize('technology.nameMode', 'Technology label')}">
+            <option value="id">${localize('preview.labelmode.id', 'ID')}</option>
+            <option value="tech">${localize('technology.techName', 'Technology name')}</option>
+            <option value="short">${localize('technology.shortName', 'Short equipment name')}</option>
+            <option value="long">${localize('technology.longName', 'Full equipment name')}</option>
+        </select>
     </div>`;
 }
 
@@ -387,7 +401,7 @@ async function renderTechnology(
                 } else if (isTechnologyLabelTextBox(childname)) {
                     const localisedText = getLocalisedTextQuickIfReady(technology.id);
                     return await renderInstantTextBox(
-                        { ...text, text: getTechnologyLabelContent(technology.id, localisedText) },
+                        { ...text, text: getTechnologyLabelContent(technology.id, localisedText, technology) },
                         parentInfo,
                         { ...commonOptions, localise: false, rawText: true },
                     );
@@ -443,7 +457,7 @@ async function getTechnologySprite(sprite: string, technology: Technology, folde
             `GFX_technology_available_item_bg`,
         ];
     } else if (sprite === 'GFX_technology_medium' && callerType === 'icon') {
-        return await getTechnologyIcon(`GFX_${technology.id}_medium`, gfxFiles, 'GFX_technology_medium');
+        return await getSpriteFromTryList([...technologyIconNames(technology.id, technology.previewCountry), 'GFX_technology_medium'], gfxFiles);
     }
 
     return await getSpriteFromTryList(imageTryList, gfxFiles);
@@ -471,7 +485,7 @@ async function renderSubTechnology(
                     `GFX_subtechnology_available_item_bg`,
                 ];
             } else if (callerType === 'icon' && callerName?.toLowerCase() === 'picture') {
-                return getTechnologyIcon(sprite, gfxFiles);
+                return getSpriteFromTryList([...technologyIconNames(subTechnology.id, subTechnology.previewCountry), sprite], gfxFiles);
             }
 
             return getSpriteFromTryList(imageTryList, gfxFiles);
@@ -519,9 +533,13 @@ function getLocalisationLabelContent(localisationKey: string, localisedText: str
     return `<span data-preview-label-id="${htmlEscape(localisationKey)}" data-preview-label-name="${htmlEscape(name)}">${htmlEscape(localisationKey)}</span>`;
 }
 
-function getTechnologyLabelContent(technologyId: string, localisedText: string | undefined): string {
+function getTechnologyLabelContent(technologyId: string, localisedText: string | undefined, technology?: Technology): string {
     const name = localisedText && localisedText !== technologyId ? localisedText : technologyId;
-    return `<span data-preview-label-id="${htmlEscape(technologyId)}" data-preview-label-name="${htmlEscape(name)}">${htmlEscape(technologyId)}</span>`;
+    const resolve = (keys: string[]) => {
+        const candidates = [...(technology?.previewCountry ? keys.map(key => `${technology.previewCountry}_${key}`) : []), ...keys];
+        return candidates.map(key => getLocalisedTextQuickIfReady(key)).find(text => !!text && !candidates.includes(text)) ?? name;
+    };
+    return `<span data-preview-label-id="${htmlEscape(technologyId)}" data-preview-label-name="${htmlEscape(name)}" data-technology-name="${htmlEscape(name)}" data-technology-short="${htmlEscape(resolve(technology?.nameKeys?.short ?? []))}" data-technology-long="${htmlEscape(resolve(technology?.nameKeys?.long ?? []))}">${htmlEscape(technologyId)}</span>`;
 }
 
 async function getTechnologyTitleAttributes(technologyId: string, folder: TechnologyFolder): Promise<string> {
@@ -596,15 +614,6 @@ async function getSpriteFromTryList(tryList: string[], gfxFiles: string[]): Prom
     }
 
     return background;
-}
-
-async function getTechnologyIcon(name: string, gfxFiles: string[], defaultIcon?: string): Promise<Sprite | undefined> {
-    const result = await getTechnologySpriteByName(name, gfxFiles);
-    if (result !== undefined || !defaultIcon) {
-        return result;
-    }
-
-    return await getTechnologySpriteByName(defaultIcon, gfxFiles);
 }
 
 function defaultGetSprite(gfxFiles: string[]) {

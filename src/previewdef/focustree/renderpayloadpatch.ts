@@ -16,6 +16,7 @@ export interface FocusTreeRenderCache {
     snapshotVersion: number;
     selectedTreeId?: string;
     focusTrees: FocusTree[];
+    continuousFocusHtml?: string;
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     focusIconGfxFileByName: Record<string, string>;
@@ -74,6 +75,7 @@ export function createFocusTreeRenderCache(
         snapshotVersion: previousVersion + 1,
         selectedTreeId: payload.focusTrees[0]?.id,
         focusTrees: payload.focusTrees,
+        continuousFocusHtml: payload.continuousFocusHtml,
         renderedFocus: payload.renderedFocus,
         renderedInlayWindows: payload.renderedInlayWindows,
         focusIconGfxFileByName: payload.focusIconGfxFileByName,
@@ -126,6 +128,7 @@ function createFullFocusTreeRenderUpdateWithMetadata(
     const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion, metadata);
     recordFocusTreePayloadSize('full', payload.deferredAssetLoad, {
         focusTrees: payload.focusTrees,
+        continuousFocusHtml: payload.continuousFocusHtml,
         renderedFocus: payload.renderedFocus,
         renderedInlayWindows: payload.renderedInlayWindows,
         dynamicStyleCss: payload.dynamicStyleCss,
@@ -145,6 +148,7 @@ function createFullFocusTreeRenderUpdateWithMetadata(
             changedFocusIds: Object.keys(payload.renderedFocus),
             changedInlayWindowIds: Object.keys(payload.renderedInlayWindows),
             focusTrees: payload.focusTrees,
+            continuousFocusHtml: payload.continuousFocusHtml,
             renderedFocus: payload.renderedFocus,
             renderedInlayWindows: payload.renderedInlayWindows,
             gridBox: payload.gridBox,
@@ -191,6 +195,9 @@ export async function createFocusTreeRenderUpdate(
         return { kind: 'full' };
     }
 
+    if (nextBaseState.presentation?.item && focusSignatureDiff.changedKeys.length > 0) {
+        return { kind: 'full' };
+    }
     const renderedFocusPatch = await renderChangedFocusHtmlMap(
         nextBaseState,
         focusSignatureDiff.changedKeys,
@@ -211,6 +218,7 @@ export async function createFocusTreeRenderUpdate(
         selectedTreeId: nextBaseState.focusTrees[0]?.id,
         focusTrees: nextBaseState.focusTrees,
         renderedFocus: mergeStringMap(previous.renderedFocus, renderedFocusPatch, focusSignatureDiff.removedKeys),
+        continuousFocusHtml: previous.continuousFocusHtml,
         renderedInlayWindows: previous.renderedInlayWindows,
         focusIconGfxFileByName: nextBaseState.focusIconGfxFileByName,
         focusIconStyleSignature: nextBaseState.focusIconStyleSignature ?? '',
@@ -264,6 +272,7 @@ function recordFocusTreePayloadSize(
     payload: {
         focusTrees: unknown;
         renderedFocus: unknown;
+        continuousFocusHtml?: string;
         renderedInlayWindows: unknown;
         dynamicStyleCss: string;
         focusCount: number;
@@ -486,6 +495,7 @@ function toTreePatchComparable(focusTree: FocusTree) {
             focus.file,
             focus.isInCurrentFile,
             focus.text,
+            focus.textIcon,
             focus.layout?.editable,
             focus.layout?.sourceFile,
             focus.layout?.basePosition,
@@ -579,6 +589,7 @@ function toFocusRenderComparable(focus: Focus) {
         file: focus.file,
         isInCurrentFile: focus.isInCurrentFile,
         text: focus.text,
+        textIcon: focus.textIcon,
         overlay: focus.overlay,
         layoutEditable: focus.layout?.editable,
         layoutSourceFile: focus.layout?.sourceFile,

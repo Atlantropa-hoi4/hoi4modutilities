@@ -38,6 +38,10 @@ export interface Technology {
     allowBranch: ConditionComplexExpr | undefined;
     startYear: number;
     enableEquipments: boolean;
+    equipmentIds?: string[];
+    nameKeys?: { short: string[]; long: string[] };
+    countryTags?: string[];
+    previewCountry?: string;
     forceUseSmallTechLayout: boolean;
     subTechnologies: Technology[];
     token: Token | undefined;
@@ -240,6 +244,7 @@ function getTechnologies(
         result[id] = {
             id, token, startYear, leadsToTechs, xor, inAllowBranch: hasAllowBranch ? [id] : [], allowBranch, enableEquipments, folders,
             subTechnologies: [],
+            equipmentIds: technology.enable_equipments._values,
             forceUseSmallTechLayout,
         };
     }

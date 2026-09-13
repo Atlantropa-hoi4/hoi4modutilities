@@ -11,6 +11,7 @@ import {
 } from "../../hoiformat/condition";
 import { Scope, ScopeType } from "../../hoiformat/scope";
 import { uniqBy } from "lodash";
+import { nodeToString } from '../../hoiformat/tostring';
 
 export interface HOIEvents {
     eventItemsByNamespace: Record<string, HOIEvent[]>;
@@ -22,6 +23,7 @@ export interface HOIEvents {
 export type HOIEventType = 'country' | 'state' | 'unit_leader' | 'news' | 'operative_leader';
 
 export interface HOIEvent {
+    descriptions?: { text: string; trigger?: string }[];
     type: HOIEventType;
     id: string;
     title: string;
@@ -45,6 +47,8 @@ export interface HOIEvent {
 }
 
 export interface HOIEventOption {
+    aiChanceScript?: string;
+    originalRecipientOnly?: boolean;
     name?: string;
     childEvents: ChildEvent[];
     token: Token | undefined;
@@ -80,6 +84,7 @@ interface EventFile {
 }
 
 interface EventDef {
+    desc: Raw[];
     id: string;
     title: string;
     picture: string;
@@ -106,7 +111,7 @@ interface MeanTimeToHappen {
 interface EventOptionDef {
     name: string;
     trigger: Raw;
-    ai_chance: string;
+    ai_chance: Raw;
     original_recipient_only: boolean;
     _token: Token;
 }
@@ -123,11 +128,12 @@ interface EventEffectDef {
 const eventOptionDefSchema: SchemaDef<EventOptionDef> = {
     name: "string",
     trigger: "raw",
-    ai_chance: "string",
+    ai_chance: "raw",
     original_recipient_only: "boolean",
 };
 
 const eventDefSchema: SchemaDef<EventDef> = {
+    desc: { _type: 'array', _innerType: 'raw' },
     id: "string",
     title: "string",
     picture: "string",
@@ -281,6 +287,18 @@ function convertEvent<T extends HOIEventType>(
         type,
         id,
         title,
+        descriptions: eventDef.desc.flatMap(raw => {
+            if (!raw) { return []; }
+            const node = raw._raw;
+            if (!Array.isArray(node.value)) {
+                const text = convertNodeToJson<string>(node, 'string');
+                return text ? [{ text }] : [];
+            }
+            const textNode = node.value.find(child => child.name === 'text');
+            const triggerNode = node.value.find(child => child.name === 'trigger');
+            const text = textNode ? convertNodeToJson<string>(textNode, 'string') : undefined;
+            return text ? [{ text, trigger: triggerNode ? nodeToString(triggerNode) : undefined }] : [];
+        }),
         namespace,
         picture,
         file,
@@ -347,6 +365,8 @@ function convertOption(optionRaw: Raw | undefined, scope: Scope, conditionExprs:
         token: optionDef._token,
         trigger,
         effects: projectEffects(effect.effect),
+        aiChanceScript: optionDef.ai_chance ? nodeToString(optionDef.ai_chance._raw) : undefined,
+        originalRecipientOnly: !!optionDef.original_recipient_only,
     };
 }
 

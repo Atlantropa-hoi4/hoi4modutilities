@@ -21,6 +21,7 @@ export interface FocusTreeContentUpdateMessage {
     changedInlayWindowIds?: string[];
     focusTrees?: FocusTree[];
     focusTreePatches?: Array<{ treeId: string; tree: FocusTree }>;
+    continuousFocusHtml?: string;
     renderedFocus?: Record<string, string>;
     renderedFocusPatch?: Record<string, string>;
     removedRenderedFocusIds?: string[];

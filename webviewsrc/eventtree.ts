@@ -10,6 +10,7 @@ import {
 	subscribeRefreshButton,
 } from "./util/common";
 import { SearchBox } from "./util/searchbox";
+import { appendEventDetails } from './eventdetails';
 import { applyNav, badge } from "./util/card";
 import { FilterControl, gateToggle, readFilterList, toggleBinder } from "./util/toolbar";
 import { feLocalize } from "./util/i18n";
@@ -522,6 +523,7 @@ function buildEventCard(node: EventGraphEventNode): HTMLDivElement {
 	}
 
 	applyEffectsDot(card, node.effectsRef, node.afterEffectsRef);
+	appendEventDetails(card, node, showLocalisation);
 	return card;
 }
 
@@ -562,6 +564,7 @@ function buildOptionCard(node: EventGraphOptionNode): HTMLDivElement {
 	}
 
 	applyEffectsDot(card, node.effectsRef);
+	appendEventDetails(card, node, showLocalisation);
 	return card;
 }
 
@@ -628,6 +631,7 @@ let isolation: IsolationHandle | undefined = undefined;
 let skippedByEvent = new Map<string, string[]>();
 
 function buildContent(): void {
+	document.querySelector('.event-details-dialog')?.remove();
 	const content = document.getElementById("eventtreecontent") as HTMLDivElement | null;
 	if (!content) {
 		return;

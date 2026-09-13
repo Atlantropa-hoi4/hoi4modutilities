@@ -10,7 +10,7 @@ import { flatten } from "lodash";
 import { arrayToMap, jsonForScript } from "../../util/common";
 import { buildEventGraphPayload, eventsToGraph } from "./graph";
 import { EventGraphPayload } from "./payload";
-import { LoaderRender } from "../loaderpreview";
+import { LoaderRender, RenderContentOptions } from "../loaderpreview";
 
 // Height of the fixed toolbar strip. The content is offset by it and enableZoom is told about
 // it, so the graph never renders underneath the toolbar.
@@ -24,10 +24,11 @@ const toolbarHeight = 52;
 export async function renderEventFile(
 	loader: EventsLoader,
 	uri: vscode.Uri,
-	webview: vscode.Webview,
+    webview: vscode.Webview,
+    options?: RenderContentOptions,
 ): Promise<LoaderRender> {
 	try {
-		const session = new LoaderSession(false);
+        const session = new LoaderSession(options?.dependencyChanged ?? false);
 		const loadResult = await loader.load(session);
 		debug("Loader session event tree", session.getLoadedLoaderNames());
 

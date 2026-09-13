@@ -1,5 +1,6 @@
 import { registerHoiFs } from '../../util/hoifs';
 import { registerModFile } from '../../util/modfile';
+import { registerIndexCommands } from '../../services/indexService';
 import type { ExtensionFeature } from '../types';
 
 export const workspaceFeature: ExtensionFeature = {
@@ -10,6 +11,7 @@ export const workspaceFeature: ExtensionFeature = {
             register: () => [
                 registerModFile(),
                 registerHoiFs(),
+                registerIndexCommands(),
             ],
         },
     ],

@@ -48,6 +48,7 @@ import { normalizePreviewScale } from "../src/util/previewscale";
 import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } from "./focustree/messageapply";
 import { createFocusTreeWebviewInitialState } from "./focustree/state";
 import { applyStringMapPatchInPlace } from "./focustree/stringmappatch";
+import { initializeFocusPresentation } from "./focustree/presentation";
 
 declare global {
     interface Window {
@@ -2860,6 +2861,10 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage & {
             clearMissingPendingPlaceholderFocusIds();
         },
         applyFocusTreePatches,
+        setContinuousFocusHtml: html => {
+            const element = document.getElementById('continuousFocuses');
+            if (element) { element.innerHTML = html || feLocalize('focustree.continuousFocuses', 'Continuous focuses'); }
+        },
         setRenderedFocus: renderedFocus => {
             window.renderedFocus = renderedFocus;
             clearPendingPlaceholderFocusIdsForRenderedMap(renderedFocus);
@@ -2962,6 +2967,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
 window.addEventListener('load', runSafely(async function() {
     postFocusTreeWebviewTiming({ stage: 'load' });
     subscribePreviewLabelToggle('id');
+    initializeFocusPresentation();
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;

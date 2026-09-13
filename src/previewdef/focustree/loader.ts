@@ -22,6 +22,8 @@ import { createEmptyFocusIconAssetResolution, FocusIconAssetResolution, resolveF
 import { getSpriteTextureFilesByGfxFile } from "../../util/image/imagecache";
 import { addMissingFocusIconWarnings } from "./focusiconwarnings";
 import { hoiFileExpiryToken } from "../../util/fileloader";
+import { GuiFileLoader } from '../gui/loader';
+import { findFocusWindow, FocusPresentation, FocusTitleStyleLoader, parseFocusTitleStyles } from './presentation';
 
 export interface FocusTreeLoaderResult {
     focusTrees: FocusTree[];
@@ -30,12 +32,29 @@ export interface FocusTreeLoaderResult {
     focusIconAssetResolution: FocusIconAssetResolution;
     focusSpacing?: NumberPosition;
     deferredAssetLoad?: boolean;
+    presentation?: FocusPresentation;
 }
 
 export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
+
+function collectPresentationSprites(presentation: FocusPresentation | undefined): string[] {
+    if (!presentation) { return []; }
+    const names = presentation.styles.map(style => style.unavailable!).filter(Boolean);
+    if (presentation.item) { names.push('GFX_focus_unavailable'); }
+    const visit = (value: unknown): void => {
+        if (!value || typeof value !== 'object') { return; }
+        for (const [key, child] of Object.entries(value)) {
+            if ((key === 'spritetype' || key === 'quadtexturesprite') && typeof child === 'string') { names.push(child); }
+            else if (child && typeof child === 'object') { visit(child); }
+        }
+    };
+    visit(presentation.item);
+    visit(presentation.continuous);
+    return names;
+}
 
 export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     constructor(
@@ -105,6 +124,19 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const focusSpacingDepFiles = await this.loaderDependencies.loadMultiple([focusTreeGuiFile], session, FocusSpacingLoader);
         session.throwIfCancelled();
         const focusSpacing = focusSpacingDepFiles[0]?.result.focusSpacing;
+        const presentationGuiFiles = deferAssetLoad ? [] : await this.loaderDependencies.loadMultiple(
+            uniq([focusTreeGuiFile, ...dependencies.filter(d => d.type === 'gui').map(d => d.path)]), session, GuiFileLoader);
+        const styleFiles = deferAssetLoad ? [] : await this.loaderDependencies.loadMultiple(
+            ['common/national_focus/00_titlebar_styles.txt'], session, FocusTitleStyleLoader);
+        const windows = presentationGuiFiles.flatMap(f => f.result.guiFiles).flatMap(f => f.data.guitypes)
+            .flatMap(gui => [...gui.containerwindowtype, ...gui.windowtype]);
+        const presentation: FocusPresentation | undefined = deferAssetLoad ? undefined : {
+            item: findFocusWindow(windows, 'national_focus_item'),
+            continuous: findFocusWindow(windows, 'continuous_focus_window'),
+            styles: [...parseFocusTitleStyles(parsedNode), ...focusTreeDepFiles.flatMap(f => f.result.presentation?.styles ?? []),
+                ...styleFiles.flatMap(f => f.result)],
+        };
+        session.throwIfCancelled();
 
         const importedFocusTrees = focusTreeDepFiles.flatMap(f => f.result.focusTrees);
 
@@ -183,12 +215,13 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ...allInlays.map(inlay => inlay.file),
         ]));
         const explicitGfxDependencies = uniq([
+            ...presentationGuiFiles.flatMap(f => f.result.gfxFiles),
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
         ]);
         const iconGfxAssets = deferAssetLoad
             ? createEmptyFocusIconAssetResolution()
-            : await resolveFocusIconGfxAssets(focusIconNames, {
+            : await resolveFocusIconGfxAssets([...focusIconNames, ...collectPresentationSprites(presentation)], {
                 resolveIndexedFile: async gfxName => getGfxContainerFile(gfxName),
                 listInterfaceGfxFiles: async () => orderFocusIconFallbackGfxFiles(await getCachedInterfaceGfxFiles()),
                 readSpriteNames: getCachedInterfaceGfxSpriteNames,
@@ -218,6 +251,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusIconAssetResolution: iconGfxAssets,
                 focusSpacing,
                 deferredAssetLoad: deferAssetLoad,
+                presentation,
             },
             dependencies: uniq([
                 this.file,
@@ -228,6 +262,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 ...uniqueInlayFiles,
                 ...focusTreeDependencies,
                 ...mergeInLoadResult(focusSpacingDepFiles, 'dependencies'),
+                ...mergeInLoadResult(presentationGuiFiles, 'dependencies'),
+                ...mergeInLoadResult(styleFiles, 'dependencies'),
                 ...mergeInLoadResult(focusTreeDepFiles, 'dependencies')
             ]),
         };

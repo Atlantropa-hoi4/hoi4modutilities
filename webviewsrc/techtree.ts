@@ -2,7 +2,8 @@ import { chain, flatMap, min, sumBy } from "lodash";
 import { RenderedTechnologyFolder, RenderedTechnologyFolderGridBox, Technology, TechnologyTree } from "../src/previewdef/technology/schema";
 import { RenderCommonOptions, calculateBBox, getHeight, getWidth, normalizeNumberLike } from "../src/util/hoi4gui/common";
 import { GridBoxConnection, GridBoxItem, getGridBoxItemPosition, renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
-import { setState, getState, scrollToState, tryRun, subscribeRefreshButton, subscribeNavigators, arrayToMap, enableZoom, subscribePreviewLabelToggle, refreshPreviewLabelMode, setPreviewPanDisabled } from "./util/common";
+import { setState, getState, scrollToState, tryRun, subscribeRefreshButton, subscribeNavigators, arrayToMap, enableZoom, subscribePreviewLabelToggle, setPreviewPanDisabled } from "./util/common";
+import { applyTechnologyLabels, initializeTechnologyPresentation, updateTechnologyCountries } from './technology/presentation';
 import { StyleTable } from "../src/util/styletable";
 import { ConditionItem, conditionItemToStringValue, conditionToString, stringValueToConditionItem } from "../src/hoiformat/condition";
 import { DivDropdown } from "./util/dropdown";
@@ -306,7 +307,7 @@ async function buildContent() {
 
     mainContent.innerHTML = template + styleTable.toStyleElement((window as any).styleNonce);
     subscribeNavigators();
-    refreshPreviewLabelMode();
+    applyTechnologyLabels();
     pruneTechnologySelection();
     refreshTechnologyEditUi();
 }
@@ -893,6 +894,7 @@ async function folderChange(folder: string, clearCondition: boolean) {
         clearTechnologyInteractionState(true);
     }
     selectedFolder = folder;
+    updateTechnologyCountries(folder);
     setState({ folder: folder });
 
     const conditionExprs = chain(technologyTrees).filter(t => t.folder === folder).flatMap(t => t.conditionExprs).uniqBy(e => e.scopeName + '!' + e.nodeContent).value();
@@ -917,6 +919,7 @@ async function folderChange(folder: string, clearCondition: boolean) {
 window.addEventListener('load', tryRun(async function() {
     const defaultLabelMode = (window as any).technologyDefaultLabelMode === 'id' ? 'id' : 'name';
     subscribePreviewLabelToggle(defaultLabelMode);
+    initializeTechnologyPresentation(defaultLabelMode);
 
     // Tech tree folder selector
     const element = document.getElementById('folderSelector') as HTMLSelectElement;

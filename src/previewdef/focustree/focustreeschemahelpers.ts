@@ -293,6 +293,7 @@ function getFocus(
         isInCurrentFile: true,
         text: hoiFocus.text,
         overlay: hoiFocus.overlay,
+        textIcon: hoiFocus.text_icon,
         lintWarningCount: 0,
         lintInfoCount: 0,
         searchFilters: hoiFocus.search_filters?._values ?? [],

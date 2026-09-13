@@ -59,6 +59,7 @@ export interface Focus {
     isInCurrentFile: boolean;
     text?: string;
     overlay?: string;
+    textIcon?: string;
     layout?: FocusPositionMeta;
     lintWarningCount: number;
     lintInfoCount: number;
@@ -150,6 +151,7 @@ export interface FocusDef {
     _token: Token;
     text?: string;
     overlay?: string;
+    text_icon?: string;
     search_filters: Enum;
 }
 
@@ -227,6 +229,7 @@ const focusSchema: SchemaDef<FocusDef> = {
     },
     text: "string",
     overlay: "string",
+    text_icon: "string",
     search_filters: "enum",
 };
 

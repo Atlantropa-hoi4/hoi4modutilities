@@ -283,3 +283,17 @@ button[disabled]:active {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
 }
+/* Shared preview navigation controls, outside the scaled content. */
+.preview-zoom-controls {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 6px;
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    z-index: 1000;
+}
+.preview-zoom-controls output { min-width: 42px; text-align: center; }

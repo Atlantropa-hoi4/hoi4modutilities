@@ -19,6 +19,8 @@ export namespace ContextName {
 }
 
 export namespace Commands {
+    export const ShowIndexStatus = 'server.hoi4modutilities.showIndexStatus';
+    export const CancelIndexBuild = 'server.hoi4modutilities.cancelIndexBuild';
     export const FormatWorkspace = 'server.hoi4modutilities.formatWorkspace';
     export const Preview = 'server.hoi4modutilities.preview';
     export const PreviewWorld = 'server.hoi4modutilities.previewworld';

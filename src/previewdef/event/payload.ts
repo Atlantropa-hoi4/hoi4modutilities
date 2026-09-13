@@ -33,6 +33,7 @@ interface GraphNodeBase {
 }
 
 export interface EventGraphEventNode extends GraphNodeBase {
+	descriptions?: { text: LocText; trigger?: string }[];
 	kind: "event";
 	eventId: string;
 	eventType: HOIEventType;
@@ -55,6 +56,8 @@ export interface EventGraphEventNode extends GraphNodeBase {
 }
 
 export interface EventGraphOptionNode extends GraphNodeBase {
+	aiChanceScript?: string;
+	originalRecipientOnly?: boolean;
 	kind: "option";
 	name: LocText;
 	trigger: ConditionComplexExpr;

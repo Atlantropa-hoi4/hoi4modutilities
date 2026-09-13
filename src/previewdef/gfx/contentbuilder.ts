@@ -5,7 +5,7 @@ import { getImageByPath } from '../../util/image/imagecache';
 import { localize } from '../../util/i18n';
 import { html, htmlAttributeEscape, htmlEscape } from '../../util/html';
 import { StyleTable } from '../../util/styletable';
-import { forceError } from '../../util/common';
+import { forceError, mapWithConcurrency } from '../../util/common';
 
 export interface RenderedGfxFile {
     html: string;
@@ -49,7 +49,7 @@ async function renderSpriteTypes(
     spriteTypes: AnySpriteType[],
     styleTable: StyleTable,
 ): Promise<string> {
-    const imageList = (await Promise.all(spriteTypes.map(st => renderSpriteType(st, styleTable)))).join('');
+    const imageList = (await mapWithConcurrency(spriteTypes, 8, st => renderSpriteType(st, styleTable))).join('');
     const filter = `<div
     class="${styleTable.style('filterBar', () => `
         position: fixed;
@@ -100,7 +100,7 @@ async function renderSpriteType(
         start="${spriteType.token?.start ?? ''}"
         end="${spriteType.token?.end ?? ''}"
         title="${htmlAttributeEscape(titleText)}">
-        ${image ? `<img src="${image.uri}" />` :
+        ${image ? `<div role="img" aria-label="${htmlAttributeEscape(spriteType.name)}" class="${styleTable.style('gfx-texture-' + Buffer.from(image.path.toString()).toString('hex'), () => `display:inline-block;width:${image.width}px;height:${image.height}px;background-image:url(${image.uri});`)}"></div>` :
             `<div 
             class="${styleTable.style('missingImageOuter', () => `
                 height: 100px;
