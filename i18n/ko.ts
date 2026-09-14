@@ -468,6 +468,16 @@ const table: Partial<typeof __table> = {
     "zoom.out": "축소 (-)",
     "focustree.framegfx": "중점 틀 GFX",
     "focustree.decorationgfx": "중점 장식 GFX",
+    "miopreview.edit.toggle": "MIO 특성 편집 전환",
+    "miopreview.edit.linkAny": "하나 이상 부모 연결",
+    "miopreview.edit.linkAll": "모든 부모 연결",
+    "miopreview.edit.linkExclusive": "상호 배타 연결",
+    "miopreview.edit.delete": "삭제",
+    "miopreview.edit.documentclosed": "MIO 원본 문서가 더 이상 열려 있지 않습니다.",
+    "miopreview.edit.stale": "편집을 적용하기 전에 MIO 문서가 변경되었습니다.",
+    "miopreview.edit.missingmio": "선택한 MIO를 더 이상 사용할 수 없습니다.",
+    "miopreview.edit.refused": "VS Code가 MIO 편집을 거부했습니다.",
+    "miopreview.edit.closedafterapply": "편집 적용 후 MIO 문서가 닫혔습니다.",
 };
 
 export default table;

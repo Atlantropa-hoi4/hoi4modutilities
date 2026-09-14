@@ -343,6 +343,16 @@ const table: Partial<typeof __table> = {
     "zoom.out": "Уменьшить (-)",
     "focustree.framegfx": "GFX рамки фокуса",
     "focustree.decorationgfx": "GFX декора фокуса",
+    "miopreview.edit.toggle": "Переключить редактирование черт ВПК",
+    "miopreview.edit.linkAny": "Связать с любым родителем",
+    "miopreview.edit.linkAll": "Связать со всеми родителями",
+    "miopreview.edit.linkExclusive": "Связать взаимоисключающие черты",
+    "miopreview.edit.delete": "Удалить",
+    "miopreview.edit.documentclosed": "Исходный документ ВПК больше не открыт.",
+    "miopreview.edit.stale": "Документ ВПК изменился до применения правки.",
+    "miopreview.edit.missingmio": "Выбранный ВПК больше недоступен.",
+    "miopreview.edit.refused": "VS Code отклонил изменение ВПК.",
+    "miopreview.edit.closedafterapply": "Документ ВПК закрылся после применения правки.",
 };
 
 export default table;

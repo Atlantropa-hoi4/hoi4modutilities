@@ -345,5 +345,13 @@
   "Saving cache": "캐시 저장 중",
   "Building event index...": "이벤트 인덱스 빌드 중...",
   "Focus frame GFX": "중점 틀 GFX",
-  "Focus decoration GFX": "중점 장식 GFX"
+  "Focus decoration GFX": "중점 장식 GFX",
+  "Toggle MIO trait editing": "MIO 특성 편집 전환",
+  "Link Any Parent": "하나 이상 부모 연결",
+  "Link All Parents": "모든 부모 연결",
+  "The MIO source document is no longer open.": "MIO 원본 문서가 더 이상 열려 있지 않습니다.",
+  "The MIO document changed before the edit could be applied.": "편집을 적용하기 전에 MIO 문서가 변경되었습니다.",
+  "The selected MIO is no longer available.": "선택한 MIO를 더 이상 사용할 수 없습니다.",
+  "VS Code refused the MIO edit.": "VS Code가 MIO 편집을 거부했습니다.",
+  "The MIO document closed after the edit was applied.": "편집 적용 후 MIO 문서가 닫혔습니다."
 }

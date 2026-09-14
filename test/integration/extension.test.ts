@@ -6,6 +6,8 @@ import { buildFocusPositionWorkspaceEdit } from '../../src/previewdef/focustree/
 import { collectTechnologyFileMetadata } from '../../src/previewdef/technology/editmetadata';
 import { buildTechnologyPositionTextChanges } from '../../src/previewdef/technology/editservice';
 import { buildTechnologyWorkspaceEdit } from '../../src/previewdef/technology/editworkspace';
+import { getMiosFromFile } from '../../src/previewdef/mio/schema';
+import { buildMioWorkspaceEdit } from '../../src/previewdef/mio/editworkspace';
 import { waitFor } from '../testUtils';
 
 function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
@@ -197,6 +199,33 @@ suite('extension smoke', () => {
         assert.ifError(workspaceEdit.error);
         assert.ok(workspaceEdit.edit);
         assert.strictEqual(await vscode.workspace.applyEdit(workspaceEdit.edit!), true);
+        assert.match(document.getText(), /position = \{ x = 4 y = 5 \}/);
+
+        await vscode.commands.executeCommand('undo');
+        await waitFor(() => document.getText() === original, 5000);
+        assert.strictEqual(document.getText(), original);
+    });
+
+    test('applies a MIO position edit as one undoable workspace edit', async () => {
+        const original = `sample_mio = {
+    trait = {
+        token = sample_trait
+        position = { x = 1 y = 2 }
+    }
+}`;
+        const document = await vscode.workspace.openTextDocument({ language: 'hoi4', content: original });
+        await vscode.window.showTextDocument(document);
+        const mio = getMiosFromFile(parseHoi4File(original), [], 'common/military_industrial_organization/undo.txt')[0];
+        const result = buildMioWorkspaceEdit(document, {
+            command: 'applyMioPositionEdits',
+            requestId: 'integration-test',
+            documentVersion: document.version,
+            mioId: mio.id,
+            edits: [{ traitId: 'sample_trait', x: 4, y: 5, absoluteX: 4, absoluteY: 5 }],
+        }, mio);
+        assert.ifError(result.error);
+        assert.ok(result.edit);
+        assert.strictEqual(await vscode.workspace.applyEdit(result.edit!), true);
         assert.match(document.getText(), /position = \{ x = 4 y = 5 \}/);
 
         await vscode.commands.executeCommand('undo');

@@ -22,7 +22,23 @@ const traitEffectIconMap: Record<TraitEffect, string> = {
     organization: 'GFX_organization_modifier_icon',
 };
 
-export async function renderMioFile(loader: MioLoader, uri: vscode.Uri, webview: vscode.Webview): Promise<string> {
+export interface RenderMioFileResult {
+    html: string;
+    mios: Mio[];
+}
+
+interface MioRenderAssetCache {
+    traitIcons: Map<string, Promise<Image | undefined>>;
+    traitLabels: Map<string, Promise<string>>;
+    backgrounds: Map<boolean, Promise<Image | undefined>>;
+}
+
+export async function renderMioFile(
+    loader: MioLoader,
+    uri: vscode.Uri,
+    webview: vscode.Webview,
+    documentVersion: number,
+): Promise<RenderMioFileResult> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
 
     try {
@@ -34,7 +50,7 @@ export async function renderMioFile(loader: MioLoader, uri: vscode.Uri, webview:
 
         if (mios.length === 0) {
             const baseContent = localize('miopreview.nomio', 'No military industrial organization defined.');
-            return html(webview, baseContent, [ setPreviewFileUriScript ], []);
+            return { html: html(webview, baseContent, [ setPreviewFileUriScript ], []), mios };
         }
 
         mios.sort((a, b) => a.id.localeCompare(b.id));
@@ -42,11 +58,11 @@ export async function renderMioFile(loader: MioLoader, uri: vscode.Uri, webview:
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = randomString(32);
-        const baseContent = await renderMios(mios, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file);
+        const baseContent = await renderMios(mios, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file, documentVersion);
         jsCodes.push(i18nTableAsScript());
         jsCodes.push(featureFlagsAsScript());
 
-        return html(
+        return { html: html(
             webview,
             baseContent,
             [
@@ -60,11 +76,11 @@ export async function renderMioFile(loader: MioLoader, uri: vscode.Uri, webview:
                 styleTable,
                 { nonce: styleNonce },
             ],
-        );
+        ), mios };
 
     } catch (e) {
         const baseContent = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
-        return html(webview, baseContent, [ setPreviewFileUriScript ], []);
+        return { html: html(webview, baseContent, [ setPreviewFileUriScript ], []), mios: [] };
     }
 }
 
@@ -74,7 +90,15 @@ const xGridSize = 87;
 const yGridSize = 117;
 const toolbarHeight = 52;
 
-async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[], jsCodes: string[], styleNonce: string, file: string): Promise<string> {
+async function renderMios(
+    mios: Mio[],
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    jsCodes: string[],
+    styleNonce: string,
+    file: string,
+    documentVersion: number,
+): Promise<string> {
 
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPadding), y: toNumberLike(topPadding) },
@@ -84,11 +108,16 @@ async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[
     } as HOIPartial<GridBoxType>;
 
     const renderedTrait: Record<string, Record<string, string>> = {};
+    const assetCache: MioRenderAssetCache = {
+        traitIcons: new Map(),
+        traitLabels: new Map(),
+        backgrounds: new Map(),
+    };
     for (const mio of mios) {
         const renderedTraitForMio: Record<string, string> = {};
         renderedTrait[mio.id] = renderedTraitForMio;
         await Promise.all(Object.values(mio.traits).map(async (trait) =>
-            renderedTraitForMio[trait.id] = (await renderTrait(trait, styleTable, gfxFiles, file)).replace(/\s\s+/g, ' ')));
+            renderedTraitForMio[trait.id] = (await renderTrait(trait, styleTable, gfxFiles, file, assetCache)).replace(/\s\s+/g, ' ')));
     }
 
     jsCodes.push('window.mios = ' + JSON.stringify(mios));
@@ -97,6 +126,7 @@ async function renderMios(mios: Mio[], styleTable: StyleTable, gfxFiles: string[
     jsCodes.push('window.styleNonce = ' + JSON.stringify(styleNonce));
     jsCodes.push('window.xGridSize = ' + xGridSize);
     jsCodes.push('window.toolbarHeight = ' + toolbarHeight);
+    jsCodes.push('window.mioDocumentVersion = ' + JSON.stringify(documentVersion));
     jsCodes.push('window.previewOptions = ' + JSON.stringify(getPreviewOptions(mioPreviewOptionKeys)));
 
     return (
@@ -171,6 +201,13 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
             <i class="codicon codicon-warning"></i>
         </button>`;
 
+    const editButton = `<button
+        id="mio-edit-mode"
+        title="${localize('miopreview.edit.toggle', 'Toggle MIO trait editing')}"
+        aria-pressed="false">
+        <i class="codicon codicon-edit"></i>
+    </button>`;
+
     const toggles = [
         ['show-included-traits', localize('miopreview.showIncludedTraits', 'Show included traits')],
         ['show-grid', localize('miopreview.showGrid', 'Show grid')],
@@ -182,6 +219,7 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
             ${mioSelect}
             ${conditions}
             ${warningsButton}
+            ${editButton}
             <button id="refresh" title="${localize('common.topbar.refresh.title', 'Refresh')}">
                 <i class="codicon codicon-refresh"></i>
             </button>
@@ -191,12 +229,30 @@ async function renderToolBar(mios: Mio[], styleTable: StyleTable): Promise<strin
     </div>`;
 }
 
-async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
+async function renderTrait(
+    trait: MioTrait,
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    file: string,
+    assetCache: MioRenderAssetCache,
+): Promise<string> {
     const traitIcon = trait.icon;
-    const traitLabel = isLocalisationIndexEnabled() ? await getLocalisedTextQuick(trait.name) ?? '' : '';
+    let traitLabelPromise = assetCache.traitLabels.get(trait.name);
+    if (!traitLabelPromise) {
+        traitLabelPromise = isLocalisationIndexEnabled()
+            ? getLocalisedTextQuick(trait.name).then(value => value ?? '')
+            : Promise.resolve('');
+        assetCache.traitLabels.set(trait.name, traitLabelPromise);
+    }
+    const traitLabel = await traitLabelPromise;
     const traitTitle = `${trait.id}${traitLabel ? `\n${traitLabel}` : ''}\n({{position}})`;
     if (traitIcon) {
-        const iconObject = traitIcon ? await getTraitIcon(traitIcon, gfxFiles) : null;
+        let iconPromise = assetCache.traitIcons.get(traitIcon);
+        if (!iconPromise) {
+            iconPromise = getTraitIcon(traitIcon, gfxFiles);
+            assetCache.traitIcons.set(traitIcon, iconPromise);
+        }
+        const iconObject = await iconPromise;
         styleTable.style('trait-icon-' + normalizeForStyle(traitIcon ?? '-empty'), () => 
             `${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
             background-size: ${iconObject ? iconObject.width: 0}px;`
@@ -207,12 +263,20 @@ async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: st
     styleTable.raw(`.${styleTable.name('trait-common')}:hover .${styleTable.name('trait-span')}`, `display:inline-block;`);
     styleTable.raw(`.${styleTable.name('trait-common')}:hover .${styleTable.name('trait-span-display')}`, `margin-top: -12px;`);
 
-    const traitBg = await getSpriteByGfxName(trait.specialTraitBackground ? 'GFX_country_spefific_org_trait_button' : 'GFX_industrial_org_trait_button', gfxFiles);
+    let traitBgPromise = assetCache.backgrounds.get(trait.specialTraitBackground);
+    if (!traitBgPromise) {
+        traitBgPromise = getSpriteByGfxName(
+            trait.specialTraitBackground ? 'GFX_country_spefific_org_trait_button' : 'GFX_industrial_org_trait_button',
+            gfxFiles,
+        ).then(sprite => sprite ? (sprite.frames[2] ?? sprite.image) : undefined);
+        assetCache.backgrounds.set(trait.specialTraitBackground, traitBgPromise);
+    }
+    const traitBg = await traitBgPromise;
 
     return `<div
     class="
         ${styleTable.style(trait.specialTraitBackground ? 'trait-bg-special' : 'trait-bg-normal',
-            () => traitBg ? `background-image: url(${(traitBg.frames[2] ?? traitBg.image).uri});` : '')}
+            () => traitBg ? `background-image: url(${traitBg.uri});` : '')}
         ${styleTable.style('trait-background', () => `
             background-position-x: center;
             background-position-y: center;
@@ -237,6 +301,9 @@ async function renderTrait(trait: MioTrait, styleTable: StyleTable, gfxFiles: st
                 cursor: pointer;
             `)}
         "
+        data-mio-trait-id="${htmlAttributeEscape(trait.id)}"
+        data-mio-trait-editable="${trait.edit.editable ? 'true' : 'false'}"
+        data-mio-trait-definition-kind="${trait.edit.definitionKind}"
         start="${trait.token?.start}"
         end="${trait.token?.end}"
         ${file === trait.file ? '' : `file="${htmlAttributeEscape(trait.file)}"`}

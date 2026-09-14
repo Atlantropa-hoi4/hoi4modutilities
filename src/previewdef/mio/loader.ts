@@ -30,7 +30,7 @@ export class MioLoader extends ContentLoader<MioLoaderResult> {
         const gfxDependencies = [
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(mioDepFiles.map(f => f.result.gfxFiles)),
-            ...await getGfxContainerFiles(chain(mios).flatMap(m => Object.values(m.traits)).flatMap(t => t.icon).value()),
+            ...await getGfxContainerFiles(uniq(chain(mios).flatMap(m => Object.values(m.traits)).flatMap(t => t.icon).value())),
         ];
 
         return {

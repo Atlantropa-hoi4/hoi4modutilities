@@ -3,12 +3,15 @@ import { Node, Token } from "../../hoiformat/hoiparser";
 import { CustomMap, Enum, HOIPartial, Raw, SchemaDef, convertNodeToJson } from "../../hoiformat/schema";
 import { Warning, randomString } from "../../util/common";
 import { localize } from "../../util/i18n";
+import { createMioEditKey, createMioTraitEditKey, MioEditMeta, MioTraitDefinitionKind, MioTraitEditMeta } from "./editcommon";
 
 export interface Mio {
     id: string;
+    include: string | undefined;
     traits: Record<string, MioTrait>;
     conditionExprs: ConditionItem[];
     warnings: MioWarning[];
+    edit: MioEditMeta;
 }
 
 export interface MioWarning extends Warning<string> {
@@ -38,6 +41,7 @@ export interface MioTrait {
     effects: TraitEffect[];
     token: Token | undefined;
     file: string;
+    edit: MioTraitEditMeta;
 }
 
 interface MioDef {
@@ -69,6 +73,7 @@ interface MioTraitDef {
     equipment_bonus: Raw;
     production_bonus: Raw;
     organization_modifier: Raw;
+    delete_included_values: Enum;
     _token: Token;
 }
 
@@ -95,6 +100,7 @@ const mioTraitSchema: SchemaDef<MioTraitDef> = {
     equipment_bonus: "raw",
     production_bonus: "raw",
     organization_modifier: "raw",
+    delete_included_values: "enum",
 };
 
 const mioSchema: SchemaDef<MioDef> = {
@@ -121,26 +127,31 @@ const mioFileSchema: SchemaDef<MioFile> = {
 
 export function getMiosFromFile(node: Node, dependentMios: Mio[], filePath: string): Mio[] {
     const file = convertNodeToJson<MioFile>(node, mioFileSchema);
-    const dependencies: Mio[] = [...dependentMios];
-    const result: Mio[] = [];
+    const resolved = new Map<string, Mio>();
+    const resolving = new Set<string>();
 
-    for (const key in file._map) {
-        const mio = getMio(file._map[key], dependencies, filePath);
-        dependencies.push(mio);
-        if (!file._map[key]._value.include) {
-            result.push(mio);
+    const resolve = (key: string): Mio => {
+        const cached = resolved.get(key);
+        if (cached) {
+            return cached;
         }
-    }
 
-    // Run twice in case dependent mio is in current file.
-    for (const key in file._map) {
-        if (file._map[key]._value.include) {
-            const mio = getMio(file._map[key], dependencies, filePath);
-            result.push(mio);
+        const item = file._map[key];
+        const include = item._value.include;
+        let dependencies = dependentMios;
+        if (include && file._map[include] && !resolving.has(include)) {
+            resolving.add(key);
+            const base = resolve(include);
+            resolving.delete(key);
+            dependencies = [base, ...dependentMios];
         }
-    }
 
-    return result;
+        const mio = getMio(item, dependencies, filePath);
+        resolved.set(key, mio);
+        return mio;
+    };
+
+    return Object.keys(file._map).map(resolve);
 }
 
 function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, dependentMios: Mio[], filePath: string): Mio {
@@ -148,16 +159,16 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
     const mioDef = mioDefItem._value;
     const baseMio = mioDef.include ? dependentMios.find(m => m.id === mioDef.include) : undefined;
     const traits: Record<string, MioTrait> = Object.fromEntries(
-        Object.entries(baseMio?.traits ?? {}).map(([key, trait]) => [key, { ...trait }]));
+        Object.entries(baseMio?.traits ?? {}).map(([key, trait]) => [key, {
+            ...trait,
+            edit: {
+                editKey: createMioTraitEditKey(id, trait.id),
+                editable: true,
+                definitionKind: 'inherited' as const,
+            },
+        }]));
     const conditionExprs = baseMio?.conditionExprs ? [...baseMio.conditionExprs] : [];
     const warnings: MioWarning[] = [];
-
-    if (mioDef.include && mioDef.trait.length > 0) {
-        warnings.push({
-            source: id,
-            text: localize('miopreview.warnings.traitAndIncludeCheck1', 'Military industrial organization {0} has include property. It should use add_trait, remove_trait or override_trait instead of trait.', id),
-        });
-    }
 
     if (!mioDef.include && (mioDef.add_trait.length > 0 || mioDef.override_trait.length > 0 || mioDef.remove_trait._values.length > 0)) {
         warnings.push({
@@ -166,8 +177,25 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
         });
     }
 
-    for (const traitDef of [...mioDef.trait, ...mioDef.add_trait]) {
-        const trait = getTrait(traitDef, filePath, warnings, conditionExprs);
+    for (const traitDef of mioDef.trait) {
+        if (mioDef.include && traitDef.token && traits[traitDef.token]) {
+            overrideTrait(traitDef, traits, filePath, warnings, conditionExprs, id, 'trait');
+            traits[traitDef.token].sourceMioId = id;
+            continue;
+        }
+        const trait = getTrait(traitDef, filePath, warnings, conditionExprs, id, 'trait');
+        trait.sourceMioId = id;
+        if (traits[trait.id]) {
+            warnings.push({
+                source: id,
+                text: localize('miopreview.warnings.traitConflict', 'There\'re more than one trait with ID {0} in military industrial organization {1} in files: {2}, {3}.', trait.id, id, traits[trait.id].file, filePath),
+            });
+        }
+        traits[trait.id] = trait;
+    }
+
+    for (const traitDef of mioDef.add_trait) {
+        const trait = getTrait(traitDef, filePath, warnings, conditionExprs, id, 'add_trait');
         trait.sourceMioId = id;
         if (traits[trait.id]) {
             warnings.push({
@@ -179,7 +207,7 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
     }
 
     for (const traitDef of mioDef.override_trait) {
-        overrideTrait(traitDef, traits, filePath, warnings, conditionExprs);
+        overrideTrait(traitDef, traits, filePath, warnings, conditionExprs, id, 'override_trait');
         if (traitDef.token && traits[traitDef.token]) {
             traits[traitDef.token].sourceMioId = id;
         }
@@ -199,9 +227,16 @@ function getMio(mioDefItem: { _key: string, _value: HOIPartial<MioDef> }, depend
 
     return {
         id,
+        include: mioDef.include,
         traits,
         conditionExprs,
         warnings,
+        edit: {
+            editKey: createMioEditKey(filePath, id),
+            editable: true,
+            sourceFile: filePath,
+            included: !!mioDef.include,
+        },
     };
 }
 
@@ -247,7 +282,14 @@ function validateRelativePositionId(traits: Record<string, MioTrait>, warnings: 
     }
 }
 
-function getTrait(traitDef: HOIPartial<MioTraitDef>, filePath: string, warnings: MioWarning[], conditionExprs: ConditionItem[]): MioTrait {
+function getTrait(
+    traitDef: HOIPartial<MioTraitDef>,
+    filePath: string,
+    warnings: MioWarning[],
+    conditionExprs: ConditionItem[],
+    mioId: string,
+    definitionKind: MioTraitDefinitionKind,
+): MioTrait {
     const id = traitDef.token ?? `[missing_token_${randomString(8)}]`;
 
     if (!traitDef.token) {
@@ -294,10 +336,23 @@ function getTrait(traitDef: HOIPartial<MioTraitDef>, filePath: string, warnings:
         effects,
         token: traitDef._token,
         file: filePath,
+        edit: {
+            editKey: createMioTraitEditKey(mioId, id),
+            editable: true,
+            definitionKind,
+        },
     };
 }
 
-function overrideTrait(traitDef: HOIPartial<MioTraitDef>, traits: Record<string, MioTrait>, filePath: string, warnings: MioWarning[], conditionExprs: ConditionItem[]) {
+function overrideTrait(
+    traitDef: HOIPartial<MioTraitDef>,
+    traits: Record<string, MioTrait>,
+    filePath: string,
+    warnings: MioWarning[],
+    conditionExprs: ConditionItem[],
+    mioId: string,
+    definitionKind: MioTraitDefinitionKind,
+) {
     const id = traitDef.token;
     if (!id) {
         warnings.push({
@@ -316,26 +371,91 @@ function overrideTrait(traitDef: HOIPartial<MioTraitDef>, traits: Record<string,
         return;
     }
 
+    const deletedValues = new Set(traitDef.delete_included_values._values);
+    if (deletedValues.has('name')) {
+        trait.name = '';
+    }
+    if (deletedValues.has('icon')) {
+        trait.icon = undefined;
+    }
+    if (deletedValues.has('position')) {
+        trait.x = 0;
+        trait.y = 0;
+    }
+    if (deletedValues.has('any_parent')) {
+        trait.anyParent = [];
+    }
+    if (deletedValues.has('all_parents')) {
+        trait.allParents = [];
+    }
+    if (deletedValues.has('parent')) {
+        trait.parent = undefined;
+    }
+    if (deletedValues.has('mutually_exclusive')) {
+        trait.exclusive = [];
+    }
+    if (deletedValues.has('relative_position_id')) {
+        trait.relativePositionId = undefined;
+    }
+    if (deletedValues.has('special_trait_background')) {
+        trait.specialTraitBackground = false;
+    }
+    if (deletedValues.has('visible')) {
+        trait.visible = true;
+        trait.hasVisible = false;
+    }
+    if (deletedValues.has('equipment_bonus')) {
+        trait.effects = trait.effects.filter(effect => effect !== 'equiment');
+    }
+    if (deletedValues.has('production_bonus')) {
+        trait.effects = trait.effects.filter(effect => effect !== 'production');
+    }
+    if (deletedValues.has('organization_modifier')) {
+        trait.effects = trait.effects.filter(effect => effect !== 'organization');
+    }
+
     trait.name = traitDef.name ?? trait.name;
     trait.icon = traitDef.icon ?? trait.icon;
     trait.x = traitDef.position?.x ?? trait.x;
     trait.y = traitDef.position?.y ?? trait.y;
-    trait.anyParent = traitDef.any_parent._values.length > 0 ? traitDef.any_parent._values : trait.anyParent;
-    trait.allParents = traitDef.all_parents._values.length > 0 ? traitDef.all_parents._values : trait.allParents;
+    trait.anyParent = traitDef.any_parent._token !== undefined ? traitDef.any_parent._values : trait.anyParent;
+    trait.allParents = traitDef.all_parents._token !== undefined ? traitDef.all_parents._values : trait.allParents;
     trait.parent = traitDef.parent && traitDef.parent.traits._values.length > 0 ? {
         traits: traitDef.parent.traits._values,
         numNeeded: traitDef.parent.num_parents_needed ?? 1,
     } : trait.parent;
-    trait.exclusive = traitDef.mutually_exclusive._values.length > 0 ? traitDef.mutually_exclusive._values : trait.exclusive;
-    trait.relativePositionId = traitDef.relative_position_id ?? trait.relativePositionId;
+    trait.exclusive = traitDef.mutually_exclusive._token !== undefined ? traitDef.mutually_exclusive._values : trait.exclusive;
+    if (traitDef.relative_position_id !== undefined) {
+        trait.relativePositionId = traitDef.relative_position_id || undefined;
+    }
     trait.specialTraitBackground = traitDef.special_trait_background ?? trait.specialTraitBackground;
     trait.visible = traitDef.visible ?
         extractConditionValue(traitDef.visible._raw.value, { scopeName: '', scopeType: 'mio' }, conditionExprs).condition :
         trait.visible;
     trait.hasVisible = traitDef.visible !== undefined || trait.hasVisible;
+    trait.effects = mergeTraitEffects(trait.effects, traitDef);
     if (traitDef._token) {
         trait.token = traitDef._token;
         trait.file = filePath;
+        trait.edit = {
+            editKey: createMioTraitEditKey(mioId, id),
+            editable: true,
+            definitionKind,
+        };
     }
+}
+
+function mergeTraitEffects(effects: TraitEffect[], traitDef: HOIPartial<MioTraitDef>): TraitEffect[] {
+    const result = new Set(effects);
+    if (traitDef.equipment_bonus?._token) {
+        result.add('equiment');
+    }
+    if (traitDef.production_bonus?._token) {
+        result.add('production');
+    }
+    if (traitDef.organization_modifier?._token) {
+        result.add('organization');
+    }
+    return Array.from(result);
 }
 

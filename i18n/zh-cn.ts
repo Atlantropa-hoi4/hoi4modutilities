@@ -343,6 +343,16 @@ const table: Partial<typeof __table> = {
     "zoom.out": "缩小 (-)",
     "focustree.framegfx": "国策边框 GFX",
     "focustree.decorationgfx": "国策装饰 GFX",
+    "miopreview.edit.toggle": "切换军工机构特质编辑",
+    "miopreview.edit.linkAny": "链接任一父特质",
+    "miopreview.edit.linkAll": "链接所有父特质",
+    "miopreview.edit.linkExclusive": "链接互斥特质",
+    "miopreview.edit.delete": "删除",
+    "miopreview.edit.documentclosed": "军工机构源文档已不再打开。",
+    "miopreview.edit.stale": "应用编辑前，军工机构文档已发生更改。",
+    "miopreview.edit.missingmio": "所选军工机构已不可用。",
+    "miopreview.edit.refused": "VS Code 拒绝了军工机构编辑。",
+    "miopreview.edit.closedafterapply": "应用编辑后，军工机构文档已关闭。",
 };
 
 export default table;

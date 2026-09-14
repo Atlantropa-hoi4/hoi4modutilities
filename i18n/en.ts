@@ -465,6 +465,16 @@ const internalTable = /* SOT Do not remove this comment */{
     "zoom.out": "Zoom out (-)",
     "focustree.framegfx": "Focus frame GFX",
     "focustree.decorationgfx": "Focus decoration GFX",
+    "miopreview.edit.toggle": "Toggle MIO trait editing",
+    "miopreview.edit.linkAny": "Link Any Parent",
+    "miopreview.edit.linkAll": "Link All Parents",
+    "miopreview.edit.linkExclusive": "Link Mutually Exclusive",
+    "miopreview.edit.delete": "Delete",
+    "miopreview.edit.documentclosed": "The MIO source document is no longer open.",
+    "miopreview.edit.stale": "The MIO document changed before the edit could be applied.",
+    "miopreview.edit.missingmio": "The selected MIO is no longer available.",
+    "miopreview.edit.refused": "VS Code refused the MIO edit.",
+    "miopreview.edit.closedafterapply": "The MIO document closed after the edit was applied.",
 };/* EOT Do not remove this comment */
 
 export const __table = Object.assign(internalTable, {

@@ -304,8 +304,9 @@ function convertObject<T>(node: Node, schemaDef: SchemaDef<T>, constants: Record
             }
 
         } else if (childSchemaDef === 'enum') {
-            const enums = (convertNodeToJson(child, childSchemaDef, constants) as any)._values;
-            result[childName]._values.push(...enums);
+            const convertedEnum = convertNodeToJson(child, childSchemaDef, constants) as any;
+            result[childName]._values.push(...convertedEnum._values);
+            result[childName]._token ??= convertedEnum._token;
 
         } else {
             setChildValue = false;
