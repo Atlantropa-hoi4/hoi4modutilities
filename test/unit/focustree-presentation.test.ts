@@ -83,6 +83,26 @@ describe('focus GUI presentation', () => {
             assert.strictEqual(await api.renderFocusGui({ id: 'FOCUS' } as any, undefined, new StyleTable(), [], 96, 130), undefined);
         });
     });
+
+    it('keeps focus names above title backgrounds regardless of GUI declaration order', async () => {
+        await withPresentation(async api => {
+            const gui = convertNodeToJson<GuiFile>(parseHoi4File(`guiTypes = {
+                containerWindowType = { name = national_focus_item size = { width = 165 height = 128 }
+                    instantTextBoxType = { name = name maxWidth = 147 maxHeight = 20 }
+                    iconType = { name = bg spriteType = GFX_focus_unavailable }
+                }
+            }`), guiFileSchema);
+            const item = api.findFocusWindow(gui.guitypes.flatMap(value => value.containerwindowtype), 'national_focus_item');
+            const styles = new StyleTable();
+            const html = await api.renderFocusGui({ id: 'VISIBLE_FOCUS_NAME' } as any,
+                { item, styles: [] }, styles, [], 96, 130);
+
+            assert.ok(html);
+            assert.ok(html!.indexOf('VISIBLE_FOCUS_NAME') < html!.indexOf('focus-frame-gfx'));
+            assert.match(html!, /focus-gui-name/);
+            assert.match(styles.toStyleContent(), /z-index:2;pointer-events:none/);
+        });
+    });
 });
 
 describe('focus GFX visibility controls', () => {

@@ -56,6 +56,8 @@ export async function renderFocusGui(focus: Focus, presentation: FocusPresentati
     const background = titleStyle?.unavailable ?? 'GFX_focus_unavailable';
     const [,, width, height] = calculateBBox(item, screen);
     const common = { styleTable, getSprite: (name: string) => getSpriteByGfxName(name, gfxFiles) };
+    const focusNameClass = styleTable.style('focus-gui-name', () =>
+        'z-index:2;pointer-events:none;');
     const onRenderChild: RenderContainerWindowOptions['onRenderChild'] = async (type, child, parent) => {
         if (child.name && runtimeFocusControls.has(child.name)) { return ''; }
         if (type === 'containerwindow') {
@@ -76,7 +78,11 @@ export async function renderFocusGui(focus: Focus, presentation: FocusPresentati
         }
         if (type === 'instanttextbox' && child.name === 'name') {
             const text = `<span data-preview-label-id="${htmlAttributeEscape(focus.id)}" data-preview-label-name="${htmlAttributeEscape(localizedText ?? focus.id)}">${htmlTextEscape(focus.id)}</span>`;
-            return renderInstantTextBox({ ...child as HOIPartial<InstantTextBoxType>, text }, parent, { ...common, localise: false, rawText: true });
+            // Clausewitz does not use DOM source order for every GUI layer. Some focus GUI files
+            // declare the title before the background, which would otherwise paint the frame over
+            // the text in the webview and leave only a few glyph fragments visible.
+            return renderInstantTextBox({ ...child as HOIPartial<InstantTextBoxType>, text }, parent,
+                { ...common, classNames: focusNameClass, localise: false, rawText: true });
         }
         if (type === 'icon') {
             return renderIcon(child as HOIPartial<IconType>, parent, { ...common, classNames: 'focus-decoration-gfx' });
