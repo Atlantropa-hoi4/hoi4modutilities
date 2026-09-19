@@ -45,6 +45,10 @@
     "workspaceContains:common/decisions/*.txt",
     "workspaceContains:events/*.txt",
     "workspaceContains:events/**/*.txt",
+    "workspaceContains:localisation/**/*.yml",
+    "workspaceContains:localisation/**/*.yaml",
+    "workspaceContains:localization/**/*.yml",
+    "workspaceContains:localization/**/*.yaml",
     "workspaceContains:country_metadata/**/*.txt",
     "workspaceContains:map/default.map"
   ],

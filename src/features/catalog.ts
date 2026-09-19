@@ -10,6 +10,7 @@ import { guiFeature } from './gui';
 import { imageFeature } from './images';
 import { ideaFeature } from './ideas';
 import { localisationFeature } from './localisation';
+import { lintFeature } from './lint';
 import { mioFeature } from './mio';
 import { referencesFeature } from './references';
 import { technologyFeature } from './technology';
@@ -33,6 +34,7 @@ export const extensionFeatures: readonly ExtensionFeature[] = [
     workspaceFeature,
     referencesFeature,
     localisationFeature,
+    lintFeature,
     countryColorFeature,
     formatterFeature,
 ];

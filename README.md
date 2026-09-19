@@ -16,6 +16,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - Localisation highlighting and preview text lookup
 - HOI4 script, GUI, and GFX formatter support
 - `HOI4 Mod Utilities: Format Workspace HOI4 Files` formats supported `.txt`, `.gui`, and `.gfx` files across all workspace folders, respecting VS Code `files.exclude` settings. It uses open documents, including unsaved changes, skips files that fail parsing, and supports cancellation. Changes remain unsaved for review; use Save All to save them. Each changed file is an undoable edit. Localisation, map text files, and other unsupported text files are excluded according to the existing formatter rules.
+- Editor lint diagnostics provide Quick Fixes for legacy `check_variable` syntax, redundant `ai_chance` blocks in single-option events, and localisation version markers such as `KEY:0`. `Source: Fix All` can apply all safe HOI4 lint fixes in the active file.
 
 ## Getting Started
 

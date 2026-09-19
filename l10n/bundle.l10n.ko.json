@@ -353,5 +353,12 @@
   "The MIO document changed before the edit could be applied.": "편집을 적용하기 전에 MIO 문서가 변경되었습니다.",
   "The selected MIO is no longer available.": "선택한 MIO를 더 이상 사용할 수 없습니다.",
   "VS Code refused the MIO edit.": "VS Code가 MIO 편집을 거부했습니다.",
-  "The MIO document closed after the edit was applied.": "편집 적용 후 MIO 문서가 닫혔습니다."
+  "The MIO document closed after the edit was applied.": "편집 적용 후 MIO 문서가 닫혔습니다.",
+  "Legacy check_variable syntax can be replaced with operator syntax.": "구형 check_variable 문법을 연산자 문법으로 바꿀 수 있습니다.",
+  "ai_chance is redundant because this event has only one option.": "이 이벤트에는 선택지가 하나뿐이므로 ai_chance가 불필요합니다.",
+  "Localisation version numbers are not used by this project.": "이 프로젝트에서는 현지화 버전 번호를 사용하지 않습니다.",
+  "Convert to operator syntax": "연산자 문법으로 변환",
+  "Remove redundant ai_chance": "불필요한 ai_chance 제거",
+  "Remove localisation version number": "현지화 버전 번호 제거",
+  "Fix all safe HOI4 lint issues in this file": "이 파일의 안전한 HOI4 lint 문제 모두 수정"
 }
