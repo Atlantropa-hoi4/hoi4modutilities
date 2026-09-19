@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { collectHoi4LintFindings, Hoi4LintFinding, Hoi4LintRule } from '../hoiformat/lint';
+import { isHoi4InstallFile } from './hoi4InstallFile';
 import { localize } from './i18n';
 import { uriToFilePathWhenPossible } from './vsccommon';
 
@@ -42,6 +43,10 @@ export class Hoi4LintCodeActionProvider implements vscode.CodeActionProvider {
         context: vscode.CodeActionContext,
         _token: vscode.CancellationToken,
     ): vscode.CodeAction[] {
+        if (isHoi4InstallFile(document.uri)) {
+            return [];
+        }
+
         const findings = getFindings(document);
         if (findings.length === 0) {
             return [];

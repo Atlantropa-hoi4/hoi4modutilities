@@ -8,6 +8,7 @@ import { buildTechnologyPositionTextChanges } from '../../src/previewdef/technol
 import { buildTechnologyWorkspaceEdit } from '../../src/previewdef/technology/editworkspace';
 import { getMiosFromFile } from '../../src/previewdef/mio/schema';
 import { buildMioWorkspaceEdit } from '../../src/previewdef/mio/editworkspace';
+import { isHoi4FormatterIgnored } from '../../src/util/formatterIgnore';
 import { waitFor } from '../testUtils';
 
 function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
@@ -116,6 +117,45 @@ suite('extension smoke', () => {
             Commands.SelectHoiFolder,
         ]) {
             assert.ok(commands.includes(command), `expected command ${command} to be registered`);
+        }
+    });
+
+    test('skips vanilla-derived folders with the default formatter ignore patterns', () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+
+        // Glob matching only reads the URI, so the paths do not need fixture files.
+        const isIgnored = (relativePath: string) => isHoi4FormatterIgnored({
+            uri: vscode.Uri.joinPath(workspaceRoot!, ...relativePath.split('/')),
+            languageId: 'plaintext',
+        } as vscode.TextDocument);
+
+        for (const relativePath of [
+            'interface/sample.gfx',
+            'interface/countrytechtreeview.gui',
+            'gfx/entities/infantry.gfx',
+            'common/names/00_names.txt',
+            'common/occupation_laws/occupation_laws.txt',
+            'common/special_projects/projects/nuclear_projects.txt',
+            'common/technologies/sample_technology.txt',
+            'common/units/infantry.txt',
+            'common/units/equipment/infantry.txt',
+            'common/units/names/00_names.txt',
+            'common/units/names_railway_guns/ger_names_railway_guns.txt',
+            'history/states/1-France.txt',
+        ]) {
+            assert.strictEqual(isIgnored(relativePath), true, `expected ${relativePath} to be ignored`);
+        }
+
+        for (const relativePath of [
+            'events/sample_events.txt',
+            'common/ideas/sample_ideas.txt',
+            'common/units/names_divisions/GER_names_divisions.txt',
+            'common/units/names_ships/GER_names_ships.txt',
+            'history/countries/GER - Germany.txt',
+            'history/units/GER_1936.txt',
+        ]) {
+            assert.strictEqual(isIgnored(relativePath), false, `expected ${relativePath} to be formatted`);
         }
     });
 

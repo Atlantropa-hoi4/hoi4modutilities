@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import Module = require('module');
 
 class MockCodeActionKind {
@@ -34,6 +35,7 @@ interface MockPosition {
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
+let installPath = '';
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
@@ -54,7 +56,11 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             Diagnostic: class {},
             DiagnosticSeverity: { Warning: 1 },
             languages: {},
-            workspace: {},
+            workspace: {
+                getConfiguration: () => ({
+                    get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : fallback,
+                }),
+            },
             l10n: {
                 t: (message: string) => message,
                 bundle: {},
@@ -67,6 +73,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const lintProviderModule = (() => {
     try {
+        delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
         return require('../../src/util/hoi4LintProvider') as typeof import('../../src/util/hoi4LintProvider');
     } finally {
         nodeModule._load = originalLoad;
@@ -97,6 +104,33 @@ describe('HOI4 lint code action provider', () => {
         assert.strictEqual(actions[0].edit.replacements[0].replacement, 'check_variable = { score = 10 }');
         assert.strictEqual(actions[1].title, 'Fix all safe HOI4 lint issues in this file');
         assert.strictEqual(actions[1].edit.replacements.length, 1);
+    });
+
+    it('provides no quick fixes or fix-all edits for vanilla files under the HOI4 install path', () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        try {
+            const text = 'trigger = { check_variable = { var = score value = 10 compare = equals } }';
+            const provider = new Hoi4LintCodeActionProvider();
+            const provide = (filePath: string, only?: MockCodeActionKind) => {
+                const document = createDocument(filePath, text);
+                const start = text.indexOf('check_variable');
+                const diagnosticRange = new MockRange(document.positionAt(start), document.positionAt(text.indexOf('}', start) + 1));
+                return provider.provideCodeActions(
+                    document as any,
+                    diagnosticRange as any,
+                    { diagnostics: [{ code: 'legacy-check-variable', range: diagnosticRange }], only } as any,
+                    {} as any,
+                ) as any[];
+            };
+            const fixAllOnSave = MockCodeActionKind.SourceFixAll;
+
+            assert.deepStrictEqual(provide(path.join(installPath, 'common', 'scripted_triggers', 'test.txt')), []);
+            assert.deepStrictEqual(provide(path.join(installPath, 'common', 'scripted_triggers', 'test.txt'), fixAllOnSave), []);
+            assert.deepStrictEqual(provide(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), fixAllOnSave), []);
+            assert.strictEqual(provide(path.join(`${installPath} Mods`, 'common', 'scripted_triggers', 'test.txt')).length, 2);
+        } finally {
+            installPath = '';
+        }
     });
 });
 

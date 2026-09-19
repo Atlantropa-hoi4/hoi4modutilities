@@ -1,9 +1,10 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import Module = require('module');
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
-let files: Array<{ path: string; toString(): string }>;
+let files: Array<{ path: string; scheme?: string; fsPath?: string; toString(): string }>;
 let texts: Record<string, string>;
 let edits: Array<{ uri: { path: string }; text: string }>;
 let messages: string[];
@@ -12,11 +13,13 @@ let cancelAfterEdit: boolean;
 let acceptEdit: boolean;
 let folders: unknown[];
 let formatterIgnorePatterns: string[];
+let installPath: string;
+let openedPaths: string[];
 const vscodeMock = {
     workspace: {
         get workspaceFolders() { return folders; },
         getConfiguration: () => ({
-            get: (_key: string, fallback: unknown) => formatterIgnorePatterns ?? fallback,
+            get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : formatterIgnorePatterns ?? fallback,
         }),
         getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
         findFiles: async (_include: string, exclude: unknown) => {
@@ -24,7 +27,7 @@ const vscodeMock = {
             return files;
         },
         asRelativePath: (uri: { path: string }) => uri.path,
-        openTextDocument: async (uri: { path: string }) => ({
+        openTextDocument: async (uri: { path: string }) => (openedPaths.push(uri.path), {
             uri,
             getText: () => texts[uri.path],
             positionAt: (offset: number) => offset,
@@ -67,6 +70,7 @@ nodeModule._load = function(request, parent, isMain) {
 const { formatWorkspace } = (() => {
     try {
         delete require.cache[require.resolve('../../src/util/formatterIgnore')];
+        delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
         return require('../../src/util/formatWorkspace') as typeof import('../../src/util/formatWorkspace');
     } finally {
         nodeModule._load = originalLoad;
@@ -84,11 +88,19 @@ describe('workspace formatting', () => {
         acceptEdit = true;
         folders = [{}];
         formatterIgnorePatterns = [];
+        installPath = '';
+        openedPaths = [];
     });
 
     function addFile(path: string, text: string) {
         files.push({ path, toString: () => path });
         texts[path] = text;
+    }
+
+    function addDiskFile(fsPath: string, text: string) {
+        const uriPath = fsPath.replace(/\\/g, '/');
+        files.push({ scheme: 'file', fsPath, path: uriPath, toString: () => uriPath });
+        texts[uriPath] = text;
     }
 
     it('formats supported files across roots using document contents and preserves BOM and CRLF', async () => {
@@ -120,6 +132,18 @@ describe('workspace formatting', () => {
         await formatWorkspace();
         assert.strictEqual(edits.length, 1);
         assert.strictEqual(edits[0].uri.path, '/mod/events/regular.txt');
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
+    });
+
+    it('skips vanilla files under the HOI4 install path without opening them', async () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        const modPath = path.resolve('mod');
+        addDiskFile(path.join(installPath, 'common', 'ideas', 'vanilla.txt'), 'x=1');
+        addDiskFile(path.join(installPath, 'dlc', 'dlc001', 'interface', 'vanilla.gui'), 'size={ x=1 }');
+        addDiskFile(path.join(modPath, 'common', 'ideas', 'mod.txt'), 'x=2');
+        await formatWorkspace();
+        assert.deepStrictEqual(openedPaths, [path.join(modPath, 'common', 'ideas', 'mod.txt').replace(/\\/g, '/')]);
+        assert.strictEqual(edits.length, 1);
         assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
     });
 

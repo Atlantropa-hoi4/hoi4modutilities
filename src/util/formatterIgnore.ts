@@ -1,8 +1,13 @@
 import * as vscode from 'vscode';
+import { isHoi4InstallFile } from './hoi4InstallFile';
 
 const formatterIgnoreSetting = 'formatter.ignoreFiles';
 
 export function isHoi4FormatterIgnored(document: vscode.TextDocument): boolean {
+    if (isHoi4InstallFile(document.uri)) {
+        return true;
+    }
+
     const configuredPatterns = vscode.workspace
         .getConfiguration('hoi4ModUtilities', document.uri)
         .get<unknown>(formatterIgnoreSetting, []);

@@ -573,4 +573,16 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(getHoi4FormatterProfile('/mod/map/default.map'), undefined);
         assert.strictEqual(getHoi4FormatterProfile('C:\\projects\\map\\my-mod\\events\\sample.txt'), 'script');
     });
+
+    it('does not treat the Steam library steamapps/common folder as a script root', () => {
+        const steamGame = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Hearts of Iron IV';
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\common\\ideas\\_economic.txt`), 'script');
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\history\\countries\\GER - Germany.txt`), 'script');
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\interface\\core.gfx`), 'gui');
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\music\\hoi2\\hoi2_soundtrack.txt`), undefined);
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\tests\\argentina.txt`), undefined);
+        assert.strictEqual(getHoi4FormatterProfile(`${steamGame}\\licenses.txt`), undefined);
+        assert.strictEqual(getHoi4FormatterProfile('/home/user/.steam/steam/steamapps/common/Hearts of Iron IV/tutorial/tutorial.txt'), undefined);
+        assert.strictEqual(getHoi4FormatterProfile('/home/user/.steam/steam/steamapps/workshop/content/394360/123/common/ideas/x.txt'), 'script');
+    });
 });

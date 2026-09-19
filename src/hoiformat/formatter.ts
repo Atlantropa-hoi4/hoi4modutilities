@@ -150,7 +150,7 @@ export function getHoi4FormatterProfile(filePath: string): Hoi4FormatterProfile 
 }
 
 function getScriptRootSegment(normalizedPath: string): string | undefined {
-    const segments = normalizedPath.split('/').filter(Boolean);
+    const segments = stripSteamLibraryPrefix(normalizedPath.split('/').filter(Boolean));
     const excludedRootIndex = Math.max(segments.lastIndexOf('localisation'), segments.lastIndexOf('map'));
     const scriptRootIndex = Math.max(
         segments.lastIndexOf('common'),
@@ -160,6 +160,14 @@ function getScriptRootSegment(normalizedPath: string): string | undefined {
     );
 
     return scriptRootIndex > excludedRootIndex ? segments[scriptRootIndex] : undefined;
+}
+
+// Steam installs games under steamapps/common/<game>; that "common" is not a HOI4 script root.
+function stripSteamLibraryPrefix(segments: string[]): string[] {
+    const steamAppsIndex = segments.lastIndexOf('steamapps');
+    return steamAppsIndex !== -1 && segments[steamAppsIndex + 1] === 'common'
+        ? segments.slice(steamAppsIndex + 3)
+        : segments;
 }
 
 function isHistoryScriptFile(filePath: string | undefined): boolean {

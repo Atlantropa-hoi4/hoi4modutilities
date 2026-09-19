@@ -144,7 +144,22 @@
           "hoi4ModUtilities.formatter.ignoreFiles": {
             "title": "%hoi4modutilities.formatter.ignoreFiles.title%",
             "type": "array",
-            "default": [],
+            "default": [
+              "**/interface/**",
+              "**/gfx/**",
+              "**/common/names/**",
+              "**/common/occupation_laws/**",
+              "**/common/special_projects/**",
+              "**/common/technologies/**",
+              "**/common/units/*.txt",
+              "**/common/units/codenames_operatives/**",
+              "**/common/units/critical_parts/**",
+              "**/common/units/equipment/**",
+              "**/common/units/names/**",
+              "**/common/units/names_railway_guns/**",
+              "**/common/units/unit_modifiers/**",
+              "**/history/states/**"
+            ],
             "uniqueItems": true,
             "items": {
               "type": "string"

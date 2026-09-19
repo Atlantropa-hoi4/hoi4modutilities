@@ -128,7 +128,22 @@ describe('extension manifest', () => {
         assert.strictEqual(ignoreFiles.type, 'array');
         assert.strictEqual(ignoreFiles.scope, 'resource');
         assert.strictEqual(ignoreFiles.uniqueItems, true);
-        assert.deepStrictEqual(ignoreFiles.default, []);
+        assert.deepStrictEqual(ignoreFiles.default, [
+            '**/interface/**',
+            '**/gfx/**',
+            '**/common/names/**',
+            '**/common/occupation_laws/**',
+            '**/common/special_projects/**',
+            '**/common/technologies/**',
+            '**/common/units/*.txt',
+            '**/common/units/codenames_operatives/**',
+            '**/common/units/critical_parts/**',
+            '**/common/units/equipment/**',
+            '**/common/units/names/**',
+            '**/common/units/names_railway_guns/**',
+            '**/common/units/unit_modifiers/**',
+            '**/history/states/**',
+        ]);
         assert.strictEqual(ignoreFiles.items.type, 'string');
     });
 

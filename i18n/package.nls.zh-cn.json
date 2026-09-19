@@ -21,7 +21,7 @@
     "hoi4modutilities.previewLocalisation.desc": "事件预览中显示的语言。",
     "hoi4modutilities.formatWorkspace.title": "格式化工作区 HOI4 文件",
   "hoi4modutilities.formatter.ignoreFiles.title": "格式化器忽略文件",
-  "hoi4modutilities.formatter.ignoreFiles.desc": "相对于工作区文件夹的 glob 模式，用于排除文档、范围、输入时和工作区格式化中的文件。请使用正斜杠，例如 common/generated/** 或 **/legacy.txt。",
+  "hoi4modutilities.formatter.ignoreFiles.desc": "相对于工作区文件夹的 glob 模式，用于排除文档、范围、输入时和工作区格式化中的文件。请使用正斜杠，例如 common/generated/** 或 **/legacy.txt。默认列表会跳过源自原版的文件夹，例如 interface、gfx、common/technologies、common/units（names_divisions 和 names_ships 除外）以及 history/states。设置此值会替换默认列表。",
   "hoi4modutilities.previewWheel.title": "预览滚轮行为",
   "hoi4modutilities.previewWheel.desc": "Auto：鼠标滚轮缩放，触控板平移。Zoom：始终缩放。Scroll：平移。所有模式下 Ctrl/Cmd + 滚轮均可缩放。",
   "hoi4modutilities.showIndexStatus.title": "查看索引构建状态",

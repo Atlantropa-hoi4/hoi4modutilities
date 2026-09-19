@@ -1,9 +1,11 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import Module = require('module');
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
 let formatterIgnorePatterns: string[] = [];
+let installPath = '';
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
@@ -18,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             },
             workspace: {
                 getConfiguration: () => ({
-                    get: (_key: string, fallback: unknown) => formatterIgnorePatterns ?? fallback,
+                    get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : formatterIgnorePatterns ?? fallback,
                 }),
                 getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
             },
@@ -59,6 +61,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const formatterProviderModule = (() => {
     try {
         delete require.cache[require.resolve('../../src/util/formatterIgnore')];
+        delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
         return require('../../src/util/hoi4FormatterProvider') as typeof import('../../src/util/hoi4FormatterProvider');
     } finally {
         nodeModule._load = originalLoad;
@@ -108,6 +111,7 @@ function createDocument(filePath: string, text: string) {
 describe('HOI4 formatter provider', () => {
     beforeEach(() => {
         formatterIgnorePatterns = [];
+        installPath = '';
     });
 
     it('returns a single full-document edit for supported documents', () => {
@@ -146,6 +150,20 @@ describe('HOI4 formatter provider', () => {
         ) as any[];
 
         assert.deepStrictEqual(edits, []);
+    });
+
+    it('returns no edits for vanilla files under the HOI4 install path', () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const format = (document: ReturnType<typeof createDocument>) =>
+            provider.provideDocumentFormattingEdits(document as any, {} as any, {} as any) as any[];
+        const readonlyInstallDocument = createDocument('/common/ideas/test.txt', 'x=1');
+        readonlyInstallDocument.uri.scheme = 'server.hoi4installpath';
+
+        assert.deepStrictEqual(format(createDocument(path.join(installPath, 'common', 'ideas', 'test.txt'), 'x=1')), []);
+        assert.deepStrictEqual(format(createDocument(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), 'x=1')), []);
+        assert.deepStrictEqual(format(readonlyInstallDocument), []);
+        assert.strictEqual(format(createDocument(path.join(`${installPath} Mods`, 'common', 'ideas', 'test.txt'), 'x=1')).length, 1);
     });
 
     it('returns a line-range edit for supported range formatting requests', () => {
