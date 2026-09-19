@@ -67,7 +67,7 @@ describe('HOI4 formatter', () => {
         ].join('\n'));
     });
 
-    it('preserves comments, section headers, blank lines, and final newline style', () => {
+    it('excludes comments from formatting while preserving blank lines and final newline style', () => {
         const input = [
             '\uFEFF### Army ###   ',
             '',
@@ -79,25 +79,27 @@ describe('HOI4 formatter', () => {
         ].join('\n');
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
-            '\uFEFF### Army ###',
+            '\uFEFF### Army ###   ',
             '',
             'focus = { # note',
-            '\t#Don\'t move',
+            '#Don\'t move   ',
             '}',
             '',
         ].join('\n'));
     });
 
-    it('removes empty inline comment markers while preserving real inline comments', () => {
+    it('preserves inline comments and their original spacing', () => {
         const input = [
             'focus = { # ',
-            'id = KOR_yoon_mat_afterwar1 #폐허위에서 ',
+            'id = KOR_yoon_mat_afterwar1   #폐허위에서 ',
+            'x=1# no gap',
             '}',
         ].join('\n');
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
-            'focus = {',
-            '\tid = KOR_yoon_mat_afterwar1 #폐허위에서',
+            'focus = { # ',
+            '\tid = KOR_yoon_mat_afterwar1   #폐허위에서 ',
+            '\tx = 1# no gap',
             '}',
         ].join('\n'));
     });
@@ -158,6 +160,29 @@ describe('HOI4 formatter', () => {
             '\tid = test.2',
             '}',
         ].join('\n'));
+    });
+
+    it('removes blank lines immediately before closing braces', () => {
+        const input = [
+            'focus = {',
+            '\tavailable = {',
+            '\t\thas_war = yes',
+            '',
+            '\t}',
+            '',
+            '}',
+        ].join('\n');
+        const expected = [
+            'focus = {',
+            '\tavailable = {',
+            '\t\thas_war = yes',
+            '\t}',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
     });
 
     it('collapses simple multiline effect blocks into Kaiserreich-style inline blocks', () => {

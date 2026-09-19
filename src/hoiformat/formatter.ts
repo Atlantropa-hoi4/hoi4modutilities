@@ -342,7 +342,12 @@ function isUppercaseScopeLikeKey(key: string): boolean {
 function applyScriptStructuralSpacing(lines: string[]): string[] {
     const result: string[] = [];
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (line === '' && nextNonBlankLine(lines, index + 1)?.trim() === '}') {
+            continue;
+        }
+
         if (shouldInsertBlankBeforeScriptLine(line, result)) {
             result.push('');
         }
@@ -351,6 +356,16 @@ function applyScriptStructuralSpacing(lines: string[]): string[] {
     }
 
     return result;
+}
+
+function nextNonBlankLine(lines: string[], startIndex: number): string | undefined {
+    for (let index = startIndex; index < lines.length; index++) {
+        if (lines[index].trim() !== '') {
+            return lines[index];
+        }
+    }
+
+    return undefined;
 }
 
 function shouldInsertBlankBeforeScriptLine(line: string, previousLines: string[]): boolean {
@@ -455,11 +470,10 @@ function findCommentStart(line: string): number {
 
 function formatLine(parts: LineParts, depth: number, profile: Hoi4FormatterProfile): { line: string; depthDelta: number } {
     const trimmedCode = parts.code.trim();
-    const comment = normalizeComment(parts.comment, trimmedCode !== '');
 
     if (trimmedCode === '') {
         return {
-            line: comment === null ? '' : '\t'.repeat(depth) + comment,
+            line: parts.comment === null ? '' : parts.code + parts.comment,
             depthDelta: 0,
         };
     }
@@ -468,25 +482,13 @@ function formatLine(parts: LineParts, depth: number, profile: Hoi4FormatterProfi
     const leadingCloseBraces = countLeadingCloseBraces(tokens);
     const lineDepth = Math.max(0, depth - leadingCloseBraces);
     const code = formatTokens(tokens, profile);
-    const line = '\t'.repeat(lineDepth) + code + (comment === null ? '' : ` ${comment}`);
+    const commentGap = parts.comment === null ? '' : parts.code.slice(parts.code.trimEnd().length);
+    const line = '\t'.repeat(lineDepth) + code + commentGap + (parts.comment ?? '');
 
     return {
         line,
         depthDelta: countToken(tokens, '{') - countToken(tokens, '}'),
     };
-}
-
-function normalizeComment(comment: string | null, hasCode: boolean): string | null {
-    if (comment === null) {
-        return null;
-    }
-
-    const trimmedComment = comment.trim();
-    if (hasCode && trimmedComment === '#') {
-        return null;
-    }
-
-    return trimmedComment;
 }
 
 function tokenizeCode(code: string): FormatToken[] {
