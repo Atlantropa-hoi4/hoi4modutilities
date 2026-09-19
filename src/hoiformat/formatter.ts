@@ -86,6 +86,10 @@ const multiLineBodyInlinePreferredBlockKeys = new Set([
     'ai_chance',
     ...orderedInlineBlockFields.keys(),
 ]);
+// History files list starting technologies one per line, so only single-entry blocks are collapsed there.
+const historyMultiLineBodyInlinePreferredBlockKeys = new Set(
+    [...multiLineBodyInlinePreferredBlockKeys].filter(key => key !== 'set_technology'),
+);
 const multilinePreferredBlockKeys = new Set([
     'focus_tree',
     'focus',
@@ -138,7 +142,15 @@ export function getHoi4FormatterProfile(filePath: string): Hoi4FormatterProfile 
         return undefined;
     }
 
-    const segments = normalized.split('/').filter(Boolean);
+    if (getScriptRootSegment(normalized) !== undefined) {
+        return 'script';
+    }
+
+    return undefined;
+}
+
+function getScriptRootSegment(normalizedPath: string): string | undefined {
+    const segments = normalizedPath.split('/').filter(Boolean);
     const excludedRootIndex = Math.max(segments.lastIndexOf('localisation'), segments.lastIndexOf('map'));
     const scriptRootIndex = Math.max(
         segments.lastIndexOf('common'),
@@ -146,11 +158,13 @@ export function getHoi4FormatterProfile(filePath: string): Hoi4FormatterProfile 
         segments.lastIndexOf('history'),
         segments.lastIndexOf('country_metadata'),
     );
-    if (scriptRootIndex > excludedRootIndex) {
-        return 'script';
-    }
 
-    return undefined;
+    return scriptRootIndex > excludedRootIndex ? segments[scriptRootIndex] : undefined;
+}
+
+function isHistoryScriptFile(filePath: string | undefined): boolean {
+    return filePath !== undefined
+        && getScriptRootSegment(filePath.replace(/\\/g, '/').toLowerCase()) === 'history';
 }
 
 export function formatHoi4Text(input: string, options: Hoi4FormatOptions): string {
@@ -161,7 +175,7 @@ export function formatHoi4Text(input: string, options: Hoi4FormatOptions): strin
     const eol = detectEol(content);
     const { lines: rawLines, hadFinalNewline } = splitContentLines(content);
 
-    const { lines: formattedLines } = formatLines(rawLines, options.profile);
+    const { lines: formattedLines } = formatLines(rawLines, options);
     const formattedContent = formattedLines.join(eol) + (hadFinalNewline ? eol : '');
     parseHoi4File(formattedContent);
 
@@ -188,8 +202,8 @@ export function formatHoi4TextRange(input: string, options: Hoi4FormatOptions, r
     const beforeLines = rawLines.slice(0, startLine);
     const selectedLines = rawLines.slice(startLine, endLine + 1);
     const afterLines = rawLines.slice(endLine + 1);
-    const initialDepth = formatLines(beforeLines, options.profile).endDepth;
-    const { lines: formattedSelectedLines } = formatLines(selectedLines, options.profile, initialDepth);
+    const initialDepth = formatLines(beforeLines, options).endDepth;
+    const { lines: formattedSelectedLines } = formatLines(selectedLines, options, initialDepth);
 
     const formattedContent = [...beforeLines, ...formattedSelectedLines, ...afterLines].join(eol) + (hadFinalNewline ? eol : '');
     parseHoi4File(formattedContent);
@@ -202,7 +216,7 @@ export function getHoi4ExpectedLineIndent(input: string, options: Hoi4FormatOpti
     const content = input.startsWith('\uFEFF') ? input.slice(1) : input;
     const { lines } = splitContentLines(content);
     const targetLine = clampLine(line, Math.max(lines.length, 1));
-    const depth = formatLines(lines.slice(0, targetLine), options.profile).endDepth;
+    const depth = formatLines(lines.slice(0, targetLine), options).endDepth;
     const currentLine = lines[targetLine] ?? '';
     const tokens = tokenizeCode(splitLineComment(currentLine).code.trim());
     const leadingCloseBraces = countLeadingCloseBraces(tokens);
@@ -232,7 +246,8 @@ function clampLine(line: number, lineCount: number): number {
     return Math.max(0, Math.min(Math.max(0, lineCount - 1), line));
 }
 
-function formatLines(lines: string[], profile: Hoi4FormatterProfile, initialDepth: number = 0): { lines: string[]; endDepth: number } {
+function formatLines(lines: string[], options: Hoi4FormatOptions, initialDepth: number = 0): { lines: string[]; endDepth: number } {
+    const { profile } = options;
     const result: string[] = [];
     let depth = initialDepth;
 
@@ -260,17 +275,23 @@ function formatLines(lines: string[], profile: Hoi4FormatterProfile, initialDept
 
     return {
         lines: profile === 'script'
-            ? applyScriptStructuralSpacing(collapseSimpleScriptBlocks(result).map(canonicalizeScriptLine))
+            ? applyScriptStructuralSpacing(collapseSimpleScriptBlocks(result, getMultiLineBodyInlinePreferredBlockKeys(options)).map(canonicalizeScriptLine))
             : result,
         endDepth: depth,
     };
 }
 
-function collapseSimpleScriptBlocks(lines: string[]): string[] {
+function getMultiLineBodyInlinePreferredBlockKeys(options: Hoi4FormatOptions): ReadonlySet<string> {
+    return isHistoryScriptFile(options.filePath)
+        ? historyMultiLineBodyInlinePreferredBlockKeys
+        : multiLineBodyInlinePreferredBlockKeys;
+}
+
+function collapseSimpleScriptBlocks(lines: string[], multiLineBodyKeys: ReadonlySet<string>): string[] {
     let currentLines = lines;
 
     while (true) {
-        const collapsedLines = collapseSimpleScriptBlocksOnce(currentLines);
+        const collapsedLines = collapseSimpleScriptBlocksOnce(currentLines, multiLineBodyKeys);
         if (collapsedLines.length === currentLines.length) {
             return collapsedLines;
         }
@@ -279,11 +300,11 @@ function collapseSimpleScriptBlocks(lines: string[]): string[] {
     }
 }
 
-function collapseSimpleScriptBlocksOnce(lines: string[]): string[] {
+function collapseSimpleScriptBlocksOnce(lines: string[], multiLineBodyKeys: ReadonlySet<string>): string[] {
     const result: string[] = [];
 
     for (let index = 0; index < lines.length; index++) {
-        const collapsed = tryCollapseSimpleScriptBlock(lines, index);
+        const collapsed = tryCollapseSimpleScriptBlock(lines, index, multiLineBodyKeys);
         if (collapsed !== undefined) {
             result.push(collapsed.line);
             index = collapsed.endIndex;
@@ -295,7 +316,11 @@ function collapseSimpleScriptBlocksOnce(lines: string[]): string[] {
     return result;
 }
 
-function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { line: string; endIndex: number } | undefined {
+function tryCollapseSimpleScriptBlock(
+    lines: string[],
+    startIndex: number,
+    multiLineBodyKeys: ReadonlySet<string>,
+): { line: string; endIndex: number } | undefined {
     if (startIndex + 2 >= lines.length) {
         return undefined;
     }
@@ -319,7 +344,7 @@ function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { li
                 return undefined;
             }
 
-            if (!canCollapseBlockBody(key, bodyLines)) {
+            if (!canCollapseBlockBody(key, bodyLines, multiLineBodyKeys)) {
                 return undefined;
             }
 
@@ -344,12 +369,12 @@ function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { li
     return undefined;
 }
 
-function canCollapseBlockBody(key: string, bodyLines: string[]): boolean {
+function canCollapseBlockBody(key: string, bodyLines: string[], multiLineBodyKeys: ReadonlySet<string>): boolean {
     if (key === 'limit') {
         return bodyLines.length === 1 && /^\s*has_template\s*=/.test(bodyLines[0]);
     }
 
-    return bodyLines.length === 1 || multiLineBodyInlinePreferredBlockKeys.has(key);
+    return bodyLines.length === 1 || multiLineBodyKeys.has(key);
 }
 
 function orderKnownBlockBodyLines(key: string, bodyLines: string[]): string[] | undefined {

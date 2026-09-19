@@ -282,6 +282,35 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
     });
 
+    it('keeps multi-entry set_technology blocks multiline in history files', () => {
+        const input = [
+            'set_technology = {',
+            '\tmain_battle_tank1 = 1',
+            '\tmain_battle_tank2 = 1',
+            '\tlight_tank1 = 1',
+            '}',
+            'if = {',
+            '\tlimit = { has_dlc = "No Step Back" }',
+            '\tset_technology = {',
+            '\t\tamphibious_tank1 = 1',
+            '\t\tamphibious_mechanized_infantry1 = 1',
+            '\t}',
+            '}',
+        ].join('\n');
+        const filePath = 'C:\\mod\\history\\countries\\GER - Germany.txt';
+
+        const formatted = formatHoi4Text(input, { profile: 'script', filePath });
+        assert.strictEqual(formatted, input);
+        assert.strictEqual(formatHoi4TextRange(input, { profile: 'script', filePath }, { startLine: 5, endLine: 11 }), input.split('\n').slice(5).join('\n'));
+        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'mod/common/national_focus/GER.txt' }), [
+            'set_technology = { main_battle_tank1 = 1 main_battle_tank2 = 1 light_tank1 = 1 }',
+            'if = {',
+            '\tlimit = { has_dlc = "No Step Back" }',
+            '\tset_technology = { amphibious_tank1 = 1 amphibious_mechanized_infantry1 = 1 }',
+            '}',
+        ].join('\n'));
+    });
+
     it('uses direct event calls only for nested id-only blocks and orders known delays', () => {
         const input = [
             'immediate = {',
