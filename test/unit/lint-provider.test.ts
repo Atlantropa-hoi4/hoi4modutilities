@@ -36,6 +36,7 @@ interface MockPosition {
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
 let installPath = '';
+let skipVanillaFiles: boolean | undefined;
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
@@ -55,11 +56,20 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             Range: MockRange,
             Diagnostic: class {},
             DiagnosticSeverity: { Warning: 1 },
-            languages: {},
+            languages: {
+                match: (selector: { pattern: { pattern: string } }, document: { uri: { path: string } }) =>
+                    selector.pattern.pattern === '**/common/technologies/**' && document.uri.path.includes('/common/technologies/') ? 1 : 0,
+            },
             workspace: {
                 getConfiguration: () => ({
-                    get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : fallback,
+                    get: (key: string, fallback: unknown) => key === 'installPath'
+                        ? installPath
+                        : key === 'skipVanillaFiles' ? skipVanillaFiles ?? fallback : fallback,
                 }),
+                getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
+            },
+            RelativePattern: class {
+                constructor(_base: unknown, public pattern: string) {}
             },
             l10n: {
                 t: (message: string) => message,
@@ -74,6 +84,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const lintProviderModule = (() => {
     try {
         delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
+        delete require.cache[require.resolve('../../src/util/vanillaFiles')];
         return require('../../src/util/hoi4LintProvider') as typeof import('../../src/util/hoi4LintProvider');
     } finally {
         nodeModule._load = originalLoad;
@@ -82,6 +93,11 @@ const lintProviderModule = (() => {
 const { Hoi4LintCodeActionProvider } = lintProviderModule;
 
 describe('HOI4 lint code action provider', () => {
+    beforeEach(() => {
+        installPath = '';
+        skipVanillaFiles = undefined;
+    });
+
     it('provides a preferred quick fix and a document fix-all edit', () => {
         const text = 'trigger = { check_variable = { var = score value = 10 compare = equals } }';
         const document = createDocument('C:\\mod\\common\\scripted_triggers\\test.txt', text);
@@ -108,31 +124,44 @@ describe('HOI4 lint code action provider', () => {
 
     it('provides no quick fixes or fix-all edits for vanilla files under the HOI4 install path', () => {
         installPath = path.resolve('Hearts of Iron IV');
-        try {
-            const text = 'trigger = { check_variable = { var = score value = 10 compare = equals } }';
-            const provider = new Hoi4LintCodeActionProvider();
-            const provide = (filePath: string, only?: MockCodeActionKind) => {
-                const document = createDocument(filePath, text);
-                const start = text.indexOf('check_variable');
-                const diagnosticRange = new MockRange(document.positionAt(start), document.positionAt(text.indexOf('}', start) + 1));
-                return provider.provideCodeActions(
-                    document as any,
-                    diagnosticRange as any,
-                    { diagnostics: [{ code: 'legacy-check-variable', range: diagnosticRange }], only } as any,
-                    {} as any,
-                ) as any[];
-            };
-            const fixAllOnSave = MockCodeActionKind.SourceFixAll;
+        const fixAllOnSave = MockCodeActionKind.SourceFixAll;
 
-            assert.deepStrictEqual(provide(path.join(installPath, 'common', 'scripted_triggers', 'test.txt')), []);
-            assert.deepStrictEqual(provide(path.join(installPath, 'common', 'scripted_triggers', 'test.txt'), fixAllOnSave), []);
-            assert.deepStrictEqual(provide(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), fixAllOnSave), []);
-            assert.strictEqual(provide(path.join(`${installPath} Mods`, 'common', 'scripted_triggers', 'test.txt')).length, 2);
-        } finally {
-            installPath = '';
-        }
+        assert.deepStrictEqual(provideCheckVariableFixes(path.join(installPath, 'common', 'scripted_triggers', 'test.txt')), []);
+        assert.deepStrictEqual(provideCheckVariableFixes(path.join(installPath, 'common', 'scripted_triggers', 'test.txt'), fixAllOnSave), []);
+        assert.deepStrictEqual(provideCheckVariableFixes(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), fixAllOnSave), []);
+        assert.strictEqual(provideCheckVariableFixes(path.join(`${installPath} Mods`, 'common', 'scripted_triggers', 'test.txt')).length, 2);
+    });
+
+    it('provides fixes for vanilla files when vanilla file skipping is disabled, except the read-only install file system', () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        skipVanillaFiles = false;
+
+        assert.strictEqual(provideCheckVariableFixes(path.join(installPath, 'common', 'scripted_triggers', 'test.txt')).length, 2);
+        assert.deepStrictEqual(provideCheckVariableFixes('/common/scripted_triggers/test.txt', undefined, 'server.hoi4installpath'), []);
+    });
+
+    it('skips fixes in vanilla-derived mod folders only while vanilla file skipping is enabled', () => {
+        const filePath = 'C:\\mod\\common\\technologies\\infantry.txt';
+
+        assert.deepStrictEqual(provideCheckVariableFixes(filePath), []);
+        skipVanillaFiles = false;
+        assert.strictEqual(provideCheckVariableFixes(filePath).length, 2);
     });
 });
+
+function provideCheckVariableFixes(filePath: string, only?: MockCodeActionKind, scheme = 'file') {
+    const text = 'trigger = { check_variable = { var = score value = 10 compare = equals } }';
+    const document = createDocument(filePath, text);
+    document.uri.scheme = scheme;
+    const start = text.indexOf('check_variable');
+    const diagnosticRange = new MockRange(document.positionAt(start), document.positionAt(text.indexOf('}', start) + 1));
+    return new Hoi4LintCodeActionProvider().provideCodeActions(
+        document as any,
+        diagnosticRange as any,
+        { diagnostics: [{ code: 'legacy-check-variable', range: diagnosticRange }], only } as any,
+        {} as any,
+    ) as any[];
+}
 
 function createDocument(filePath: string, text: string) {
     const lineOffsets = [0];

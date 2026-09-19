@@ -6,6 +6,7 @@ const nodeModule = Module as typeof Module & { _load: (request: string, parent: 
 const originalLoad = nodeModule._load;
 let formatterIgnorePatterns: string[] = [];
 let installPath = '';
+let skipVanillaFiles: boolean | undefined;
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
@@ -15,12 +16,15 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 registerOnTypeFormattingEditProvider: () => ({ dispose() {} }),
                 match: (selector: { pattern: string | { pattern: string } }, document: { uri: { path: string } }) => {
                     const pattern = typeof selector.pattern === 'string' ? selector.pattern : selector.pattern.pattern;
-                    return pattern === '**/generated.txt' && document.uri.path.endsWith('/generated.txt') ? 1 : 0;
+                    return (pattern === '**/generated.txt' && document.uri.path.endsWith('/generated.txt'))
+                        || (pattern === '**/common/technologies/**' && document.uri.path.includes('/common/technologies/')) ? 1 : 0;
                 },
             },
             workspace: {
                 getConfiguration: () => ({
-                    get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : formatterIgnorePatterns ?? fallback,
+                    get: (key: string, fallback: unknown) => key === 'installPath'
+                        ? installPath
+                        : key === 'skipVanillaFiles' ? skipVanillaFiles ?? fallback : formatterIgnorePatterns ?? fallback,
                 }),
                 getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
             },
@@ -62,6 +66,7 @@ const formatterProviderModule = (() => {
     try {
         delete require.cache[require.resolve('../../src/util/formatterIgnore')];
         delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
+        delete require.cache[require.resolve('../../src/util/vanillaFiles')];
         return require('../../src/util/hoi4FormatterProvider') as typeof import('../../src/util/hoi4FormatterProvider');
     } finally {
         nodeModule._load = originalLoad;
@@ -112,6 +117,7 @@ describe('HOI4 formatter provider', () => {
     beforeEach(() => {
         formatterIgnorePatterns = [];
         installPath = '';
+        skipVanillaFiles = undefined;
     });
 
     it('returns a single full-document edit for supported documents', () => {
@@ -164,6 +170,35 @@ describe('HOI4 formatter provider', () => {
         assert.deepStrictEqual(format(createDocument(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), 'x=1')), []);
         assert.deepStrictEqual(format(readonlyInstallDocument), []);
         assert.strictEqual(format(createDocument(path.join(`${installPath} Mods`, 'common', 'ideas', 'test.txt'), 'x=1')).length, 1);
+    });
+
+    it('formats vanilla files when vanilla file skipping is disabled, except the read-only install file system', () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        skipVanillaFiles = false;
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const format = (document: ReturnType<typeof createDocument>) =>
+            provider.provideDocumentFormattingEdits(document as any, {} as any, {} as any) as any[];
+        const readonlyInstallDocument = createDocument('/common/ideas/test.txt', 'x=1');
+        readonlyInstallDocument.uri.scheme = 'server.hoi4installpath';
+
+        assert.strictEqual(format(createDocument(path.join(installPath, 'common', 'ideas', 'test.txt'), 'x=1')).length, 1);
+        assert.strictEqual(format(createDocument(path.join(installPath, 'dlc', 'dlc001', 'events', 'test.txt'), 'x=1')).length, 1);
+        assert.deepStrictEqual(format(readonlyInstallDocument), []);
+    });
+
+    it('skips vanilla-derived mod folders only while vanilla file skipping is enabled', () => {
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const format = () => provider.provideDocumentFormattingEdits(
+            createDocument('C:\\mod\\common\\technologies\\infantry.txt', 'x=1') as any,
+            {} as any,
+            {} as any,
+        ) as any[];
+
+        assert.deepStrictEqual(format(), []);
+        skipVanillaFiles = false;
+        assert.strictEqual(format().length, 1);
+        formatterIgnorePatterns = ['**/common/technologies/**'];
+        assert.deepStrictEqual(format(), []);
     });
 
     it('returns a line-range edit for supported range formatting requests', () => {

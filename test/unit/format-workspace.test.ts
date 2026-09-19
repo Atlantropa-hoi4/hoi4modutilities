@@ -14,12 +14,15 @@ let acceptEdit: boolean;
 let folders: unknown[];
 let formatterIgnorePatterns: string[];
 let installPath: string;
+let skipVanillaFiles: boolean | undefined;
 let openedPaths: string[];
 const vscodeMock = {
     workspace: {
         get workspaceFolders() { return folders; },
         getConfiguration: () => ({
-            get: (key: string, fallback: unknown) => key === 'installPath' ? installPath : formatterIgnorePatterns ?? fallback,
+            get: (key: string, fallback: unknown) => key === 'installPath'
+                ? installPath
+                : key === 'skipVanillaFiles' ? skipVanillaFiles ?? fallback : formatterIgnorePatterns ?? fallback,
         }),
         getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
         findFiles: async (_include: string, exclude: unknown) => {
@@ -71,6 +74,7 @@ const { formatWorkspace } = (() => {
     try {
         delete require.cache[require.resolve('../../src/util/formatterIgnore')];
         delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
+        delete require.cache[require.resolve('../../src/util/vanillaFiles')];
         return require('../../src/util/formatWorkspace') as typeof import('../../src/util/formatWorkspace');
     } finally {
         nodeModule._load = originalLoad;
@@ -89,6 +93,7 @@ describe('workspace formatting', () => {
         folders = [{}];
         formatterIgnorePatterns = [];
         installPath = '';
+        skipVanillaFiles = undefined;
         openedPaths = [];
     });
 
@@ -143,6 +148,15 @@ describe('workspace formatting', () => {
         addDiskFile(path.join(modPath, 'common', 'ideas', 'mod.txt'), 'x=2');
         await formatWorkspace();
         assert.deepStrictEqual(openedPaths, [path.join(modPath, 'common', 'ideas', 'mod.txt').replace(/\\/g, '/')]);
+        assert.strictEqual(edits.length, 1);
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
+    });
+
+    it('formats vanilla files under the HOI4 install path when vanilla file skipping is disabled', async () => {
+        installPath = path.resolve('Hearts of Iron IV');
+        skipVanillaFiles = false;
+        addDiskFile(path.join(installPath, 'common', 'ideas', 'vanilla.txt'), 'x=1');
+        await formatWorkspace();
         assert.strictEqual(edits.length, 1);
         assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
     });

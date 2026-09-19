@@ -128,23 +128,16 @@ describe('extension manifest', () => {
         assert.strictEqual(ignoreFiles.type, 'array');
         assert.strictEqual(ignoreFiles.scope, 'resource');
         assert.strictEqual(ignoreFiles.uniqueItems, true);
-        assert.deepStrictEqual(ignoreFiles.default, [
-            '**/interface/**',
-            '**/gfx/**',
-            '**/common/names/**',
-            '**/common/occupation_laws/**',
-            '**/common/special_projects/**',
-            '**/common/technologies/**',
-            '**/common/units/*.txt',
-            '**/common/units/codenames_operatives/**',
-            '**/common/units/critical_parts/**',
-            '**/common/units/equipment/**',
-            '**/common/units/names/**',
-            '**/common/units/names_railway_guns/**',
-            '**/common/units/unit_modifiers/**',
-            '**/history/states/**',
-        ]);
+        assert.deepStrictEqual(ignoreFiles.default, []);
         assert.strictEqual(ignoreFiles.items.type, 'string');
+    });
+
+    it('contributes a workspace-scoped vanilla file toggle that is on by default', () => {
+        const skipVanillaFiles = manifest.contributes.configuration[0].properties['hoi4ModUtilities.skipVanillaFiles'];
+
+        assert.strictEqual(skipVanillaFiles.type, 'boolean');
+        assert.strictEqual(skipVanillaFiles.scope, 'resource');
+        assert.strictEqual(skipVanillaFiles.default, true);
     });
 
     it('defines every manifest localisation token in the default package bundle', () => {

@@ -3,7 +3,7 @@ import { Commands } from '../constants';
 import { formatHoi4Text, getHoi4FormatterProfile } from '../hoiformat/formatter';
 import { localizer } from '../services/localizer';
 import { isHoi4FormatterIgnored } from './formatterIgnore';
-import { isHoi4InstallFile } from './hoi4InstallFile';
+import { isHoi4VanillaInstallFileSkipped } from './vanillaFiles';
 
 export function registerFormatWorkspace(): vscode.Disposable {
     let running = false;
@@ -36,7 +36,7 @@ export async function formatWorkspace(): Promise<void> {
         let failed = 0;
         try {
             const uris = await vscode.workspace.findFiles('**/*.{txt,gfx,gui,TXT,GFX,GUI}', undefined, undefined, token);
-            const files = uris.filter(uri => !isHoi4InstallFile(uri) && getHoi4FormatterProfile(uri.path) !== undefined);
+            const files = uris.filter(uri => !isHoi4VanillaInstallFileSkipped(uri) && getHoi4FormatterProfile(uri.path) !== undefined);
             for (const uri of files) {
                 if (token.isCancellationRequested) {
                     break;

@@ -7,8 +7,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 ### Changed
-* Skip vanilla-derived folders (`interface`, `gfx`, `common/names`, `common/occupation_laws`, `common/special_projects`, `common/technologies`, `common/units` except division and ship name lists, and `history/states`) by default in `hoi4ModUtilities.formatter.ignoreFiles`, following the Kaiserreich formatter skip list.
-* Never format vanilla files under `hoi4ModUtilities.installPath`, including DLC folders, from document, range, on-type, or workspace formatting, and do not offer lint Quick Fixes or `Source: Fix All` edits for them.
+* Skip vanilla files by default in document, range, on-type, and workspace formatting and in lint Quick Fixes and `Source: Fix All` edits: files under `hoi4ModUtilities.installPath`, including DLC folders, and vanilla-derived folders (`interface`, `gfx`, `common/names`, `common/occupation_laws`, `common/special_projects`, `common/technologies`, `common/units` except division and ship name lists, and `history/states`), following the Kaiserreich formatter skip list. Lint warnings are still shown. Turn off `hoi4ModUtilities.skipVanillaFiles` to format and fix them; `hoi4ModUtilities.formatter.ignoreFiles` patterns apply to formatting independently.
 
 ### Fixed
 * Stop classifying non-script `.txt` files in a Steam game folder (`steamapps/common/<game>`) as HOI4 scripts.

@@ -141,25 +141,17 @@
             ],
             "description": "%hoi4modutilities.previewWheel.desc%"
           },
+          "hoi4ModUtilities.skipVanillaFiles": {
+            "title": "%hoi4modutilities.skipVanillaFiles.title%",
+            "type": "boolean",
+            "default": true,
+            "scope": "resource",
+            "description": "%hoi4modutilities.skipVanillaFiles.desc%"
+          },
           "hoi4ModUtilities.formatter.ignoreFiles": {
             "title": "%hoi4modutilities.formatter.ignoreFiles.title%",
             "type": "array",
-            "default": [
-              "**/interface/**",
-              "**/gfx/**",
-              "**/common/names/**",
-              "**/common/occupation_laws/**",
-              "**/common/special_projects/**",
-              "**/common/technologies/**",
-              "**/common/units/*.txt",
-              "**/common/units/codenames_operatives/**",
-              "**/common/units/critical_parts/**",
-              "**/common/units/equipment/**",
-              "**/common/units/names/**",
-              "**/common/units/names_railway_guns/**",
-              "**/common/units/unit_modifiers/**",
-              "**/history/states/**"
-            ],
+            "default": [],
             "uniqueItems": true,
             "items": {
               "type": "string"

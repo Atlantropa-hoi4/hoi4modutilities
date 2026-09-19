@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { collectHoi4LintFindings, Hoi4LintFinding, Hoi4LintRule } from '../hoiformat/lint';
-import { isHoi4InstallFile } from './hoi4InstallFile';
 import { localize } from './i18n';
+import { isHoi4VanillaFileSkipped } from './vanillaFiles';
 import { uriToFilePathWhenPossible } from './vsccommon';
 
 const diagnosticSource = 'HOI4 Mod Utilities';
@@ -43,7 +43,7 @@ export class Hoi4LintCodeActionProvider implements vscode.CodeActionProvider {
         context: vscode.CodeActionContext,
         _token: vscode.CancellationToken,
     ): vscode.CodeAction[] {
-        if (isHoi4InstallFile(document.uri)) {
+        if (isHoi4VanillaFileSkipped(document)) {
             return [];
         }
 

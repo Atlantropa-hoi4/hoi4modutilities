@@ -120,7 +120,7 @@ suite('extension smoke', () => {
         }
     });
 
-    test('skips vanilla-derived folders with the default formatter ignore patterns', () => {
+    test('skips vanilla-derived folders while vanilla file skipping is on by default', () => {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
         assert.ok(workspaceRoot);
 
