@@ -209,13 +209,135 @@ describe('HOI4 formatter', () => {
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
             'completion_reward = {',
-            '\tcountry_event = { id = korea.52 }',
+            '\tcountry_event = korea.52',
             '\tcountry_event = { id = korea.535 days = 60 }',
             '\twhite_peace = { tag = MEO }',
             '\tallowed = { always = no }',
             '\tai_will_do = { factor = 20 }',
             '}',
         ].join('\n'));
+    });
+
+    it('canonicalizes safe Kaiserreich block forms and known field order', () => {
+        const input = [
+            'effect = {',
+            '\tset_technology = {',
+            '\t\tinfantry_weapons = 1',
+            '\t\tsupport_weapons = 1',
+            '\t}',
+            '\thas_equipment = {',
+            '\t\tinfantry_equipment > 1000',
+            '\t}',
+            '\tai_chance = {',
+            '\t\tbase = 10',
+            '\t\tfactor = 2',
+            '\t}',
+            '\tlimit = {',
+            '\t\thas_template = "Infantry Division"',
+            '\t}',
+            '\tactivate_targeted_decision = {',
+            '\t\tdecision = invite_country',
+            '\t\ttarget = ROOT',
+            '\t}',
+            '\tremove_targeted_decision = {',
+            '\t\tdecision = remove_country',
+            '\t\ttarget = PREV',
+            '\t}',
+            '\thas_game_rule = {',
+            '\t\toption = enabled',
+            '\t\trule = test_rule',
+            '\t}',
+            '\thas_opinion = {',
+            '\t\tvalue > 25',
+            '\t\ttarget = GER',
+            '\t}',
+            '\tset_province_name = {',
+            '\t\tname = test_name',
+            '\t\tid = 123',
+            '\t}',
+            '\ttransfer_ship = {',
+            '\t\ttarget = ENG',
+            '\t\ttype = battleship',
+            '\t\tprefer_name = "Example Ship"',
+            '\t}',
+            '}',
+        ].join('\n');
+        const expected = [
+            'effect = {',
+            '\tset_technology = { infantry_weapons = 1 support_weapons = 1 }',
+            '\thas_equipment = { infantry_equipment > 1000 }',
+            '\tai_chance = { base = 10 factor = 2 }',
+            '\tlimit = { has_template = "Infantry Division" }',
+            '\tactivate_targeted_decision = { target = ROOT decision = invite_country }',
+            '\tremove_targeted_decision = { target = PREV decision = remove_country }',
+            '\thas_game_rule = { rule = test_rule option = enabled }',
+            '\thas_opinion = { target = GER value > 25 }',
+            '\tset_province_name = { id = 123 name = test_name }',
+            '\ttransfer_ship = { prefer_name = "Example Ship" type = battleship target = ENG }',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
+    });
+
+    it('uses direct event calls only for nested id-only blocks and orders known delays', () => {
+        const input = [
+            'immediate = {',
+            '\tcountry_event = { id = test.1 }',
+            '\tnews_event = { id = test.2 } # keep this note',
+            '\tunit_leader_event = {',
+            '\t\tid = test.3',
+            '\t}',
+            '\tcountry_event = {',
+            '\t\trandom_hours = 4',
+            '\t\tdays = 3',
+            '\t\tid = test.4',
+            '\t}',
+            '}',
+            'country_event = { id = test.definition }',
+        ].join('\n');
+        const expected = [
+            'immediate = {',
+            '\tcountry_event = test.1',
+            '\tnews_event = test.2 # keep this note',
+            '\tunit_leader_event = test.3',
+            '\tcountry_event = { id = test.4 days = 3 random_hours = 4 }',
+            '}',
+            '',
+            'country_event = { id = test.definition }',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
+    });
+
+    it('does not reorder known blocks with comments, duplicate fields, or unknown fields', () => {
+        const input = [
+            'effect = {',
+            '\tactivate_targeted_decision = {',
+            '\t\tdecision = invite_country',
+            '\t\t# keep placement',
+            '\t\ttarget = ROOT',
+            '\t}',
+            '\thas_game_rule = {',
+            '\t\trule = test_rule',
+            '\t\trule = second_rule',
+            '\t\toption = enabled',
+            '\t}',
+            '\ttransfer_ship = {',
+            '\t\ttype = destroyer',
+            '\t\ttarget = ENG',
+            '\t\tcount = 2',
+            '\t}',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, input);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
     });
 
     it('collapses nested inline-preferred blocks to an idempotent result', () => {

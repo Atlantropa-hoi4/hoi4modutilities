@@ -27,6 +27,19 @@ interface LineParts {
 
 const comparisonOperators = new Set(['=', '>', '<', '>=', '<=', '!=']);
 const vectorKeys = new Set(['position', 'size', 'borderSize', 'offset', 'rotation', 'scale']);
+const directEventCallKeys = new Set(['country_event', 'news_event', 'unit_leader_event']);
+const orderedEventCallFields = {
+    order: ['id', 'days', 'hours', 'random_days', 'random_hours'],
+    required: ['id'],
+};
+const orderedInlineBlockFields = new Map<string, { order: string[]; required: string[] }>([
+    ['activate_targeted_decision', { order: ['target', 'decision'], required: ['target', 'decision'] }],
+    ['remove_targeted_decision', { order: ['target', 'decision'], required: ['target', 'decision'] }],
+    ['has_game_rule', { order: ['rule', 'option'], required: ['rule', 'option'] }],
+    ['has_opinion', { order: ['target', 'value'], required: ['target', 'value'] }],
+    ['set_province_name', { order: ['id', 'name'], required: ['id', 'name'] }],
+    ['transfer_ship', { order: ['prefer_name', 'type', 'target'], required: ['type', 'target'] }],
+]);
 const separatedBlockKeys = new Set([
     'focus',
     'shared_focus',
@@ -49,7 +62,11 @@ const inlinePreferredBlockKeys = new Set([
     'check_variable',
     'set_rule',
     'custom_trigger_tooltip',
+    'set_technology',
+    'has_equipment',
+    'ai_chance',
     'ai_will_do',
+    ...orderedInlineBlockFields.keys(),
     'NOT',
     'OR',
     'AND',
@@ -64,6 +81,10 @@ const multiLineBodyInlinePreferredBlockKeys = new Set([
     'state_event',
     'unit_leader_event',
     'ace_event',
+    'set_technology',
+    'has_equipment',
+    'ai_chance',
+    ...orderedInlineBlockFields.keys(),
 ]);
 const multilinePreferredBlockKeys = new Set([
     'focus_tree',
@@ -238,7 +259,9 @@ function formatLines(lines: string[], profile: Hoi4FormatterProfile, initialDept
     }
 
     return {
-        lines: profile === 'script' ? applyScriptStructuralSpacing(collapseSimpleScriptBlocks(result)) : result,
+        lines: profile === 'script'
+            ? applyScriptStructuralSpacing(collapseSimpleScriptBlocks(result).map(canonicalizeScriptLine))
+            : result,
         endDepth: depth,
     };
 }
@@ -284,7 +307,7 @@ function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { li
     }
 
     const [, indent, key] = match;
-    if (!canCollapseBlockKey(key, indent.length)) {
+    if (!canCollapseBlockKey(key, indent.length) && key !== 'limit') {
         return undefined;
     }
 
@@ -296,11 +319,16 @@ function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { li
                 return undefined;
             }
 
-            if (bodyLines.length > 1 && !multiLineBodyInlinePreferredBlockKeys.has(key)) {
+            if (!canCollapseBlockBody(key, bodyLines)) {
                 return undefined;
             }
 
-            const inline = `${indent}${key} = { ${bodyLines.map(bodyLine => bodyLine.trim()).join(' ')} }`;
+            const orderedBodyLines = orderKnownBlockBodyLines(key, bodyLines);
+            if (orderedBodyLines === undefined) {
+                return undefined;
+            }
+
+            const inline = `${indent}${key} = { ${orderedBodyLines.map(bodyLine => bodyLine.trim()).join(' ')} }`;
             return inline.length <= 140
                 ? { line: inline, endIndex: index }
                 : undefined;
@@ -314,6 +342,113 @@ function tryCollapseSimpleScriptBlock(lines: string[], startIndex: number): { li
     }
 
     return undefined;
+}
+
+function canCollapseBlockBody(key: string, bodyLines: string[]): boolean {
+    if (key === 'limit') {
+        return bodyLines.length === 1 && /^\s*has_template\s*=/.test(bodyLines[0]);
+    }
+
+    return bodyLines.length === 1 || multiLineBodyInlinePreferredBlockKeys.has(key);
+}
+
+function orderKnownBlockBodyLines(key: string, bodyLines: string[]): string[] | undefined {
+    const fields = orderedInlineBlockFields.get(key)
+        ?? (directEventCallKeys.has(key) ? orderedEventCallFields : undefined);
+    if (fields === undefined) {
+        return bodyLines;
+    }
+
+    const parsedFields = parseOrderedFields(bodyLines.map(line => tokenizeCode(line.trim())), fields);
+    return parsedFields?.map(tokens => formatTokensGeneric(tokens));
+}
+
+function canonicalizeScriptLine(line: string): string {
+    const parts = splitLineComment(line);
+    const indent = /^\t*/.exec(parts.code)?.[0] ?? '';
+    const tokens = tokenizeCode(parts.code.trim());
+    if (tokens.length < 5 || tokens[1]?.value !== '=' || tokens[2]?.value !== '{' || tokens[tokens.length - 1]?.value !== '}') {
+        return line;
+    }
+
+    const key = tokens[0].value;
+    const innerTokens = tokens.slice(3, -1);
+    if (indent.length > 0 && directEventCallKeys.has(key) && isIdOnlyBlock(innerTokens)) {
+        return appendOriginalComment(`${indent}${key} = ${innerTokens[2].value}`, parts);
+    }
+
+    const fields = orderedInlineBlockFields.get(key)
+        ?? (indent.length > 0 && directEventCallKeys.has(key) ? orderedEventCallFields : undefined);
+    if (fields === undefined) {
+        return line;
+    }
+
+    const orderedFields = parseOrderedFields([innerTokens], fields);
+    if (orderedFields === undefined) {
+        return line;
+    }
+
+    const inner = orderedFields.map(field => formatTokensGeneric(field)).join(' ');
+    return appendOriginalComment(`${indent}${key} = { ${inner} }`, parts);
+}
+
+function isIdOnlyBlock(tokens: FormatToken[]): boolean {
+    return tokens.length === 3
+        && tokens[0].value === 'id'
+        && tokens[1].value === '='
+        && (tokens[2].type === 'word' || tokens[2].type === 'string');
+}
+
+function parseOrderedFields(
+    tokenLines: FormatToken[][],
+    fields: { order: string[]; required: string[] },
+): FormatToken[][] | undefined {
+    const allowedFields = new Set(fields.order);
+    const parsed = new Map<string, FormatToken[]>();
+
+    for (const tokens of tokenLines) {
+        let index = 0;
+        while (index < tokens.length) {
+            const fieldToken = tokens[index];
+            if (fieldToken === undefined) {
+                return undefined;
+            }
+
+            const field = fieldToken.value;
+            if (!allowedFields.has(field) || parsed.has(field) || !comparisonOperators.has(tokens[index + 1]?.value)) {
+                return undefined;
+            }
+
+            let end = index + 2;
+            while (end < tokens.length && !(allowedFields.has(tokens[end].value) && comparisonOperators.has(tokens[end + 1]?.value))) {
+                end++;
+            }
+            if (end === index + 2) {
+                return undefined;
+            }
+
+            parsed.set(field, tokens.slice(index, end));
+            index = end;
+        }
+    }
+
+    if (fields.required.some(field => !parsed.has(field))) {
+        return undefined;
+    }
+
+    return fields.order.flatMap(field => {
+        const tokens = parsed.get(field);
+        return tokens === undefined ? [] : [tokens];
+    });
+}
+
+function appendOriginalComment(code: string, parts: LineParts): string {
+    if (parts.comment === null) {
+        return code;
+    }
+
+    const commentGap = parts.code.slice(parts.code.trimEnd().length);
+    return code + commentGap + parts.comment;
 }
 
 function canCollapseBodyLine(line: string, parentDepth: number): boolean {
