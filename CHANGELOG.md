@@ -4,7 +4,7 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.17.2] - 2026/08/31 - Latest
+## [1.0.0] - 2026/09/19 - Latest
 
 ### Added
 * Port upstream v0.14.1-v0.17.2 preview features, including progress-bar sprites, fullscreen/common GUI controls, manual preview refresh, and Focus Tree search filters.
