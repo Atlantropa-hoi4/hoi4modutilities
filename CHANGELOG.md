@@ -10,6 +10,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Skip vanilla files by default in document, range, on-type, and workspace formatting and in lint Quick Fixes and `Source: Fix All` edits: files under `hoi4ModUtilities.installPath`, including DLC folders, and vanilla-derived folders (`interface`, `gfx`, `common/names`, `common/occupation_laws`, `common/special_projects`, `common/technologies`, `common/units` except division and ship name lists, and `history/states`), following the Kaiserreich formatter skip list. Lint warnings are still shown. Turn off `hoi4ModUtilities.skipVanillaFiles` to format and fix them; `hoi4ModUtilities.formatter.ignoreFiles` patterns apply to formatting independently.
 
 ### Fixed
+* Format blocks that start with content on the opening-brace line and close on a later line: a lone entry closes back into an inline block, such as `traits = { AFR_red_queen_trait }`, and other content moves to its own line. Wrapped lists that close right after their last entry keep their layout.
 * Stop classifying non-script `.txt` files in a Steam game folder (`steamapps/common/<game>`) as HOI4 scripts.
 
 ## [1.0.0] - 2026/09/19 - Latest

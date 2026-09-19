@@ -283,7 +283,10 @@ function formatLines(lines: string[], options: Hoi4FormatOptions, initialDepth: 
 
     return {
         lines: profile === 'script'
-            ? applyScriptStructuralSpacing(collapseSimpleScriptBlocks(result, getMultiLineBodyInlinePreferredBlockKeys(options)).map(canonicalizeScriptLine))
+            ? applyScriptStructuralSpacing(
+                collapseSimpleScriptBlocks(splitScriptBlockOpeningContent(result), getMultiLineBodyInlinePreferredBlockKeys(options))
+                    .map(canonicalizeScriptLine),
+            )
             : result,
         endDepth: depth,
     };
@@ -293,6 +296,81 @@ function getMultiLineBodyInlinePreferredBlockKeys(options: Hoi4FormatOptions): R
     return isHistoryScriptFile(options.filePath)
         ? historyMultiLineBodyInlinePreferredBlockKeys
         : multiLineBodyInlinePreferredBlockKeys;
+}
+
+// Content written after an opening brace whose closing brace starts a later line moves to its own line,
+// unless it is the only entry, which closes back into an inline block. Wrapped lists that also end
+// with content before the closing brace keep their layout.
+function splitScriptBlockOpeningContent(lines: string[]): string[] {
+    const result: string[] = [];
+
+    for (let index = 0; index < lines.length; index++) {
+        const opening = parseBlockOpeningContent(lines[index]);
+        const closeIndex = opening === undefined ? undefined : findLeadingBlockCloseIndex(lines, index);
+        if (opening === undefined || closeIndex === undefined) {
+            result.push(lines[index]);
+            continue;
+        }
+
+        const { indent, key, content, comment } = opening;
+        const inline = `${indent}${key} = { ${content} }`;
+        if (comment === ''
+            && lines[closeIndex] === `${indent}}`
+            && lines.slice(index + 1, closeIndex).every(line => line === '')
+            && !multilinePreferredBlockKeys.has(key)
+            && !(indent.length === 0 && separatedBlockKeys.has(key))
+            && inline.length <= 140) {
+            result.push(inline);
+            index = closeIndex;
+        } else {
+            result.push(`${indent}${key} = {`, `${indent}\t${content}${comment}`);
+        }
+    }
+
+    return result;
+}
+
+// Returns the line whose leading closing brace ends the block opened on openIndex.
+function findLeadingBlockCloseIndex(lines: string[], openIndex: number): number | undefined {
+    let depth = 1;
+    for (let index = openIndex + 1; index < lines.length; index++) {
+        const tokens = tokenizeCode(splitLineComment(lines[index]).code);
+        for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
+            depth += tokens[tokenIndex].value === '{' ? 1 : tokens[tokenIndex].value === '}' ? -1 : 0;
+            if (depth === 0) {
+                return tokenIndex === 0 ? index : undefined;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function parseBlockOpeningContent(line: string): { indent: string; key: string; content: string; comment: string } | undefined {
+    const parts = splitLineComment(line);
+    const tokens = tokenizeCode(parts.code.trim());
+    if (tokens.length < 4 || tokens[0].type !== 'word' || tokens[1].value !== '=' || tokens[2].value !== '{') {
+        return undefined;
+    }
+
+    const contentTokens = tokens.slice(3);
+    let depth = 0;
+    for (const token of contentTokens) {
+        depth += token.value === '{' ? 1 : token.value === '}' ? -1 : 0;
+        if (depth < 0) {
+            return undefined;
+        }
+    }
+    if (depth !== 0) {
+        return undefined;
+    }
+
+    return {
+        indent: /^\t*/.exec(parts.code)?.[0] ?? '',
+        key: tokens[0].value,
+        content: formatTokensGeneric(contentTokens),
+        comment: parts.comment === null ? '' : parts.code.slice(parts.code.trimEnd().length) + parts.comment,
+    };
 }
 
 function collapseSimpleScriptBlocks(lines: string[], multiLineBodyKeys: ReadonlySet<string>): string[] {

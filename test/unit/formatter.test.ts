@@ -185,6 +185,79 @@ describe('HOI4 formatter', () => {
         assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
     });
 
+    it('closes a lone entry written after an opening brace back into an inline block', () => {
+        const input = [
+            'characters = {',
+            '\tAFR_red_queen = {',
+            '\t\tcountry_leader = {',
+            '\t\t\tideology = despotism',
+            '\t\t\ttraits = { AFR_red_queen_trait',
+            '',
+            '\t\t\t}',
+            '\t\t}',
+            '\t}',
+            '}',
+        ].join('\n');
+        const expected = [
+            'characters = {',
+            '\tAFR_red_queen = {',
+            '\t\tcountry_leader = {',
+            '\t\t\tideology = despotism',
+            '\t\t\ttraits = { AFR_red_queen_trait }',
+            '\t\t}',
+            '\t}',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script', filePath: 'C:/mod/common/characters/AFR.txt' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
+    });
+
+    it('moves content after an opening brace to its own line when the block has more entries or stays multiline', () => {
+        const input = [
+            'traits = { first_trait',
+            '\tsecond_trait',
+            '}',
+            'if = { limit = { has_war = yes }',
+            '\tadd_stability = 0.1',
+            '}',
+            'else = { add_stability = 0.05',
+            '}',
+            'modifier = { stability_factor = 0.1 # keep this note',
+            '}',
+        ].join('\n');
+        const expected = [
+            'traits = {',
+            '\tfirst_trait',
+            '\tsecond_trait',
+            '}',
+            'if = {',
+            '\tlimit = { has_war = yes }',
+            '\tadd_stability = 0.1',
+            '}',
+            'else = {',
+            '\tadd_stability = 0.05',
+            '}',
+            'modifier = {',
+            '\tstability_factor = 0.1 # keep this note',
+            '}',
+        ].join('\n');
+
+        const formatted = formatHoi4Text(input, { profile: 'script' });
+        assert.strictEqual(formatted, expected);
+        assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
+    });
+
+    it('keeps wrapped lists that close right after their last entry', () => {
+        const input = [
+            'names = { Adolfas Aleksandras Algirdas',
+            '\tBronislovas Danielius Zydrunas }',
+        ].join('\n');
+
+        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'C:/mod/common/names/LIT.txt' }), input);
+    });
+
     it('collapses simple multiline effect blocks into Kaiserreich-style inline blocks', () => {
         const input = [
             'completion_reward = {',
