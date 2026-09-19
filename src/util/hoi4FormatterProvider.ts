@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { formatHoi4Text, formatHoi4TextRange, getHoi4ExpectedLineIndent, getHoi4FormatterProfile, Hoi4FormatterProfile } from '../hoiformat/formatter';
+import { isHoi4FormatterIgnored } from './formatterIgnore';
 import { localize } from './i18n';
 import { uriToFilePathWhenPossible } from './vsccommon';
 
@@ -114,6 +115,10 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
 }
 
 function getFormatterContext(document: vscode.TextDocument): { profile: Hoi4FormatterProfile; filePath: string } | undefined {
+    if (isHoi4FormatterIgnored(document)) {
+        return undefined;
+    }
+
     const filePath = uriToFilePathWhenPossible(document.uri);
     const profile = getHoi4FormatterProfile(filePath);
     if (profile === undefined) {

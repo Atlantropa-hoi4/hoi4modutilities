@@ -122,6 +122,16 @@ describe('extension manifest', () => {
         assert.deepStrictEqual(featureFlags.default, []);
     });
 
+    it('contributes workspace-scoped formatter ignore patterns', () => {
+        const ignoreFiles = manifest.contributes.configuration[0].properties['hoi4ModUtilities.formatter.ignoreFiles'];
+
+        assert.strictEqual(ignoreFiles.type, 'array');
+        assert.strictEqual(ignoreFiles.scope, 'resource');
+        assert.strictEqual(ignoreFiles.uniqueItems, true);
+        assert.deepStrictEqual(ignoreFiles.default, []);
+        assert.strictEqual(ignoreFiles.items.type, 'string');
+    });
+
     it('defines every manifest localisation token in the default package bundle', () => {
         const tokens = JSON.stringify(manifest).matchAll(/%([^%]+)%/g);
         const keys = new Set(Array.from(tokens, match => match[1]));

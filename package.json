@@ -136,6 +136,17 @@
               "scroll"
             ],
             "description": "%hoi4modutilities.previewWheel.desc%"
+          },
+          "hoi4ModUtilities.formatter.ignoreFiles": {
+            "title": "%hoi4modutilities.formatter.ignoreFiles.title%",
+            "type": "array",
+            "default": [],
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            },
+            "scope": "resource",
+            "description": "%hoi4modutilities.formatter.ignoreFiles.desc%"
           }
         }
       }

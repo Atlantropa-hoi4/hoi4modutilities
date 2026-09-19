@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Commands } from '../constants';
 import { formatHoi4Text, getHoi4FormatterProfile } from '../hoiformat/formatter';
 import { localizer } from '../services/localizer';
+import { isHoi4FormatterIgnored } from './formatterIgnore';
 
 export function registerFormatWorkspace(): vscode.Disposable {
     let running = false;
@@ -44,6 +45,9 @@ export async function formatWorkspace(): Promise<void> {
                     const document = await vscode.workspace.openTextDocument(uri);
                     if (token.isCancellationRequested) {
                         break;
+                    }
+                    if (isHoi4FormatterIgnored(document)) {
+                        continue;
                     }
                     const text = document.getText();
                     const profile = getHoi4FormatterProfile(uri.path)!;

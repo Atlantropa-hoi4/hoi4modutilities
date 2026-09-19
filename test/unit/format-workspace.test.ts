@@ -11,15 +11,21 @@ let cancelled: boolean;
 let cancelAfterEdit: boolean;
 let acceptEdit: boolean;
 let folders: unknown[];
+let formatterIgnorePatterns: string[];
 const vscodeMock = {
     workspace: {
         get workspaceFolders() { return folders; },
+        getConfiguration: () => ({
+            get: (_key: string, fallback: unknown) => formatterIgnorePatterns ?? fallback,
+        }),
+        getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
         findFiles: async (_include: string, exclude: unknown) => {
             assert.strictEqual(exclude, undefined);
             return files;
         },
         asRelativePath: (uri: { path: string }) => uri.path,
         openTextDocument: async (uri: { path: string }) => ({
+            uri,
             getText: () => texts[uri.path],
             positionAt: (offset: number) => offset,
         }),
@@ -28,6 +34,15 @@ const vscodeMock = {
             if (cancelAfterEdit) { cancelled = true; }
             return acceptEdit;
         },
+    },
+    languages: {
+        match: (selector: { pattern: string | { pattern: string } }, document: { uri: { path: string } }) => {
+            const pattern = typeof selector.pattern === 'string' ? selector.pattern : selector.pattern.pattern;
+            return pattern === '**/generated.txt' && document.uri.path.endsWith('/generated.txt') ? 1 : 0;
+        },
+    },
+    RelativePattern: class {
+        constructor(_base: unknown, public pattern: string) {}
     },
     window: {
         withProgress: async (_options: unknown, action: (progress: unknown, token: unknown) => Promise<void>) =>
@@ -51,6 +66,7 @@ nodeModule._load = function(request, parent, isMain) {
 };
 const { formatWorkspace } = (() => {
     try {
+        delete require.cache[require.resolve('../../src/util/formatterIgnore')];
         return require('../../src/util/formatWorkspace') as typeof import('../../src/util/formatWorkspace');
     } finally {
         nodeModule._load = originalLoad;
@@ -67,6 +83,7 @@ describe('workspace formatting', () => {
         cancelAfterEdit = false;
         acceptEdit = true;
         folders = [{}];
+        formatterIgnorePatterns = [];
     });
 
     function addFile(path: string, text: string) {
@@ -94,6 +111,16 @@ describe('workspace formatting', () => {
         await formatWorkspace();
         assert.strictEqual(edits.length, 1);
         assert.ok(messages[0].includes('1 changed, 0 unchanged, 1 failed'));
+    });
+
+    it('skips files matching formatter ignore patterns', async () => {
+        formatterIgnorePatterns = ['**/generated.txt'];
+        addFile('/mod/events/generated.txt', 'x=1');
+        addFile('/mod/events/regular.txt', 'x=2');
+        await formatWorkspace();
+        assert.strictEqual(edits.length, 1);
+        assert.strictEqual(edits[0].uri.path, '/mod/events/regular.txt');
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
     });
 
     it('stops after cancellation and reports partial changes', async () => {

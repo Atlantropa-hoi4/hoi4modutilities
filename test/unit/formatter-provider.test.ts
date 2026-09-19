@@ -3,6 +3,7 @@ import Module = require('module');
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
+let formatterIgnorePatterns: string[] = [];
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         return {
@@ -10,6 +11,19 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 registerDocumentFormattingEditProvider: () => ({ dispose() {} }),
                 registerDocumentRangeFormattingEditProvider: () => ({ dispose() {} }),
                 registerOnTypeFormattingEditProvider: () => ({ dispose() {} }),
+                match: (selector: { pattern: string | { pattern: string } }, document: { uri: { path: string } }) => {
+                    const pattern = typeof selector.pattern === 'string' ? selector.pattern : selector.pattern.pattern;
+                    return pattern === '**/generated.txt' && document.uri.path.endsWith('/generated.txt') ? 1 : 0;
+                },
+            },
+            workspace: {
+                getConfiguration: () => ({
+                    get: (_key: string, fallback: unknown) => formatterIgnorePatterns ?? fallback,
+                }),
+                getWorkspaceFolder: () => ({ uri: { path: '/mod' } }),
+            },
+            RelativePattern: class {
+                constructor(_base: unknown, public pattern: string) {}
             },
             l10n: {
                 t: (message: string, ...args: Array<string | number | boolean>) =>
@@ -44,6 +58,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const formatterProviderModule = (() => {
     try {
+        delete require.cache[require.resolve('../../src/util/formatterIgnore')];
         return require('../../src/util/hoi4FormatterProvider') as typeof import('../../src/util/hoi4FormatterProvider');
     } finally {
         nodeModule._load = originalLoad;
@@ -91,6 +106,10 @@ function createDocument(filePath: string, text: string) {
 }
 
 describe('HOI4 formatter provider', () => {
+    beforeEach(() => {
+        formatterIgnorePatterns = [];
+    });
+
     it('returns a single full-document edit for supported documents', () => {
         const provider = new Hoi4DocumentFormattingEditProvider();
         const text = 'focus_tree={\n}';
@@ -110,6 +129,18 @@ describe('HOI4 formatter provider', () => {
         const provider = new Hoi4DocumentFormattingEditProvider();
         const edits = provider.provideDocumentFormattingEdits(
             createDocument('C:\\mod\\map\\weatherpositions.txt', '1;2;3;small') as any,
+            {} as any,
+            {} as any,
+        ) as any[];
+
+        assert.deepStrictEqual(edits, []);
+    });
+
+    it('returns no edits for documents matching formatter ignore patterns', () => {
+        formatterIgnorePatterns = ['**/generated.txt'];
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const edits = provider.provideDocumentFormattingEdits(
+            createDocument('C:\\mod\\events\\generated.txt', 'x=1') as any,
             {} as any,
             {} as any,
         ) as any[];

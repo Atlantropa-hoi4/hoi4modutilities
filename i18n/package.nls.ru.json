@@ -17,6 +17,8 @@
     "hoi4modutilities.scanreferences.title": "Найти похожее",
     "hoi4modutilities.selectmodfile.title": "Выбрать файл мода",
     "hoi4modutilities.formatWorkspace.title": "Форматировать файлы HOI4 рабочей области",
+  "hoi4modutilities.formatter.ignoreFiles.title": "Исключения форматтера",
+  "hoi4modutilities.formatter.ignoreFiles.desc": "Glob-шаблоны относительно папки рабочей области для файлов, исключённых из форматирования документа, диапазона, при вводе и всей рабочей области. Используйте прямые косые черты, например common/generated/** или **/legacy.txt.",
   "hoi4modutilities.previewWheel.title": "Колесо в предпросмотре",
   "hoi4modutilities.previewWheel.desc": "Auto: колесо масштабирует, трекпад прокручивает. Zoom: всегда масштабировать. Scroll: перемещать. Ctrl/Cmd + колесо масштабирует в любом режиме.",
   "hoi4modutilities.showIndexStatus.title": "Показать состояние индексов",

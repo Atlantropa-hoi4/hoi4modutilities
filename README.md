@@ -50,6 +50,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 | `hoi4ModUtilities.modFile` | `string` | Working `.mod` file used for `replace_path` resolution. |
 | `hoi4ModUtilities.previewLocalisation` | `string enum` | Preview language used by localisation-aware previews. |
 | `hoi4ModUtilities.previewWheel` | `auto`, `zoom`, `scroll` | Defaults to `auto`: discrete mouse wheels zoom and smooth trackpad input pans. Select an explicit mode if device detection differs. Ctrl/Cmd + wheel always zooms. Tree and map previews also provide +/− buttons and keyboard shortcuts outside text inputs. |
+| `hoi4ModUtilities.formatter.ignoreFiles` | `string[]` | Workspace-folder-relative glob patterns excluded from document, range, on-type, and workspace formatting. Use forward slashes, such as `common/generated/**` or `**/legacy.txt`. |
 | `hoi4ModUtilities.featureFlags` | `string[]` | Feature flags for advanced flows. Choose supported values directly in VS Code settings. GFX/localisation indexes are enabled without flags; use `!gfxIndex` or `!localisationIndex` to disable them. Use `technologyShowId` to show raw technology IDs in the technology tree preview. |
 
 ## Development
