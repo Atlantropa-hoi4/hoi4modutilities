@@ -44,6 +44,14 @@ const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
 const focusTreeAssetRenderBatchSize = 32;
 
+export interface FocusTreeAssetStyleBatch {
+    batchIndex: number;
+    css: string;
+    assetNames: string[];
+}
+
+export type FocusTreeAssetStyleBatchHandler = (batch: FocusTreeAssetStyleBatch) => void | Promise<void>;
+
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTreeView[];
     /** Host-only source used to calculate patch signatures. Never sent to the webview. */
@@ -77,6 +85,7 @@ export interface FocusTreeRenderBaseState {
     allFocuses: Focus[];
     allInlays: FocusTree["inlayWindows"][number][];
     focusById: Record<string, Focus>;
+    focusDisplayNameById?: Record<string, string>;
     gfxFiles: string[];
     focusIconGfxFileByName: Record<string, string>;
     focusIconAssetResolution: FocusIconAssetResolution;
@@ -243,6 +252,7 @@ export async function buildFocusTreeRenderBaseState(
 export async function buildFocusTreeRenderPayloadFromBaseState(
     baseState: FocusTreeRenderBaseState,
     isCancelled?: () => boolean,
+    onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
     throwIfFocusTreeRenderCancelled(isCancelled);
     resolveSearchFilterLabels(baseState.focusTrees);
@@ -271,16 +281,15 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.yGridSize,
             isCancelled,
             !!baseState.presentation?.item,
+            onAssetStyleBatch,
         );
     }
     throwIfFocusTreeRenderCancelled(isCancelled);
     const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
     const localisationResolveStart = Date.now();
-    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(
-        baseState.allFocuses,
-        undefined,
-        isCancelled,
-    );
+    const focusLocalizationTextById = baseState.focusDisplayNameById
+        ?? await resolveFocusLocalizationTextByIdIfReady(baseState.allFocuses, undefined, isCancelled);
+    baseState.focusDisplayNameById = focusLocalizationTextById;
     refreshUnsupportedLocalisationWarnings(baseState.focusTrees, focusLocalizationTextById);
     throwIfFocusTreeRenderCancelled(isCancelled);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
@@ -291,7 +300,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             await yieldToFocusTreeRenderCancellation(isCancelled);
         }
 
-        if (baseState.deferredAssetLoad) {
+        if (baseState.deferredAssetLoad || !baseState.presentation?.item) {
             continue;
         }
 
@@ -335,7 +344,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
 
     return {
         payload: {
-            focusTrees: toFocusTreeViews(baseState.focusTrees),
+            focusTrees: toFocusTreeViews(baseState.focusTrees, focusLocalizationTextById),
             sourceFocusTrees: baseState.focusTrees,
             selectedTreeId: baseState.focusTrees[0]?.id,
             renderedFocus,
@@ -573,6 +582,9 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw('#focus-gfx-controls button:focus-visible', 'outline:1px solid var(--vscode-focusBorder);outline-offset:1px;');
     styleTable.raw('#focus-gfx-controls button:active', 'transform:none;');
     styleTable.raw('#focustreeplaceholder [data-focus-id], #focustreeplaceholder [data-focus-id] *, #focustreeplaceholder .navigator, #focustreeplaceholder .navigator *', 'pointer-events: auto;');
+    styleTable.raw('.preview-label-name-text', 'display:none;');
+    styleTable.raw('body[data-preview-label-mode="name"] .preview-label-id-text', 'display:none;');
+    styleTable.raw('body[data-preview-label-mode="name"] .preview-label-name-text', 'display:inline;');
     styleTable.raw('#inlaywindowplaceholder', 'pointer-events: none;');
     styleTable.raw('#inlaywindowplaceholder .navigator, #inlaywindowplaceholder .navigator *, #inlaywindowplaceholder button, #inlaywindowplaceholder button *', 'pointer-events: auto;');
 
@@ -580,8 +592,9 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<template id="focus-card-template">
             <div class="navigator st-focus-common">
                 <div class="focus-checkbox st-focus-checkbox"><input type="checkbox"/></div>
+                <div class="focus-decoration-gfx st-focus-overlay-common" hidden></div>
                 <div class="st-focus-icon-slot"><div class="st-focus-icon-image"></div></div>
-                <span class="st-focus-span"><span class="st-focus-code-line"></span></span>
+                <span class="st-focus-span"><span class="st-focus-code-line" data-preview-label-css-toggle="true"><span class="preview-label-id-text"></span><span class="preview-label-name-text"></span></span></span>
             </div>
         </template>` +
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
@@ -996,7 +1009,7 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
-async function prepareFocusIconStyles(
+export async function prepareFocusIconStyles(
     focuses: readonly Focus[],
     styleTable: StyleTable,
     focusIconAssetResolution: FocusIconAssetResolution,
@@ -1004,6 +1017,7 @@ async function prepareFocusIconStyles(
     yGridSize: number,
     isCancelled?: () => boolean,
     useNativeSize = false,
+    onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
 ): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
@@ -1021,8 +1035,10 @@ async function prepareFocusIconStyles(
         unresolvedGfxNames: [] as string[],
     };
 
+    let batchIndex = 0;
     for (let start = 0; start < uniqueIconNames.length; start += focusTreeAssetRenderBatchSize) {
         const iconNames = uniqueIconNames.slice(start, start + focusTreeAssetRenderBatchSize);
+        const batchStyleTable = new StyleTable();
         await Promise.all(iconNames.map(async iconName => {
             const iconResolution = await resolveFocusIcon(
                 iconName,
@@ -1041,14 +1057,24 @@ async function prepareFocusIconStyles(
                     : fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
                 : { width: focusPlaceholderSize, height: focusPlaceholderSize };
 
-            styleTable.style('focus-icon-' + normalizeForStyle(iconName), () => `
+            const styleName = 'focus-icon-' + normalizeForStyle(iconName);
+            const styleContent = `
                 width: ${displaySize.width}px;
                 height: ${displaySize.height}px;
                 background-repeat: no-repeat;
                 background-size: contain;
                 ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
-            `);
+            `;
+            styleTable.style(styleName, () => styleContent);
+            batchStyleTable.style(styleName, () => styleContent);
         }));
+        if (onAssetStyleBatch && iconNames.length > 0) {
+            await onAssetStyleBatch({
+                batchIndex: batchIndex++,
+                css: batchStyleTable.toStyleContent(),
+                assetNames: iconNames,
+            });
+        }
         if (start + focusTreeAssetRenderBatchSize < uniqueIconNames.length) {
             await yieldToFocusTreeRenderCancellation(isCancelled);
         } else {
@@ -1061,14 +1087,24 @@ async function prepareFocusIconStyles(
     ));
     for (let start = 0; start < uniqueOverlayNames.length; start += focusTreeAssetRenderBatchSize) {
         const overlayNames = uniqueOverlayNames.slice(start, start + focusTreeAssetRenderBatchSize);
+        const batchStyleTable = new StyleTable();
         await Promise.all(overlayNames.map(async overlayName => {
             const gfxFile = focusIconAssetResolution.gfxFileByIconName[overlayName];
             const overlaySprite = gfxFile
                 ? await getSpriteByGfxNameFromResolvedFiles(overlayName, [gfxFile])
                 : undefined;
-            styleTable.style('focus-overlay-' + normalizeForStyle(overlayName), () =>
-                overlaySprite ? `background-image: url(${overlaySprite.image.uri});` : '');
+            const styleName = 'focus-overlay-' + normalizeForStyle(overlayName);
+            const styleContent = overlaySprite ? `background-image: url(${overlaySprite.image.uri});` : '';
+            styleTable.style(styleName, () => styleContent);
+            batchStyleTable.style(styleName, () => styleContent);
         }));
+        if (onAssetStyleBatch && overlayNames.length > 0) {
+            await onAssetStyleBatch({
+                batchIndex: batchIndex++,
+                css: batchStyleTable.toStyleContent(),
+                assetNames: overlayNames,
+            });
+        }
         if (start + focusTreeAssetRenderBatchSize < uniqueOverlayNames.length) {
             await yieldToFocusTreeRenderCancellation(isCancelled);
         } else {

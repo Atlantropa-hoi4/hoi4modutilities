@@ -353,6 +353,7 @@ describe('focustree contentbuilder', () => {
     });
 
     it('reuses resolved focus icon gfx files while preparing icon styles', async () => {
+        const assetStyleBatches: string[] = [];
         const focus = {
             id: 'FOCUS_A',
             layoutEditKey: 'focus_a',
@@ -418,9 +419,13 @@ describe('focustree contentbuilder', () => {
             hasWarningsButton: false,
             loadDurationMs: 1,
             deferredAssetLoad: false,
-        } as any);
+        } as any, undefined, batch => {
+            assetStyleBatches.push(batch.css);
+        });
 
         assert.match(result.payload.dynamicStyleCss, /test-icon\.png/);
+        assert.strictEqual(assetStyleBatches.length, 1);
+        assert.match(assetStyleBatches[0], /test-icon\.png/);
         assert.deepStrictEqual(resolvedFileCalls, [
             { name: 'GFX_FOCUS_A', gfxFiles: ['interface/mapped_icons.gfx'] },
         ]);

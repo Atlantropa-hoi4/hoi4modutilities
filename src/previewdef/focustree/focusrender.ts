@@ -154,7 +154,8 @@ export function renderFocusHtmlTemplate(
             class="${sharedStyles.codeLineClass}"
             data-preview-label-id="${htmlAttributeEscape(focus.id)}"
             data-preview-label-name="${htmlAttributeEscape(displayName)}"
-        >${htmlTextEscape(focus.id)}</span>
+            data-preview-label-css-toggle="true"
+        ><span class="preview-label-id-text">${htmlTextEscape(focus.id)}</span><span class="preview-label-name-text">${htmlTextEscape(displayName)}</span></span>
     `;
     const idTitle = `${focus.id}\n({{position}})`;
     const nameTitle = `${displayName}\n({{position}})`;

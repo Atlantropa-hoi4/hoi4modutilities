@@ -12,10 +12,12 @@ export const focusTreeProtocolVersion = 2 as const;
 
 export interface FocusView {
     id: string;
+    displayName?: string;
     layoutEditKey: string;
     x: number;
     y: number;
     icon: Focus['icon'];
+    overlay?: string;
     prerequisite: string[][];
     prerequisiteGroupCount: number;
     prerequisiteFocusCount: number;
@@ -76,16 +78,25 @@ export interface FocusTreeAssetPatch {
     removedRenderedInlayWindowIds?: string[];
 }
 
-export function toFocusTreeViews(focusTrees: readonly FocusTree[]): FocusTreeView[] {
-    return focusTrees.map(toFocusTreeView);
+export function toFocusTreeViews(
+    focusTrees: readonly FocusTree[],
+    displayNameByFocusId: Readonly<Record<string, string>> = {},
+): FocusTreeView[] {
+    return focusTrees.map(focusTree => toFocusTreeView(focusTree, displayNameByFocusId));
 }
 
-export function toFocusTreeView(focusTree: FocusTree): FocusTreeView {
+export function toFocusTreeView(
+    focusTree: FocusTree,
+    displayNameByFocusId: Readonly<Record<string, string>> = {},
+): FocusTreeView {
     return {
         id: focusTree.id,
         kind: focusTree.kind,
         focuses: Object.fromEntries(
-            Object.entries(focusTree.focuses).map(([focusId, focus]) => [focusId, toFocusView(focus)]),
+            Object.entries(focusTree.focuses).map(([focusId, focus]) => [
+                focusId,
+                toFocusView(focus, displayNameByFocusId[focusId]),
+            ]),
         ),
         createTemplate: focusTree.createTemplate,
         continuousLayout: focusTree.continuousLayout,
@@ -101,13 +112,15 @@ export function toFocusTreeView(focusTree: FocusTree): FocusTreeView {
     };
 }
 
-function toFocusView(focus: Focus): FocusView {
+function toFocusView(focus: Focus, displayName: string | undefined): FocusView {
     return {
         id: focus.id,
+        displayName,
         layoutEditKey: focus.layoutEditKey,
         x: focus.x,
         y: focus.y,
         icon: focus.icon,
+        overlay: focus.overlay,
         prerequisite: focus.prerequisite,
         prerequisiteGroupCount: focus.prerequisiteGroupCount,
         prerequisiteFocusCount: focus.prerequisiteFocusCount,

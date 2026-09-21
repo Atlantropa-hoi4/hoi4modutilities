@@ -22,6 +22,7 @@ export interface FocusTreeMessageApplyContext {
     setGridSizeX: (xGridSize: number) => void;
     setGridSizeY: (yGridSize: number) => void;
     replaceDynamicStyleCss: (dynamicStyleCss: string | undefined) => void;
+    appendDynamicStyleCss?: (dynamicStyleCssPatch: string | undefined) => void;
 }
 
 export function applyFocusTreeContentUpdate(
@@ -87,7 +88,11 @@ export function applyFocusTreeContentUpdate(
         context.setGridSizeY(message.yGridSize);
     }
     if (changedSlots.has('styleDeps')) {
-        context.replaceDynamicStyleCss(message.dynamicStyleCss);
+        if (message.dynamicStyleCss !== undefined) {
+            context.replaceDynamicStyleCss(message.dynamicStyleCss);
+        } else {
+            context.appendDynamicStyleCss?.(message.dynamicStyleCssPatch);
+        }
     }
 
     context.setSnapshotVersion(message.snapshotVersion);

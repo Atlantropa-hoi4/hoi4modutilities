@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
-import { buildFocusTreeRenderPayloadFromBaseState, FocusTreeRenderBaseState } from "./contentbuilder";
+import {
+    buildFocusTreeRenderPayloadFromBaseState,
+    FocusTreeAssetStyleBatchHandler,
+    FocusTreeRenderBaseState,
+} from "./contentbuilder";
 import { FocusConditionPresetsByTree } from "./conditionpresets";
 import { FocusTreeLoaderAdapter } from "./loaderadapter";
 import { createFullFocusTreeRenderUpdateWithCancellation, FocusTreeRenderCache } from "./renderpayloadpatch";
@@ -61,8 +65,13 @@ export class FocusTreeSnapshotBuilder {
         baseState: FocusTreeRenderBaseState,
         previousCache?: FocusTreeRenderCache,
         isCancelled?: () => boolean,
+        onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
     ): Promise<FocusTreeSnapshot> {
-        const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(baseState, isCancelled);
+        const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(
+            baseState,
+            isCancelled,
+            onAssetStyleBatch,
+        );
         const { update, cache } = await createFullFocusTreeRenderUpdateWithCancellation(
             payload,
             previousCache,

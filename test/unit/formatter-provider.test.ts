@@ -130,7 +130,7 @@ describe('HOI4 formatter provider', () => {
         ) as any[];
 
         assert.strictEqual(edits.length, 1);
-        assert.strictEqual(edits[0].newText, 'focus_tree = {\n}');
+        assert.strictEqual(edits[0].newText, 'focus_tree = {\n}\n');
         assert.deepStrictEqual(edits[0].range.start, { line: 0, character: 0, offset: 0 });
         assert.deepStrictEqual(edits[0].range.end, { line: 1, character: 1, offset: text.length });
     });
@@ -249,5 +249,37 @@ describe('HOI4 formatter provider', () => {
         assert.strictEqual(edits[0].newText, '\t');
         assert.deepStrictEqual(edits[0].range.start, { line: 2, character: 0 });
         assert.deepStrictEqual(edits[0].range.end, { line: 2, character: 4 });
+    });
+
+    it('returns no edits when formatting is cancelled', () => {
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const document = createDocument('C:\\mod\\events\\test.txt', 'x=1') as any;
+        const token = { isCancellationRequested: true } as any;
+
+        assert.deepStrictEqual(provider.provideDocumentFormattingEdits(document, {} as any, token), []);
+        assert.deepStrictEqual(provider.provideDocumentRangeFormattingEdits(
+            document,
+            { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } } as any,
+            {} as any,
+            token,
+        ), []);
+        assert.deepStrictEqual(provider.provideOnTypeFormattingEdits(
+            document,
+            { line: 0, character: 3 } as any,
+            '}',
+            {} as any,
+            token,
+        ), []);
+    });
+
+    it('returns no edits when the safety parse rejects a document', () => {
+        const provider = new Hoi4DocumentFormattingEditProvider();
+        const edits = provider.provideDocumentFormattingEdits(
+            createDocument('C:\\mod\\events\\broken.txt', '= }') as any,
+            {} as any,
+            {} as any,
+        ) as any[];
+
+        assert.deepStrictEqual(edits, []);
     });
 });

@@ -164,7 +164,11 @@ describe('focus tree render payload patching', () => {
         assert.deepStrictEqual(result.update.focusTreePatches?.map(patch => patch.treeId), ['tree_b']);
         assert.deepStrictEqual(result.update.changedTreeIds, ['tree_b']);
         assert.strictEqual(result.update.structurallyChangedTreeIds, undefined);
-        assert.match(result.update.renderedFocusPatch?.FOCUS_B ?? '', /common\/national_focus\/other\.txt/);
+        assert.strictEqual(result.update.renderedFocusPatch, undefined);
+        assert.strictEqual(
+            result.update.focusTreePatches?.[0].tree.focuses.FOCUS_B.file,
+            'common/national_focus/other.txt',
+        );
         assert.strictEqual(result.update.documentVersion, 4);
         assert.strictEqual(result.update.focusPositionActiveFile, 'common/national_focus/test.txt');
         assert.deepStrictEqual(result.update.changedSlots, ['treeDefinitions', 'selector', 'warnings', 'treeBody']);
@@ -313,7 +317,7 @@ describe('focus tree render payload patching', () => {
         assert.strictEqual(result.kind, 'full');
     });
 
-    it('falls back to a full snapshot when a focus overlay dependency changes', async () => {
+    it('patches only the affected focus when a focus overlay dependency changes', async () => {
         const previousTree = createTree('tree_a', 'FOCUS_A');
         const previous = createFocusTreeRenderCache({
             focusTrees: [previousTree],
@@ -357,7 +361,13 @@ describe('focus tree render payload patching', () => {
             loadDurationMs: 1,
         } as any);
 
-        assert.strictEqual(result.kind, 'full');
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+        assert.deepStrictEqual(result.update.changedFocusIds, ['FOCUS_A']);
+        assert.ok(result.update.changedSlots.includes('styleDeps'));
+        assert.ok((result.update.dynamicStyleCssPatch?.length ?? 0) > 0);
     });
 
     it('records approximate payload size metrics for full snapshots', () => {

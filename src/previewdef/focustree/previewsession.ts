@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { FocusTreeRenderBaseState } from './contentbuilder';
+import { FocusTreeAssetStyleBatchHandler, FocusTreeRenderBaseState } from './contentbuilder';
 import { getDocumentByUri } from '../../util/vsccommon';
 import { FocusConditionPresetsByTree } from './conditionpresets';
 import { FocusTreeAssetLoadMode, FocusTreeLoader } from './loader';
@@ -62,6 +62,7 @@ export interface FocusTreeSnapshotBuilderLike {
         baseState: FocusTreeRenderBaseState,
         previousCache: FocusTreePreviewSession['runtimeState']['lastRenderCache'],
         isCancelled?: () => boolean,
+        onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
     ): Promise<FocusTreeSnapshot>;
 }
 
@@ -433,10 +434,27 @@ export class FocusTreePreviewSession {
         let snapshotBuildDurationMs = 0;
         if (patchPlan.kind === 'full') {
             const snapshotBuildStart = Date.now();
+            const targetSnapshotVersion = (this.runtimeState.lastRenderCache?.snapshotVersion ?? 0) + 1;
+            const onAssetStyleBatch: FocusTreeAssetStyleBatchHandler | undefined = baseState.deferredAssetLoad
+                ? undefined
+                : async batch => {
+                    if (isCancelled()) {
+                        return;
+                    }
+                    await this.webview.postMessage({
+                        command: 'focusTreeAssetStyleChunk',
+                        protocolVersion: focusTreeProtocolVersion,
+                        requestId,
+                        snapshotVersion: targetSnapshotVersion,
+                        documentVersion: requestDocumentVersion,
+                        ...batch,
+                    });
+                };
             const snapshot = await this.snapshotBuilder.createFullSnapshot(
                 baseState,
                 this.runtimeState.lastRenderCache,
                 isCancelled,
+                onAssetStyleBatch,
             );
             snapshotBuildDurationMs = Date.now() - snapshotBuildStart;
             recordPerf('focustree.snapshotBuild', snapshotBuildDurationMs, { source: options.source, mode: assetLoadMode });

@@ -8,6 +8,9 @@ let files: Array<{ path: string; scheme?: string; fsPath?: string; toString(): s
 let texts: Record<string, string>;
 let edits: Array<{ uri: { path: string }; text: string }>;
 let messages: string[];
+let logs: string[];
+let outputShown: boolean;
+let showDetails: boolean;
 let cancelled: boolean;
 let cancelAfterEdit: boolean;
 let acceptEdit: boolean;
@@ -54,8 +57,15 @@ const vscodeMock = {
         withProgress: async (_options: unknown, action: (progress: unknown, token: unknown) => Promise<void>) =>
             action({ report() {} }, { get isCancellationRequested() { return cancelled; } }),
         showInformationMessage: (message: string) => messages.push(message),
-        showWarningMessage: (message: string) => messages.push(message),
+        showWarningMessage: (message: string, action?: string) => {
+            messages.push(message);
+            return showDetails ? action : undefined;
+        },
         showErrorMessage: (message: string) => messages.push(message),
+        createOutputChannel: () => ({
+            appendLine: (message: string) => logs.push(message),
+            show: () => { outputShown = true; },
+        }),
     },
     ProgressLocation: { Notification: 15 },
     Range: class { constructor(public start: number, public end: number) {} },
@@ -75,6 +85,8 @@ const { formatWorkspace } = (() => {
         delete require.cache[require.resolve('../../src/util/formatterIgnore')];
         delete require.cache[require.resolve('../../src/util/hoi4InstallFile')];
         delete require.cache[require.resolve('../../src/util/vanillaFiles')];
+        delete require.cache[require.resolve('../../src/util/logger')];
+        delete require.cache[require.resolve('../../src/util/formatWorkspace')];
         return require('../../src/util/formatWorkspace') as typeof import('../../src/util/formatWorkspace');
     } finally {
         nodeModule._load = originalLoad;
@@ -87,6 +99,9 @@ describe('workspace formatting', () => {
         texts = {};
         edits = [];
         messages = [];
+        logs = [];
+        outputShown = false;
+        showDetails = false;
         cancelled = false;
         cancelAfterEdit = false;
         acceptEdit = true;
@@ -119,7 +134,7 @@ describe('workspace formatting', () => {
         assert.strictEqual(edits.length, 2);
         assert.strictEqual(edits[0].text, '\uFEFFtag = GER\r\n');
         assert.strictEqual(edits[1].text, 'size = { x = 1 y = 2 }\n');
-        assert.ok(messages[0].includes('2 changed, 1 unchanged, 0 failed'));
+        assert.ok(messages[0].includes('2 changed, 1 unchanged, 0 skipped, 0 failed'));
     });
 
     it('skips invalid scripts and continues with other files', async () => {
@@ -127,7 +142,8 @@ describe('workspace formatting', () => {
         addFile('/mod/events/good.txt', 'x=1');
         await formatWorkspace();
         assert.strictEqual(edits.length, 1);
-        assert.ok(messages[0].includes('1 changed, 0 unchanged, 1 failed'));
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 skipped, 1 failed'));
+        assert.ok(logs.some(message => message.includes('/mod/events/broken.txt')));
     });
 
     it('skips files matching formatter ignore patterns', async () => {
@@ -137,7 +153,7 @@ describe('workspace formatting', () => {
         await formatWorkspace();
         assert.strictEqual(edits.length, 1);
         assert.strictEqual(edits[0].uri.path, '/mod/events/regular.txt');
-        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 1 skipped, 0 failed'));
     });
 
     it('skips vanilla files under the HOI4 install path without opening them', async () => {
@@ -149,7 +165,7 @@ describe('workspace formatting', () => {
         await formatWorkspace();
         assert.deepStrictEqual(openedPaths, [path.join(modPath, 'common', 'ideas', 'mod.txt').replace(/\\/g, '/')]);
         assert.strictEqual(edits.length, 1);
-        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 2 skipped, 0 failed'));
     });
 
     it('formats vanilla files under the HOI4 install path when vanilla file skipping is disabled', async () => {
@@ -158,7 +174,7 @@ describe('workspace formatting', () => {
         addDiskFile(path.join(installPath, 'common', 'ideas', 'vanilla.txt'), 'x=1');
         await formatWorkspace();
         assert.strictEqual(edits.length, 1);
-        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 failed'));
+        assert.ok(messages[0].includes('1 changed, 0 unchanged, 0 skipped, 0 failed'));
     });
 
     it('stops after cancellation and reports partial changes', async () => {
@@ -170,18 +186,48 @@ describe('workspace formatting', () => {
         assert.ok(messages[0].startsWith('Formatting cancelled.'));
     });
 
+    it('does not open files when cancellation was already requested', async () => {
+        addFile('/mod/events/a.txt', 'x=1');
+        cancelled = true;
+
+        await formatWorkspace();
+
+        assert.deepStrictEqual(openedPaths, []);
+        assert.deepStrictEqual(edits, []);
+        assert.ok(messages[0].startsWith('Formatting cancelled.'));
+    });
+
     it('counts rejected edits as failures', async () => {
         addFile('/mod/events/a.txt', 'x=1');
         acceptEdit = false;
         await formatWorkspace();
-        assert.ok(messages[0].includes('0 changed, 0 unchanged, 1 failed'));
+        assert.ok(messages[0].includes('0 changed, 0 unchanged, 0 skipped, 1 failed'));
+        assert.ok(logs.some(message => message.includes('edit was rejected')));
     });
 
     it('handles an empty workspace and no supported files', async () => {
         await formatWorkspace();
-        assert.ok(messages[0].includes('0 changed, 0 unchanged, 0 failed'));
+        assert.ok(messages[0].includes('0 changed, 0 unchanged, 0 skipped, 0 failed'));
         folders = [];
         await formatWorkspace();
         assert.ok(messages[1].startsWith('Open a workspace folder'));
+    });
+
+    it('formats files in deterministic path order', async () => {
+        addFile('/mod/events/Z.txt', 'z=1');
+        addFile('/mod/events/a.txt', 'a=1');
+
+        await formatWorkspace();
+
+        assert.deepStrictEqual(edits.map(edit => edit.uri.path), ['/mod/events/a.txt', '/mod/events/Z.txt']);
+    });
+
+    it('opens formatter details when a failed run requests them', async () => {
+        showDetails = true;
+        addFile('/mod/events/broken.txt', '= }');
+
+        await formatWorkspace();
+
+        assert.strictEqual(outputShown, true);
     });
 });

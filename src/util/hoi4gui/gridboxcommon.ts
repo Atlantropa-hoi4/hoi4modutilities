@@ -214,6 +214,8 @@ export function renderSvgConnections(
     cornerPosition: number,
 ): string {
     const paths: string[] = [];
+    const points: NumberPosition[] = [];
+    let maxStrokeWidth = 1;
     for (const item of Object.values(items)) {
         for (const connection of item.connections) {
             const target = items[connection.target];
@@ -229,6 +231,8 @@ export function renderSvgConnections(
 
             const route = getSvgConnectionRoute(start, end, format, slotSize, cornerPosition);
             const stroke = parseSvgStroke(connection.style);
+            points.push(start, end);
+            maxStrokeWidth = Math.max(maxStrokeWidth, stroke.width);
             paths.push(`<path class="${attributeEscape(connection.classNames ?? '')}" d="${route}" fill="none" stroke="${attributeEscape(stroke.color)}" stroke-width="${stroke.width}"${stroke.dashArray ? ` stroke-dasharray="${stroke.dashArray}"` : ''} vector-effect="non-scaling-stroke"></path>`);
         }
     }
@@ -236,7 +240,19 @@ export function renderSvgConnections(
     if (paths.length === 0) {
         return '';
     }
-    return `<svg class="focus-connection-layer" aria-hidden="true" width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible;pointer-events:none">${paths.join('')}</svg>`;
+
+    // Focus grid boxes deliberately have a minimal/zero declared height and rely on
+    // overflowing absolutely-positioned children. A percentage-sized SVG therefore
+    // receives a zero-height viewport and paints no paths. Give the connection layer
+    // explicit bounds while keeping its user coordinates aligned with the grid box.
+    const padding = Math.max(2, Math.ceil(maxStrokeWidth / 2));
+    const minX = Math.floor(Math.min(0, ...points.map(point => point.x)) - padding);
+    const minY = Math.floor(Math.min(0, ...points.map(point => point.y)) - padding);
+    const maxX = Math.ceil(Math.max(size.width, ...points.map(point => point.x)) + padding);
+    const maxY = Math.ceil(Math.max(size.height, ...points.map(point => point.y)) + padding);
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    return `<svg class="focus-connection-layer" aria-hidden="true" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" style="position:absolute;left:${minX}px;top:${minY}px;overflow:visible;pointer-events:none">${paths.join('')}</svg>`;
 }
 
 function getSvgConnectionRoute(

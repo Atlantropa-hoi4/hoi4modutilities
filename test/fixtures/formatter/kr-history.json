@@ -1,0 +1,23 @@
+[
+  {
+    "sourceCommit": "34e64472c1",
+    "profile": "script",
+    "filePath": "common/ai_strategy/GER.txt",
+    "before": "strategy = {\n        check_expr = {\n            value={ value=global.num_days mod=365 greater_than=90 } #early April\n            # EFFECTS\n        }\n}",
+    "after": "strategy = {\n\tcheck_expr = {\n\t\tvalue = { value = global.num_days mod = 365 greater_than = 90 } #early April\n\t\t# EFFECTS\n\t}\n}\n"
+  },
+  {
+    "sourceCommit": "266b4d332c",
+    "profile": "script",
+    "filePath": "common/national_focus/AFG focus (Afghanistan).txt",
+    "before": "focus_tree = {\r\n\tfocus = {\r\n\t\tcompletion_reward = {\r\n\t\t\tcountry_event =  afghanistan_events.407\r\n\t\t}\r\n\t}\r\n}\r\n",
+    "after": "focus_tree = {\r\n\tfocus = {\r\n\t\tcompletion_reward = {\r\n\t\t\tcountry_event = afghanistan_events.407\r\n\t\t}\r\n\t}\r\n}\r\n"
+  },
+  {
+    "sourceCommit": "678e719e03",
+    "profile": "script",
+    "filePath": "common/decisions/NFA decisions (NatFrance).txt",
+    "before": "decision = {\n\tai_will_do = {\n\t\tbase = 5\n\t}\n}",
+    "after": "decision = {\n\tai_will_do = { base = 5 }\n}\n"
+  }
+]

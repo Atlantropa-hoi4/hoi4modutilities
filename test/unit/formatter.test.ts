@@ -1,7 +1,18 @@
 import * as assert from 'assert';
 import { formatHoi4Text, formatHoi4TextRange, getHoi4ExpectedLineIndent, getHoi4FormatterProfile } from '../../src/hoiformat/formatter';
+import krHistoryFixtures from '../fixtures/formatter/kr-history.json';
 
 describe('HOI4 formatter', () => {
+    it('matches curated formatting-only cases from Kaiserreich formatter runs', () => {
+        for (const fixture of krHistoryFixtures) {
+            const options = { profile: fixture.profile as 'script' | 'gui', filePath: fixture.filePath };
+            const formatted = formatHoi4Text(fixture.before, options);
+
+            assert.strictEqual(formatted, fixture.after, fixture.sourceCommit);
+            assert.strictEqual(formatHoi4Text(formatted, options), formatted, `${fixture.sourceCommit} is not idempotent`);
+        }
+    });
+
     it('formats script indentation, assignment spacing, comparisons, and inline blocks', () => {
         const input = [
             'focus_tree={',
@@ -25,6 +36,7 @@ describe('HOI4 formatter', () => {
             '\t\t}',
             '\t}',
             '}',
+            '',
         ].join('\r\n'));
     });
 
@@ -40,6 +52,7 @@ describe('HOI4 formatter', () => {
             'if = {',
             '\tlimit = { has_dlc_bba = yes }',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -64,10 +77,18 @@ describe('HOI4 formatter', () => {
             'add = -num_armies',
             'names = { Édouard Åslund O\'Connor Ra\'i “Shipka” }',
             'log = "A # stays \\"quoted\\""',
+            '',
         ].join('\n'));
     });
 
-    it('excludes comments from formatting while preserving blank lines and final newline style', () => {
+    it('adds a final newline to non-empty files while preserving BOM and EOL style', () => {
+        assert.strictEqual(formatHoi4Text('x=1', { profile: 'script' }), 'x = 1\n');
+        assert.strictEqual(formatHoi4Text('x=1\r\n', { profile: 'script' }), 'x = 1\r\n');
+        assert.strictEqual(formatHoi4Text('', { profile: 'script' }), '');
+        assert.strictEqual(formatHoi4Text('\uFEFF', { profile: 'script' }), '\uFEFF');
+    });
+
+    it('reindents comment-only lines and removes trailing whitespace while preserving blank-line grouping', () => {
         const input = [
             '\uFEFF### Army ###   ',
             '',
@@ -79,16 +100,16 @@ describe('HOI4 formatter', () => {
         ].join('\n');
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
-            '\uFEFF### Army ###   ',
+            '\uFEFF### Army ###',
             '',
             'focus = { # note',
-            '#Don\'t move   ',
+            '\t#Don\'t move',
             '}',
             '',
         ].join('\n'));
     });
 
-    it('preserves inline comments and their original spacing', () => {
+    it('preserves inline comment gaps while removing trailing whitespace', () => {
         const input = [
             'focus = { # ',
             'id = KOR_yoon_mat_afterwar1   #폐허위에서 ',
@@ -97,10 +118,11 @@ describe('HOI4 formatter', () => {
         ].join('\n');
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
-            'focus = { # ',
-            '\tid = KOR_yoon_mat_afterwar1   #폐허위에서 ',
+            'focus = { #',
+            '\tid = KOR_yoon_mat_afterwar1   #폐허위에서',
             '\tx = 1# no gap',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -118,6 +140,7 @@ describe('HOI4 formatter', () => {
             '\t\tid = army_focus',
             '\t}',
             '}',
+            '',
         ].join('\n');
 
         assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), [
@@ -136,6 +159,7 @@ describe('HOI4 formatter', () => {
             '\t\tid = army_focus',
             '\t}',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -159,6 +183,7 @@ describe('HOI4 formatter', () => {
             'country_event = {',
             '\tid = test.2',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -178,6 +203,7 @@ describe('HOI4 formatter', () => {
             '\t\thas_war = yes',
             '\t}',
             '}',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
@@ -207,6 +233,7 @@ describe('HOI4 formatter', () => {
             '\t\t}',
             '\t}',
             '}',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script', filePath: 'C:/mod/common/characters/AFR.txt' });
@@ -242,6 +269,7 @@ describe('HOI4 formatter', () => {
             'modifier = {',
             '\tstability_factor = 0.1 # keep this note',
             '}',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
@@ -255,7 +283,7 @@ describe('HOI4 formatter', () => {
             '\tBronislovas Danielius Zydrunas }',
         ].join('\n');
 
-        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'C:/mod/common/names/LIT.txt' }), input);
+        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'C:/mod/common/names/LIT.txt' }), `${input}\n`);
     });
 
     it('collapses simple multiline effect blocks into Kaiserreich-style inline blocks', () => {
@@ -288,6 +316,7 @@ describe('HOI4 formatter', () => {
             '\tallowed = { always = no }',
             '\tai_will_do = { factor = 20 }',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -348,6 +377,7 @@ describe('HOI4 formatter', () => {
             '\tset_province_name = { id = 123 name = test_name }',
             '\ttransfer_ship = { prefer_name = "Example Ship" type = battleship target = ENG }',
             '}',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
@@ -373,7 +403,7 @@ describe('HOI4 formatter', () => {
         const filePath = 'C:\\mod\\history\\countries\\GER - Germany.txt';
 
         const formatted = formatHoi4Text(input, { profile: 'script', filePath });
-        assert.strictEqual(formatted, input);
+        assert.strictEqual(formatted, `${input}\n`);
         assert.strictEqual(formatHoi4TextRange(input, { profile: 'script', filePath }, { startLine: 5, endLine: 11 }), input.split('\n').slice(5).join('\n'));
         assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'mod/common/national_focus/GER.txt' }), [
             'set_technology = { main_battle_tank1 = 1 main_battle_tank2 = 1 light_tank1 = 1 }',
@@ -381,6 +411,7 @@ describe('HOI4 formatter', () => {
             '\tlimit = { has_dlc = "No Step Back" }',
             '\tset_technology = { amphibious_tank1 = 1 amphibious_mechanized_infantry1 = 1 }',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -409,6 +440,7 @@ describe('HOI4 formatter', () => {
             '}',
             '',
             'country_event = { id = test.definition }',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
@@ -438,7 +470,7 @@ describe('HOI4 formatter', () => {
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
-        assert.strictEqual(formatted, input);
+        assert.strictEqual(formatted, `${input}\n`);
         assert.strictEqual(formatHoi4Text(formatted, { profile: 'script' }), formatted);
     });
 
@@ -456,6 +488,7 @@ describe('HOI4 formatter', () => {
             'limit = {',
             '\tKOR = { NOT = { has_research = basic_medium_airframe } }',
             '}',
+            '',
         ].join('\n');
 
         const formatted = formatHoi4Text(input, { profile: 'script' });
@@ -504,6 +537,7 @@ describe('HOI4 formatter', () => {
             '\t\tcommand_power > 1.5',
             '\t}',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -522,6 +556,7 @@ describe('HOI4 formatter', () => {
             '\t{ silver = { 1.0 1.0 1.0 1.0 } }',
             '}',
             'attached_value = producer_tag { key = yes }',
+            '',
         ].join('\n'));
     });
 
@@ -539,7 +574,7 @@ describe('HOI4 formatter', () => {
         ].join(' ');
         const input = `surnames={ ${names} }`;
 
-        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'common/names/BAT names.txt' }), `surnames = { ${names} }`);
+        assert.strictEqual(formatHoi4Text(input, { profile: 'script', filePath: 'common/names/BAT names.txt' }), `surnames = { ${names} }\n`);
     });
 
     it('preserves Kaiserreich-style decision readability with grouped blank lines and short inline blocks', () => {
@@ -572,7 +607,7 @@ describe('HOI4 formatter', () => {
             '}',
         ].join('\n');
 
-        assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), input);
+        assert.strictEqual(formatHoi4Text(input, { profile: 'script' }), `${input}\n`);
     });
 
     it('formats GUI structure while normalizing coordinate inline assignment spacing', () => {
@@ -600,6 +635,7 @@ describe('HOI4 formatter', () => {
             '\t\t}',
             '\t}',
             '}',
+            '',
         ].join('\n'));
     });
 
@@ -631,6 +667,18 @@ describe('HOI4 formatter', () => {
 
         assert.strictEqual(getHoi4ExpectedLineIndent(input, { profile: 'script' }, 2), '\t\t');
         assert.strictEqual(getHoi4ExpectedLineIndent(input, { profile: 'script' }, 3), '\t');
+    });
+
+    it('ignores braces and comment markers inside strings and comments while computing indentation', () => {
+        const input = [
+            'effect = {',
+            '\tlog = "a # comment and { brace"',
+            '\t# } does not close the block',
+            '\tif = {',
+            '',
+        ].join('\n');
+
+        assert.strictEqual(getHoi4ExpectedLineIndent(input, { profile: 'script' }, 4), '\t\t');
     });
 
     it('classifies supported and excluded HOI4 formatter paths', () => {

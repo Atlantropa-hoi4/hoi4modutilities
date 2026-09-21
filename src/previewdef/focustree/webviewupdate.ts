@@ -33,6 +33,7 @@ export interface FocusTreeContentUpdateMessage {
     removedRenderedInlayWindowIds?: string[];
     gridBox?: unknown;
     dynamicStyleCss?: string;
+    dynamicStyleCssPatch?: string;
     xGridSize?: number;
     yGridSize?: number;
     perf?: FocusTreeContentUpdatePerf;

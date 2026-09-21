@@ -23,8 +23,11 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
     public provideDocumentFormattingEdits(
         document: vscode.TextDocument,
         _options: vscode.FormattingOptions,
-        _token: vscode.CancellationToken,
+        token: vscode.CancellationToken,
     ): vscode.ProviderResult<vscode.TextEdit[]> {
+        if (token.isCancellationRequested) {
+            return [];
+        }
         const context = getFormatterContext(document);
         if (context === undefined) {
             return [];
@@ -33,7 +36,7 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
         try {
             const text = document.getText();
             const formatted = formatHoi4Text(text, context);
-            if (formatted === text) {
+            if (token.isCancellationRequested || formatted === text) {
                 return [];
             }
 
@@ -54,8 +57,11 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
         document: vscode.TextDocument,
         range: vscode.Range,
         _options: vscode.FormattingOptions,
-        _token: vscode.CancellationToken,
+        token: vscode.CancellationToken,
     ): vscode.ProviderResult<vscode.TextEdit[]> {
+        if (token.isCancellationRequested) {
+            return [];
+        }
         const context = getFormatterContext(document);
         if (context === undefined || document.lineCount === 0) {
             return [];
@@ -69,7 +75,7 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
             );
             const text = document.getText();
             const replacement = formatHoi4TextRange(text, context, lineRange);
-            if (replacement === document.getText(replacementRange)) {
+            if (token.isCancellationRequested || replacement === document.getText(replacementRange)) {
                 return [];
             }
 
@@ -86,9 +92,9 @@ export class Hoi4DocumentFormattingEditProvider implements vscode.DocumentFormat
         position: vscode.Position,
         ch: string,
         _options: vscode.FormattingOptions,
-        _token: vscode.CancellationToken,
+        token: vscode.CancellationToken,
     ): vscode.ProviderResult<vscode.TextEdit[]> {
-        if (ch !== '}' && ch !== '\n') {
+        if (token.isCancellationRequested || (ch !== '}' && ch !== '\n')) {
             return [];
         }
 

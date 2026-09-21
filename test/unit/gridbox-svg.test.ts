@@ -21,6 +21,23 @@ describe('gridbox SVG connections', () => {
         assert.strictEqual((html.match(/<path /g) ?? []).length, 1);
         assert.ok(html.includes('focus-connection-source-a'));
         assert.ok(html.includes('stroke-dasharray="6 4"'));
+        assert.match(html, /height="[1-9]\d*"/);
+        assert.match(html, /viewBox="-2 -2 \d+ \d+"/);
         assert.strictEqual((html.match(/<div/g) ?? []).length, 0);
+    });
+
+    it('keeps negative grid coordinates inside the explicit SVG viewport', () => {
+        const html = renderSvgConnections({
+            a: {
+                id: 'a',
+                gridX: -2,
+                gridY: -1,
+                connections: [{ target: 'b', targetType: 'related', style: '2px solid red' }],
+            },
+            b: { id: 'b', gridX: 1, gridY: 2, connections: [] },
+        }, 'up', { width: 96, height: 130 }, { width: 96, height: 0 }, 0.5);
+
+        assert.match(html, /viewBox="-\d+ -\d+ \d+ \d+"/);
+        assert.doesNotMatch(html, /height="0"/);
     });
 });

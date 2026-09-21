@@ -1,5 +1,17 @@
 import * as path from 'path';
-import { parseHoi4File } from './hoiparser';
+import { assertHoi4FormattingSafe } from './formatterSafety';
+import {
+    comparisonOperators,
+    directEventCallKeys,
+    formatterLineLength,
+    guiFormatRules,
+    historyMultiLineBodyInlinePreferredBlockKeys,
+    orderedEventCallFields,
+    orderedInlineBlockFields,
+    OrderedBlockFields,
+    scriptFormatRules,
+} from './formatterRules';
+import { FormatToken, Hoi4LineParts, splitHoi4LineComment, tokenizeHoi4Code } from './formatterTokens';
 
 export type Hoi4FormatterProfile = 'script' | 'gui';
 
@@ -12,123 +24,6 @@ export interface Hoi4FormatLineRange {
     startLine: number;
     endLine: number;
 }
-
-type FormatTokenType = 'word' | 'string' | 'operator';
-
-interface FormatToken {
-    value: string;
-    type: FormatTokenType;
-}
-
-interface LineParts {
-    code: string;
-    comment: string | null;
-}
-
-const comparisonOperators = new Set(['=', '>', '<', '>=', '<=', '!=']);
-const vectorKeys = new Set(['position', 'size', 'borderSize', 'offset', 'rotation', 'scale']);
-const directEventCallKeys = new Set(['country_event', 'news_event', 'unit_leader_event']);
-const orderedEventCallFields = {
-    order: ['id', 'days', 'hours', 'random_days', 'random_hours'],
-    required: ['id'],
-};
-const orderedInlineBlockFields = new Map<string, { order: string[]; required: string[] }>([
-    ['activate_targeted_decision', { order: ['target', 'decision'], required: ['target', 'decision'] }],
-    ['remove_targeted_decision', { order: ['target', 'decision'], required: ['target', 'decision'] }],
-    ['has_game_rule', { order: ['rule', 'option'], required: ['rule', 'option'] }],
-    ['has_opinion', { order: ['target', 'value'], required: ['target', 'value'] }],
-    ['set_province_name', { order: ['id', 'name'], required: ['id', 'name'] }],
-    ['transfer_ship', { order: ['prefer_name', 'type', 'target'], required: ['type', 'target'] }],
-]);
-const separatedBlockKeys = new Set([
-    'focus',
-    'shared_focus',
-    'joint_focus',
-    'country_event',
-    'news_event',
-    'state_event',
-    'unit_leader_event',
-    'ace_event',
-]);
-const inlinePreferredBlockKeys = new Set([
-    'country_event',
-    'news_event',
-    'state_event',
-    'unit_leader_event',
-    'ace_event',
-    'white_peace',
-    'allowed',
-    'hidden_trigger',
-    'check_variable',
-    'set_rule',
-    'custom_trigger_tooltip',
-    'set_technology',
-    'has_equipment',
-    'ai_chance',
-    'ai_will_do',
-    ...orderedInlineBlockFields.keys(),
-    'NOT',
-    'OR',
-    'AND',
-    'FROM',
-    'ROOT',
-    'PREV',
-    'THIS',
-]);
-const multiLineBodyInlinePreferredBlockKeys = new Set([
-    'country_event',
-    'news_event',
-    'state_event',
-    'unit_leader_event',
-    'ace_event',
-    'set_technology',
-    'has_equipment',
-    'ai_chance',
-    ...orderedInlineBlockFields.keys(),
-]);
-// History files list starting technologies one per line, so only single-entry blocks are collapsed there.
-const historyMultiLineBodyInlinePreferredBlockKeys = new Set(
-    [...multiLineBodyInlinePreferredBlockKeys].filter(key => key !== 'set_technology'),
-);
-const multilinePreferredBlockKeys = new Set([
-    'focus_tree',
-    'focus',
-    'shared_focus',
-    'joint_focus',
-    'completion_reward',
-    'timeout_effect',
-    'immediate',
-    'option',
-    'available',
-    'allow_branch',
-    'modifier',
-    'prerequisite',
-    'mutually_exclusive',
-    'trigger',
-    'visible',
-    'complete_effect',
-    'remove_trigger',
-    'cancel_trigger',
-    'custom_cost_trigger',
-    'text',
-    'bypass',
-    'names',
-    'provinces',
-    'research_bonus',
-    'equipment_bonus',
-    'if',
-    'else',
-    'else_if',
-    'limit',
-    'hidden_effect',
-    'effect_tooltip',
-    'every_country',
-    'random_country',
-    'every_state',
-    'random_state',
-    'every_owned_state',
-    'random_owned_state',
-]);
 
 export function getHoi4FormatterProfile(filePath: string): Hoi4FormatterProfile | undefined {
     const normalized = filePath.replace(/\\/g, '/').toLowerCase();
@@ -178,14 +73,13 @@ function isHistoryScriptFile(filePath: string | undefined): boolean {
 export function formatHoi4Text(input: string, options: Hoi4FormatOptions): string {
     const bom = input.startsWith('\uFEFF') ? '\uFEFF' : '';
     const content = bom ? input.slice(1) : input;
-    parseHoi4File(content);
 
     const eol = detectEol(content);
-    const { lines: rawLines, hadFinalNewline } = splitContentLines(content);
+    const { lines: rawLines } = splitContentLines(content);
 
     const { lines: formattedLines } = formatLines(rawLines, options);
-    const formattedContent = formattedLines.join(eol) + (hadFinalNewline ? eol : '');
-    parseHoi4File(formattedContent);
+    const formattedContent = formattedLines.join(eol) + (content.length > 0 ? eol : '');
+    assertHoi4FormattingSafe(content, formattedContent);
 
     return bom + formattedContent;
 }
@@ -193,7 +87,6 @@ export function formatHoi4Text(input: string, options: Hoi4FormatOptions): strin
 export function formatHoi4TextRange(input: string, options: Hoi4FormatOptions, range: Hoi4FormatLineRange): string {
     const bom = input.startsWith('\uFEFF') ? '\uFEFF' : '';
     const content = bom ? input.slice(1) : input;
-    parseHoi4File(content);
 
     const eol = detectEol(content);
     const { lines: rawLines, hadFinalNewline } = splitContentLines(content);
@@ -210,26 +103,38 @@ export function formatHoi4TextRange(input: string, options: Hoi4FormatOptions, r
     const beforeLines = rawLines.slice(0, startLine);
     const selectedLines = rawLines.slice(startLine, endLine + 1);
     const afterLines = rawLines.slice(endLine + 1);
-    const initialDepth = formatLines(beforeLines, options).endDepth;
+    const initialDepth = getLineDepthBefore(rawLines, startLine);
     const { lines: formattedSelectedLines } = formatLines(selectedLines, options, initialDepth);
 
     const formattedContent = [...beforeLines, ...formattedSelectedLines, ...afterLines].join(eol) + (hadFinalNewline ? eol : '');
-    parseHoi4File(formattedContent);
+    assertHoi4FormattingSafe(content, formattedContent);
 
     const replacement = formattedSelectedLines.join(eol);
     return startLine === 0 ? bom + replacement : replacement;
 }
 
 export function getHoi4ExpectedLineIndent(input: string, options: Hoi4FormatOptions, line: number): string {
+    void options;
     const content = input.startsWith('\uFEFF') ? input.slice(1) : input;
-    const { lines } = splitContentLines(content);
+    const { lines, hadFinalNewline } = splitContentLines(content);
+    if (hadFinalNewline) {
+        lines.push('');
+    }
     const targetLine = clampLine(line, Math.max(lines.length, 1));
-    const depth = formatLines(lines.slice(0, targetLine), options).endDepth;
+    const depth = getLineDepthBefore(lines, targetLine);
     const currentLine = lines[targetLine] ?? '';
-    const tokens = tokenizeCode(splitLineComment(currentLine).code.trim());
+    const tokens = tokenizeHoi4Code(splitHoi4LineComment(currentLine).code.trim());
     const leadingCloseBraces = countLeadingCloseBraces(tokens);
 
     return '\t'.repeat(Math.max(0, depth - leadingCloseBraces));
+}
+
+function getLineDepthBefore(lines: readonly string[], line: number): number {
+    let depth = 0;
+    for (let index = 0; index < line; index++) {
+        depth = Math.max(0, depth + braceDelta(lines[index]));
+    }
+    return depth;
 }
 
 function detectEol(input: string): string {
@@ -260,11 +165,11 @@ function formatLines(lines: string[], options: Hoi4FormatOptions, initialDepth: 
     let depth = initialDepth;
 
     for (let index = 0; index < lines.length; index++) {
-        let parts = splitLineComment(lines[index]);
+        let parts = splitHoi4LineComment(lines[index]);
         const trimmedCode = parts.code.trim();
 
         if (profile === 'script' && parts.comment === null && /=\s*$/.test(trimmedCode) && index + 1 < lines.length) {
-            const nextParts = splitLineComment(lines[index + 1]);
+            const nextParts = splitHoi4LineComment(lines[index + 1]);
             if (nextParts.comment === null && nextParts.code.trim() === '{') {
                 parts = {
                     code: `${parts.code.replace(/\s*$/, '')} {`,
@@ -295,7 +200,7 @@ function formatLines(lines: string[], options: Hoi4FormatOptions, initialDepth: 
 function getMultiLineBodyInlinePreferredBlockKeys(options: Hoi4FormatOptions): ReadonlySet<string> {
     return isHistoryScriptFile(options.filePath)
         ? historyMultiLineBodyInlinePreferredBlockKeys
-        : multiLineBodyInlinePreferredBlockKeys;
+        : scriptFormatRules.multiLineBodyInlinePreferredBlockKeys;
 }
 
 // Content written after an opening brace whose closing brace starts a later line moves to its own line,
@@ -317,9 +222,9 @@ function splitScriptBlockOpeningContent(lines: string[]): string[] {
         if (comment === ''
             && lines[closeIndex] === `${indent}}`
             && lines.slice(index + 1, closeIndex).every(line => line === '')
-            && !multilinePreferredBlockKeys.has(key)
-            && !(indent.length === 0 && separatedBlockKeys.has(key))
-            && inline.length <= 140) {
+            && !scriptFormatRules.multilinePreferredBlockKeys.has(key)
+            && !(indent.length === 0 && scriptFormatRules.separatedBlockKeys.has(key))
+            && inline.length <= formatterLineLength) {
             result.push(inline);
             index = closeIndex;
         } else {
@@ -334,7 +239,7 @@ function splitScriptBlockOpeningContent(lines: string[]): string[] {
 function findLeadingBlockCloseIndex(lines: string[], openIndex: number): number | undefined {
     let depth = 1;
     for (let index = openIndex + 1; index < lines.length; index++) {
-        const tokens = tokenizeCode(splitLineComment(lines[index]).code);
+        const tokens = tokenizeHoi4Code(splitHoi4LineComment(lines[index]).code);
         for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
             depth += tokens[tokenIndex].value === '{' ? 1 : tokens[tokenIndex].value === '}' ? -1 : 0;
             if (depth === 0) {
@@ -347,8 +252,8 @@ function findLeadingBlockCloseIndex(lines: string[], openIndex: number): number 
 }
 
 function parseBlockOpeningContent(line: string): { indent: string; key: string; content: string; comment: string } | undefined {
-    const parts = splitLineComment(line);
-    const tokens = tokenizeCode(parts.code.trim());
+    const parts = splitHoi4LineComment(line);
+    const tokens = tokenizeHoi4Code(parts.code.trim());
     if (tokens.length < 4 || tokens[0].type !== 'word' || tokens[1].value !== '=' || tokens[2].value !== '{') {
         return undefined;
     }
@@ -440,7 +345,7 @@ function tryCollapseSimpleScriptBlock(
             }
 
             const inline = `${indent}${key} = { ${orderedBodyLines.map(bodyLine => bodyLine.trim()).join(' ')} }`;
-            return inline.length <= 140
+            return inline.length <= formatterLineLength
                 ? { line: inline, endIndex: index }
                 : undefined;
         }
@@ -470,14 +375,14 @@ function orderKnownBlockBodyLines(key: string, bodyLines: string[]): string[] | 
         return bodyLines;
     }
 
-    const parsedFields = parseOrderedFields(bodyLines.map(line => tokenizeCode(line.trim())), fields);
+    const parsedFields = parseOrderedFields(bodyLines.map(line => tokenizeHoi4Code(line.trim())), fields);
     return parsedFields?.map(tokens => formatTokensGeneric(tokens));
 }
 
 function canonicalizeScriptLine(line: string): string {
-    const parts = splitLineComment(line);
+    const parts = splitHoi4LineComment(line);
     const indent = /^\t*/.exec(parts.code)?.[0] ?? '';
-    const tokens = tokenizeCode(parts.code.trim());
+    const tokens = tokenizeHoi4Code(parts.code.trim());
     if (tokens.length < 5 || tokens[1]?.value !== '=' || tokens[2]?.value !== '{' || tokens[tokens.length - 1]?.value !== '}') {
         return line;
     }
@@ -512,7 +417,7 @@ function isIdOnlyBlock(tokens: FormatToken[]): boolean {
 
 function parseOrderedFields(
     tokenLines: FormatToken[][],
-    fields: { order: string[]; required: string[] },
+    fields: OrderedBlockFields,
 ): FormatToken[][] | undefined {
     const allowedFields = new Set(fields.order);
     const parsed = new Map<string, FormatToken[]>();
@@ -553,7 +458,7 @@ function parseOrderedFields(
     });
 }
 
-function appendOriginalComment(code: string, parts: LineParts): string {
+function appendOriginalComment(code: string, parts: Hoi4LineParts): string {
     if (parts.comment === null) {
         return code;
     }
@@ -564,21 +469,21 @@ function appendOriginalComment(code: string, parts: LineParts): string {
 
 function canCollapseBodyLine(line: string, parentDepth: number): boolean {
     return line.trim() !== ''
-        && splitLineComment(line).comment === null
+        && splitHoi4LineComment(line).comment === null
         && getIndentDepth(line) === parentDepth + 1
         && braceDelta(line) === 0;
 }
 
 function canCollapseBlockKey(key: string, indentDepth: number): boolean {
-    if (multilinePreferredBlockKeys.has(key)) {
+    if (scriptFormatRules.multilinePreferredBlockKeys.has(key)) {
         return false;
     }
 
-    if (indentDepth === 0 && separatedBlockKeys.has(key)) {
+    if (indentDepth === 0 && scriptFormatRules.separatedBlockKeys.has(key)) {
         return false;
     }
 
-    return inlinePreferredBlockKeys.has(key) || isUppercaseScopeLikeKey(key);
+    return scriptFormatRules.inlinePreferredBlockKeys.has(key) || isUppercaseScopeLikeKey(key);
 }
 
 function isUppercaseScopeLikeKey(key: string): boolean {
@@ -652,7 +557,7 @@ function isSeparatedBlockStart(line: string): boolean {
     }
 
     const match = /^([A-Za-z0-9_:.@-]+)\s*=\s*\{/.exec(line.trim());
-    return match !== null && separatedBlockKeys.has(match[1]);
+    return match !== null && scriptFormatRules.separatedBlockKeys.has(match[1]);
 }
 
 function isSectionComment(line: string): boolean {
@@ -669,133 +574,32 @@ function getIndentDepth(line: string): number {
 }
 
 function braceDelta(line: string): number {
-    const tokens = tokenizeCode(splitLineComment(line).code.trim());
+    const tokens = tokenizeHoi4Code(splitHoi4LineComment(line).code.trim());
     return countToken(tokens, '{') - countToken(tokens, '}');
 }
 
-function splitLineComment(line: string): LineParts {
-    const commentStart = findCommentStart(line);
-    if (commentStart === -1) {
-        return {
-            code: line,
-            comment: null,
-        };
-    }
-
-    return {
-        code: line.slice(0, commentStart),
-        comment: line.slice(commentStart),
-    };
-}
-
-function findCommentStart(line: string): number {
-    let inString = false;
-    let escaped = false;
-    for (let index = 0; index < line.length; index++) {
-        const char = line[index];
-        if (inString) {
-            if (escaped) {
-                escaped = false;
-            } else if (char === '\\') {
-                escaped = true;
-            } else if (char === '"') {
-                inString = false;
-            }
-            continue;
-        }
-
-        if (char === '"') {
-            inString = true;
-        } else if (char === '#') {
-            return index;
-        }
-    }
-
-    return -1;
-}
-
-function formatLine(parts: LineParts, depth: number, profile: Hoi4FormatterProfile): { line: string; depthDelta: number } {
+function formatLine(parts: Hoi4LineParts, depth: number, profile: Hoi4FormatterProfile): { line: string; depthDelta: number } {
     const trimmedCode = parts.code.trim();
 
     if (trimmedCode === '') {
         return {
-            line: parts.comment === null ? '' : parts.code + parts.comment,
+            line: parts.comment === null ? '' : '\t'.repeat(depth) + parts.comment.trimEnd(),
             depthDelta: 0,
         };
     }
 
-    const tokens = tokenizeCode(trimmedCode);
+    const tokens = tokenizeHoi4Code(trimmedCode);
     const leadingCloseBraces = countLeadingCloseBraces(tokens);
     const lineDepth = Math.max(0, depth - leadingCloseBraces);
     const code = formatTokens(tokens, profile);
     const commentGap = parts.comment === null ? '' : parts.code.slice(parts.code.trimEnd().length);
-    const line = '\t'.repeat(lineDepth) + code + commentGap + (parts.comment ?? '');
+    const comment = parts.comment?.trimEnd() ?? '';
+    const line = '\t'.repeat(lineDepth) + code + commentGap + comment;
 
     return {
         line,
         depthDelta: countToken(tokens, '{') - countToken(tokens, '}'),
     };
-}
-
-function tokenizeCode(code: string): FormatToken[] {
-    const tokens: FormatToken[] = [];
-    let index = 0;
-
-    while (index < code.length) {
-        const char = code[index];
-        if (/\s/.test(char)) {
-            index++;
-            continue;
-        }
-
-        const next = code[index + 1] ?? '';
-        if ((char === '>' || char === '<' || char === '!') && next === '=') {
-            tokens.push({ value: char + next, type: 'operator' });
-            index += 2;
-            continue;
-        }
-
-        if ('{}=<>;,'.includes(char)) {
-            tokens.push({ value: char, type: 'operator' });
-            index++;
-            continue;
-        }
-
-        if (char === '"') {
-            const end = findStringEnd(code, index);
-            tokens.push({ value: code.slice(index, end), type: 'string' });
-            index = end;
-            continue;
-        }
-
-        let end = index + 1;
-        while (end < code.length && !/\s/.test(code[end]) && !'{}=<>;,'.includes(code[end])) {
-            if ((code[end] === '!' || code[end] === '<' || code[end] === '>') && code[end + 1] === '=') {
-                break;
-            }
-            end++;
-        }
-        tokens.push({ value: code.slice(index, end), type: 'word' });
-        index = end;
-    }
-
-    return tokens;
-}
-
-function findStringEnd(code: string, start: number): number {
-    let escaped = false;
-    for (let index = start + 1; index < code.length; index++) {
-        const char = code[index];
-        if (escaped) {
-            escaped = false;
-        } else if (char === '\\') {
-            escaped = true;
-        } else if (char === '"') {
-            return index + 1;
-        }
-    }
-
-    return code.length;
 }
 
 function countLeadingCloseBraces(tokens: FormatToken[]): number {
@@ -832,7 +636,7 @@ function tryFormatGuiVectorLine(tokens: FormatToken[]): string | undefined {
     }
 
     const key = tokens[0].value;
-    const hasVectorKey = vectorKeys.has(key);
+    const hasVectorKey = guiFormatRules.vectorKeys.has(key);
     const hasVectorContent = tokens.slice(3, -1).some(token => /^(?:x|y|width|height)$/i.test(token.value));
     if (!hasVectorKey && !hasVectorContent) {
         return undefined;

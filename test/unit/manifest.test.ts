@@ -15,8 +15,9 @@ describe('extension manifest', () => {
             'Format Workspace HOI4 Files',
             'Open a workspace folder to format HOI4 files.',
             'Failed to find workspace HOI4 files: {0}',
-            'Workspace formatting: {0} changed, {1} unchanged, {2} failed. Changes are not saved automatically.',
+            'Workspace formatting: {0} changed, {1} unchanged, {2} skipped, {3} failed. Changes are not saved automatically.',
             'Formatting cancelled. {0}',
+            'Show Formatter Details',
         ]) {
             for (const bundle of [defaultBundle, koreanBundle, russianBundle, chineseBundle]) {
                 assert.ok((bundle as Record<string, string>)[message]);

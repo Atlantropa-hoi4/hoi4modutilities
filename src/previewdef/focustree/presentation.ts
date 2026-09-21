@@ -77,7 +77,8 @@ export async function renderFocusGui(focus: Focus, presentation: FocusPresentati
                 frame: child.name === 'bg' ? 0 : (child as HOIPartial<IconType>).frame }, parent, { ...common, classNames }) : '';
         }
         if (type === 'instanttextbox' && child.name === 'name') {
-            const text = `<span data-preview-label-id="${htmlAttributeEscape(focus.id)}" data-preview-label-name="${htmlAttributeEscape(localizedText ?? focus.id)}">${htmlTextEscape(focus.id)}</span>`;
+            const displayName = localizedText ?? focus.id;
+            const text = `<span data-preview-label-id="${htmlAttributeEscape(focus.id)}" data-preview-label-name="${htmlAttributeEscape(displayName)}" data-preview-label-css-toggle="true"><span class="preview-label-id-text">${htmlTextEscape(focus.id)}</span><span class="preview-label-name-text">${htmlTextEscape(displayName)}</span></span>`;
             // Clausewitz does not use DOM source order for every GUI layer. Some focus GUI files
             // declare the title before the background, which would otherwise paint the frame over
             // the text in the webview and leave only a few glyph fragments visible.

@@ -289,6 +289,9 @@ function applyPreviewLabelMode(mode: PreviewLabelMode): void {
     }
 
     for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-preview-label-id][data-preview-label-name]'))) {
+        if (element.dataset.previewLabelCssToggle === 'true') {
+            continue;
+        }
         element.textContent = mode === 'name'
             ? element.dataset.previewLabelName ?? element.dataset.previewLabelId ?? ''
             : element.dataset.previewLabelId ?? '';
