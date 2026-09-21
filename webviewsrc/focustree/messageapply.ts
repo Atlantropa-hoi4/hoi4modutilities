@@ -1,4 +1,4 @@
-import { FocusTree } from "../../src/previewdef/focustree/schema";
+import { FocusTreeView } from '../../src/previewdef/focustree/viewmodel';
 import { FocusTreeContentUpdateMessage } from "../../src/previewdef/focustree/webviewupdate";
 
 export interface FocusTreeMessageApplyContext {
@@ -9,8 +9,8 @@ export interface FocusTreeMessageApplyContext {
     setFocusPositionActiveFile: (focusPositionActiveFile: string) => void;
     getCurrentSelectionTreeId: () => string | undefined;
     setSelectedFocusTreeById: (treeId: string | undefined) => void;
-    setFocusTrees: (focusTrees: FocusTree[]) => void;
-    applyFocusTreePatches: (focusTreePatches: Array<{ treeId: string; tree: FocusTree }> | undefined) => void;
+    setFocusTrees: (focusTrees: FocusTreeView[]) => void;
+    applyFocusTreePatches: (focusTreePatches: Array<{ treeId: string; tree: FocusTreeView }> | undefined) => void;
     setContinuousFocusHtml?: (html: string) => void;
     setRenderedFocus: (renderedFocus: Record<string, string>) => void;
     patchRenderedFocus: (changedEntries: Record<string, string> | undefined, removedKeys: string[] | undefined) => void;

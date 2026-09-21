@@ -1,11 +1,28 @@
 import { Node } from "../../hoiformat/hoiparser";
 import { HOIPartial } from "../../hoiformat/schema";
-import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
+import { collectFocusPositionFileMetadata, FocusPositionFileMetadata } from './positioneditmetadata';
 import { buildFocusTreesFromFile } from "./focustreeschemahelpers";
 import { convertFocusFileNodeToJson } from "./focustreeschematypes";
 import type { FocusFile, FocusTree } from "./focustreeschematypes";
 
 export * from "./focustreeschematypes";
+
+export interface FocusTreeSourceSnapshot {
+    node: Node;
+    file: HOIPartial<FocusFile>;
+    metadata: FocusPositionFileMetadata;
+    filePath: string;
+}
+
+export function createFocusTreeSourceSnapshot(node: Node, filePath: string): FocusTreeSourceSnapshot {
+    const constants = {};
+    return {
+        node,
+        file: convertFocusFileNodeToJson(node, constants),
+        metadata: collectFocusPositionFileMetadata(node, filePath),
+        filePath,
+    };
+}
 
 export function getFocusTreeWithFocusFile(
     file: HOIPartial<FocusFile>,
@@ -17,10 +34,16 @@ export function getFocusTreeWithFocusFile(
 }
 
 export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath: string): FocusTree[] {
+    return getFocusTreeFromSourceSnapshot(createFocusTreeSourceSnapshot(node, filePath), sharedFocusTrees);
+}
+
+export function getFocusTreeFromSourceSnapshot(
+    snapshot: FocusTreeSourceSnapshot,
+    sharedFocusTrees: FocusTree[],
+): FocusTree[] {
     const constants = {};
-    const file = convertFocusFileNodeToJson(node, constants);
+    const { file, filePath, metadata } = snapshot;
     const trees = getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
-    const metadata = collectFocusPositionFileMetadata(node, filePath);
     let localFocusTreeIndex = 0;
 
     for (const tree of trees) {

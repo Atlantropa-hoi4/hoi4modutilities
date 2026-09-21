@@ -25,6 +25,29 @@ describe('focus tree schema fixtures', () => {
         nodeModule._load = originalLoad;
     });
 
+    it('keeps large-tree structure DTOs below half of the previous first-message baselines', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const { toFocusTreeViews } = require('../../src/previewdef/focustree/viewmodel') as typeof import('../../src/previewdef/focustree/viewmodel');
+        const fixtures = [
+            { name: 'GXC focus (Liangguang).txt', baselineBytes: 1_430_226 },
+            { name: 'TFR_national_focus_KOR.txt', baselineBytes: 1_765_021 },
+        ];
+
+        for (const fixture of fixtures) {
+            const filePath = `test/fixtures/workspace/${fixture.name}`;
+            const trees = getFocusTree(
+                parseHoi4File(readFixture('workspace', fixture.name)),
+                [],
+                filePath,
+            );
+            const viewBytes = Buffer.byteLength(JSON.stringify(toFocusTreeViews(trees)), 'utf8');
+            assert.ok(
+                viewBytes <= fixture.baselineBytes * 0.5,
+                `${fixture.name} view payload was ${viewBytes} bytes`,
+            );
+        }
+    });
+
     it('extracts only shared and joint focus ids for indexing', () => {
         const { extractFocusIds } = loadFocusTreeSchema();
         const ids = extractFocusIds(parseHoi4File(readFixture('focus', 'modern-focuses.txt')));

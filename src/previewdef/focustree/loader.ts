@@ -1,5 +1,11 @@
 import { ContentLoader, LoadResultOD, Dependency, LoaderSession, mergeInLoadResult } from "../../util/loader/loader";
-import { convertFocusFileNodeToJson, FocusTree, getFocusTree, getGfxNameForSearchFilter } from "./schema";
+import {
+    createFocusTreeSourceSnapshot,
+    FocusTree,
+    FocusTreeSourceSnapshot,
+    getFocusTreeFromSourceSnapshot,
+    getGfxNameForSearchFilter,
+} from './schema';
 import { parseHoi4File } from "../../hoiformat/hoiparser";
 import { localize } from "../../util/i18n";
 import { uniq, flatten } from "lodash";
@@ -24,6 +30,7 @@ import { addMissingFocusIconWarnings } from "./focusiconwarnings";
 import { hoiFileExpiryToken } from "../../util/fileloader";
 import { GuiFileLoader } from '../gui/loader';
 import { findFocusWindow, FocusPresentation, FocusTitleStyleLoader, parseFocusTitleStyles } from './presentation';
+import { measureSync } from '../../util/perf';
 
 export interface FocusTreeLoaderResult {
     focusTrees: FocusTree[];
@@ -39,6 +46,12 @@ export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
+
+interface FocusTreeSourceSnapshotCache {
+    key?: string;
+    content?: string;
+    snapshot?: FocusTreeSourceSnapshot;
+}
 
 function collectPresentationSprites(presentation: FocusPresentation | undefined): string[] {
     if (!presentation) { return []; }
@@ -61,6 +74,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         file: string,
         contentProvider?: () => Promise<string>,
         private assetLoadMode: FocusTreeAssetLoadMode = 'full',
+        private readonly sourceSnapshotCache: FocusTreeSourceSnapshotCache = {},
+        private readonly sourceSnapshotKey?: string,
     ) {
         super(file, contentProvider);
     }
@@ -68,14 +83,27 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     public createSnapshotLoader(
         contentProvider: () => Promise<string>,
         assetLoadMode: FocusTreeAssetLoadMode = this.assetLoadMode,
+        sourceSnapshotKey?: string,
     ): FocusTreeLoader {
-        const loader = new FocusTreeLoader(this.file, contentProvider, assetLoadMode);
+        const loader = new FocusTreeLoader(
+            this.file,
+            contentProvider,
+            assetLoadMode,
+            this.sourceSnapshotCache,
+            sourceSnapshotKey,
+        );
         this.copyDependencyLoadersTo(loader);
         return loader;
     }
 
     public adoptDependencyLoadersFrom(source: FocusTreeLoader): void {
         this.replaceDependencyLoadersFrom(source);
+    }
+
+    public clearSourceSnapshot(): void {
+        this.sourceSnapshotCache.key = undefined;
+        this.sourceSnapshotCache.content = undefined;
+        this.sourceSnapshotCache.snapshot = undefined;
     }
 
     protected async postLoad(content: string | undefined, dependencies: Dependency[], error: any, session: LoaderSession): Promise<LoadResultOD<FocusTreeLoaderResult>> {
@@ -85,12 +113,26 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
         const deferAssetLoad = this.assetLoadMode === 'deferred';
 
-        const constants = {};
-
         session.throwIfCancelled();
-        const parsedNode = parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file));
+        const cachedSnapshot = this.sourceSnapshotCache.key === this.sourceSnapshotKey
+            && this.sourceSnapshotCache.content === content
+            ? this.sourceSnapshotCache.snapshot
+            : undefined;
+        const sourceSnapshot = cachedSnapshot ?? measureSync('focustree.sourceSnapshot', {
+            file: this.file,
+            cacheHit: false,
+        }, () => {
+            const node = parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file));
+            return createFocusTreeSourceSnapshot(node, this.file);
+        });
+        if (!cachedSnapshot) {
+            this.sourceSnapshotCache.key = this.sourceSnapshotKey;
+            this.sourceSnapshotCache.content = content;
+            this.sourceSnapshotCache.snapshot = sourceSnapshot;
+        }
+        const parsedNode = sourceSnapshot.node;
         session.throwIfCancelled();
-        const file = convertFocusFileNodeToJson(parsedNode, constants);
+        const file = sourceSnapshot.file;
 
         const deferredSharedFocusIds = new Set<string>();
         if (isSharedFocusIndexEnabled()) {
@@ -140,7 +182,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
         const importedFocusTrees = focusTreeDepFiles.flatMap(f => f.result.focusTrees);
 
-        const focusTrees = getFocusTree(parsedNode, importedFocusTrees, this.file);
+        const focusTrees = getFocusTreeFromSourceSnapshot(sourceSnapshot, importedFocusTrees);
         if (deferredSharedFocusIds.size > 0) {
             for (const focusTree of focusTrees) {
                 focusTree.warnings = focusTree.warnings.filter(warning =>

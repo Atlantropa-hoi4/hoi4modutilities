@@ -1,5 +1,5 @@
 import { ConditionItem } from "../../src/hoiformat/condition";
-import { FocusTree } from "../../src/previewdef/focustree/schema";
+import { FocusTreeView } from '../../src/previewdef/focustree/viewmodel';
 import { FocusConditionPresetsByTree, normalizeConditionPresetsByTree } from "../../src/previewdef/focustree/conditionpresets";
 import { resolveFocusTreeSelection } from "../../src/previewdef/focustree/selectionstate";
 import { restoreArrayState } from "../util/restoredstate";
@@ -17,10 +17,10 @@ export interface FocusTreeWebviewInitialState {
 type FocusTreeStateWindow = Window & {
     previewedFileUri?: string;
     bootstrapSelectedFocusTreeId?: string;
-    focusTrees?: FocusTree[];
+    focusTrees?: FocusTreeView[];
 };
 
-function isNonEmptyFocusTree(focusTree: FocusTree | undefined): boolean {
+function isNonEmptyFocusTree(focusTree: FocusTreeView | undefined): boolean {
     return !!focusTree && Object.keys(focusTree.focuses ?? {}).length > 0;
 }
 

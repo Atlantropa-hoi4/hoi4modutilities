@@ -75,4 +75,8 @@ export class FocusTreeSnapshotBuilder {
             metrics,
         };
     }
+
+    public dispose(): void {
+        this.loaderAdapter.dispose();
+    }
 }

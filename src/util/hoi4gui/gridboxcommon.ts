@@ -43,7 +43,7 @@ export interface RenderGridBoxCommonOptions extends RenderCommonOptions {
     items: Record<string, GridBoxItem>;
     onRenderItem?(item: GridBoxItem, parentInfo: ParentInfo): Promise<string>;
     onRenderLineBox?(item: GridBoxConnectionItem, parentInfo: ParentInfo): Promise<string>;
-    lineRenderMode?: 'line' | 'control';
+    lineRenderMode?: 'line' | 'control' | 'svg' | 'none';
     cornerPosition?: number;
     dataAttributes?: Record<string, string | number | boolean | undefined>;
 }
@@ -176,9 +176,13 @@ export async function renderGridBoxCommon(
             </div>`;
     }));
 
-    const renderedConnections = options.lineRenderMode !== 'control' ?
-        renderLineConnections(options.items, format, slotSize, size, options.styleTable, cornerPosition) :
-        await renderControlConnections(options.items, format, slotSize, size, options.onRenderLineBox, options.styleTable, childrenParentInfo);
+    const renderedConnections = options.lineRenderMode === 'none'
+        ? ''
+        : options.lineRenderMode === 'control'
+            ? await renderControlConnections(options.items, format, slotSize, size, options.onRenderLineBox, options.styleTable, childrenParentInfo)
+            : options.lineRenderMode === 'svg'
+                ? renderSvgConnections(options.items, format, slotSize, size, cornerPosition)
+                : renderLineConnections(options.items, format, slotSize, size, options.styleTable, cornerPosition);
 
     return `<div
     ${options.id ? `id="${options.id}"` : ''}
@@ -200,6 +204,78 @@ export async function renderGridBoxCommon(
         ${renderedConnections}
         ${renderedItems.join('')}
     </div>`;
+}
+
+export function renderSvgConnections(
+    items: Record<string, GridBoxItem>,
+    format: Format['_name'],
+    slotSize: NumberSize,
+    size: NumberSize,
+    cornerPosition: number,
+): string {
+    const paths: string[] = [];
+    for (const item of Object.values(items)) {
+        for (const connection of item.connections) {
+            const target = items[connection.target];
+            if (!target) {
+                continue;
+            }
+
+            let start = getCenterPosition(item.gridX, item.gridY, format, slotSize, size);
+            let end = getCenterPosition(target.gridX, target.gridY, format, slotSize, size);
+            if (connection.targetType === 'parent') {
+                [start, end] = [end, start];
+            }
+
+            const route = getSvgConnectionRoute(start, end, format, slotSize, cornerPosition);
+            const stroke = parseSvgStroke(connection.style);
+            paths.push(`<path class="${attributeEscape(connection.classNames ?? '')}" d="${route}" fill="none" stroke="${attributeEscape(stroke.color)}" stroke-width="${stroke.width}"${stroke.dashArray ? ` stroke-dasharray="${stroke.dashArray}"` : ''} vector-effect="non-scaling-stroke"></path>`);
+        }
+    }
+
+    if (paths.length === 0) {
+        return '';
+    }
+    return `<svg class="focus-connection-layer" aria-hidden="true" width="100%" height="100%" style="position:absolute;left:0;top:0;overflow:visible;pointer-events:none">${paths.join('')}</svg>`;
+}
+
+function getSvgConnectionRoute(
+    start: NumberPosition,
+    end: NumberPosition,
+    format: Format['_name'],
+    slotSize: NumberSize,
+    cornerPosition: number,
+): string {
+    if (start.x === end.x || start.y === end.y) {
+        return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+    }
+
+    if (format === 'left' || format === 'right') {
+        const direction = Math.sign(end.x - start.x) || 1;
+        const cornerX = Math.abs(end.x - start.x) < slotSize.width * cornerPosition
+            ? (start.x + end.x) / 2
+            : start.x + slotSize.width * cornerPosition * direction;
+        return `M ${start.x} ${start.y} L ${cornerX} ${start.y} L ${cornerX} ${end.y} L ${end.x} ${end.y}`;
+    }
+
+    const direction = Math.sign(end.y - start.y) || 1;
+    const cornerY = Math.abs(end.y - start.y) < slotSize.height * cornerPosition
+        ? (start.y + end.y) / 2
+        : start.y + slotSize.height * cornerPosition * direction;
+    return `M ${start.x} ${start.y} L ${start.x} ${cornerY} L ${end.x} ${cornerY} L ${end.x} ${end.y}`;
+}
+
+function parseSvgStroke(style: string | undefined): { width: number; color: string; dashArray?: string } {
+    const match = /^([\d.]+)px\s+(solid|dashed|dotted)\s+(.+)$/.exec(style?.trim() ?? '');
+    if (!match) {
+        return { width: 1, color: 'currentColor' };
+    }
+
+    return {
+        width: Number(match[1]) || 1,
+        color: match[3],
+        dashArray: match[2] === 'dashed' ? '6 4' : match[2] === 'dotted' ? '2 3' : undefined,
+    };
 }
 
 export function renderLineConnections(items: Record<string, GridBoxItem>, format: Format['_name'], slotSize: NumberSize, size: NumberSize, styleTable: StyleTable, cornerPosition: number): string {

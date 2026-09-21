@@ -361,9 +361,11 @@ describe('focus tree render payload patching', () => {
     });
 
     it('records approximate payload size metrics for full snapshots', () => {
+        const previousTraceValue = process.env.HOI4MU_PERF_TRACE;
+        process.env.HOI4MU_PERF_TRACE = '1';
         resetPerfMetrics();
-
-        createFullFocusTreeRenderUpdate({
+        try {
+            createFullFocusTreeRenderUpdate({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
             renderedFocus: {
                 FOCUS_A: '<div>A</div>',
@@ -385,15 +387,63 @@ describe('focus tree render payload patching', () => {
             hasFocusSelector: false,
             hasWarningsButton: false,
             deferredAssetLoad: true,
-        } as any);
+            } as any);
 
-        const payloadMetric = getPerfSnapshot({ limit: 5 }).entries.find(entry => entry.label === 'focustree.payloadSize');
-        assert.ok(payloadMetric);
-        assert.strictEqual(payloadMetric.tags.kind, 'full');
-        assert.strictEqual(payloadMetric.tags.deferredAssetLoad, true);
-        assert.ok((payloadMetric.tags.focusTreeBytes as number) > 0);
-        assert.ok((payloadMetric.tags.renderedFocusBytes as number) > 0);
-        assert.ok((payloadMetric.tags.dynamicStyleBytes as number) > 0);
+            const payloadMetric = getPerfSnapshot({ limit: 5 }).entries.find(entry => entry.label === 'focustree.payloadSize');
+            assert.ok(payloadMetric);
+            assert.strictEqual(payloadMetric.tags.kind, 'full');
+            assert.strictEqual(payloadMetric.tags.deferredAssetLoad, true);
+            assert.ok((payloadMetric.tags.focusTreeBytes as number) > 0);
+            assert.ok((payloadMetric.tags.renderedFocusBytes as number) > 0);
+            assert.ok((payloadMetric.tags.dynamicStyleBytes as number) > 0);
+        } finally {
+            if (previousTraceValue === undefined) {
+                delete process.env.HOI4MU_PERF_TRACE;
+            } else {
+                process.env.HOI4MU_PERF_TRACE = previousTraceValue;
+            }
+        }
+    });
+
+    it('emits an in-place asset update when a deferred tree is hydrated', () => {
+        const sourceTree = createTree('tree_a', 'FOCUS_A');
+        const deferredPayload = {
+            focusTrees: [sourceTree],
+            sourceFocusTrees: [sourceTree],
+            renderedFocus: {},
+            renderedInlayWindows: {},
+            gfxFiles: [],
+            focusIconGfxFileByName: {},
+            focusIconAssetResolution: {} as any,
+            focusIconStyleSignature: 'deferred',
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '.deferred {}',
+            styleNonce: 'nonce',
+            xGridSize: 96,
+            yGridSize: 130,
+            focusToolbarHeight: 68,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: true,
+            localisationIndexReady: false,
+        } as any;
+        const deferred = createFullFocusTreeRenderUpdate(deferredPayload);
+        const hydrated = createFullFocusTreeRenderUpdate({
+            ...deferredPayload,
+            renderedFocus: { FOCUS_A: '<div>A</div>' },
+            dynamicStyleCss: '.hydrated {}',
+            focusIconStyleSignature: 'hydrated',
+            deferredAssetLoad: false,
+            localisationIndexReady: true,
+        }, deferred.cache);
+
+        assert.strictEqual(hydrated.update.updateType, 'assets');
+        assert.strictEqual(hydrated.update.focusTrees, undefined);
+        assert.deepStrictEqual(hydrated.update.renderedFocusPatch, { FOCUS_A: '<div>A</div>' });
+        assert.strictEqual(hydrated.update.structurallyChangedTreeIds, undefined);
     });
 
     it('falls back to a full snapshot when icon texture expiry changes', async () => {

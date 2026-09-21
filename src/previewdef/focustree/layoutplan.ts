@@ -4,7 +4,7 @@ import { normalizeForStyle } from "../../util/styletable";
 import { GridBoxConnection, GridBoxItem } from "../../util/hoi4gui/gridboxcommon";
 import { collectCompletedFocusIds } from "./conditionexprs";
 import { getFocusPosition } from "./positioning";
-import { Focus, FocusTree } from "./schema";
+import { FocusTreeView as FocusTree, FocusView as Focus } from './viewmodel';
 
 export interface FocusTreeLayoutPlan {
     focusGridBoxItems: GridBoxItem[];

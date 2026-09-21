@@ -379,6 +379,13 @@ describe('preview manager', () => {
 
             assert.strictEqual(previews[0].changeCount, 1);
             assert.strictEqual(previews[0].lastChangeSource, 'dependency');
+            assert.deepStrictEqual(
+                previews[0].lastChangedDependencies.map(change => change.uri.toString()).sort(),
+                [
+                    'file:///workspace/interface/a.gfx',
+                    'file:///workspace/interface/b.gfx',
+                ],
+            );
         } finally {
             disposable.dispose();
         }
@@ -865,6 +872,7 @@ class FakePreview {
     public changeCount = 0;
     public lastChangedDocument: FakeDocument | undefined;
     public lastChangeSource: string | undefined;
+    public lastChangedDependencies: Array<{ uri: FakeUri; changeKind: string }> = [];
     public isDisposed = false;
 
     constructor(
@@ -896,10 +904,14 @@ class FakePreview {
         return 0;
     }
 
-    public async onDocumentChange(document: FakeDocument, options?: { source?: string }): Promise<void> {
+    public async onDocumentChange(
+        document: FakeDocument,
+        options?: { source?: string; changedDependencies?: Array<{ uri: FakeUri; changeKind: string }> },
+    ): Promise<void> {
         this.changeCount += 1;
         this.lastChangedDocument = document;
         this.lastChangeSource = options?.source;
+        this.lastChangedDependencies = options?.changedDependencies ?? [];
     }
 
     public getDebugState(): unknown {

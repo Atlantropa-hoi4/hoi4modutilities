@@ -21,7 +21,12 @@ export function syncCheckbox(input: HTMLInputElement): void {
 export class Checkbox extends Subscriber {
     private checkboxContainer: HTMLDivElement | undefined;
 
-    constructor(readonly input: HTMLInputElement, private text?: string, private glyphClassName?: string) {
+    constructor(
+        readonly input: HTMLInputElement,
+        private text?: string,
+        private glyphClassName?: string,
+        private eventMode: 'direct' | 'delegated' = 'direct',
+    ) {
         super();
         this.init();
     }
@@ -79,7 +84,9 @@ export class Checkbox extends Subscriber {
             }
         });
 
-        this.addEventHandlersForCheckBox(checkboxContainer, checkbox);
+        if (this.eventMode === 'direct') {
+            this.addEventHandlersForCheckBox(checkboxContainer, checkbox);
+        }
     }
 
     private addEventHandlersForCheckBox(checkboxContainer: HTMLDivElement, checkbox: HTMLDivElement) {

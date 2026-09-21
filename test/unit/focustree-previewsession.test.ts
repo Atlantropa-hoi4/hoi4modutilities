@@ -287,8 +287,35 @@ describe('focustree preview session', () => {
         assert.strictEqual(contentUpdate.perf.source, 'initialize');
         assert.strictEqual(contentUpdate.perf.assetLoadMode, 'deferred');
         assert.strictEqual(contentUpdate.perf.updateKind, 'full');
-        assert.ok(contentUpdate.perf.payloadBytes > 0);
+        assert.strictEqual(contentUpdate.perf.payloadBytes, 0);
+        assert.strictEqual(contentUpdate.protocolVersion, 2);
+        assert.strictEqual(typeof contentUpdate.requestId, 'number');
         assert.strictEqual(contentUpdate.perf.changedSlotCount, contentUpdate.changedSlots.length);
+    });
+
+    it('starts deferred hydration when the webview acknowledges first content', async () => {
+        const document = createDocument(23);
+        const requestedModes: Array<'full' | 'deferred'> = [];
+        const { session, postMessages } = createSession({
+            deferredHydrationDelayMs: 10_000,
+            buildBaseState: async (_document, assetLoadMode) => {
+                requestedModes.push(assetLoadMode);
+                return createBaseState(document.version, assetLoadMode === 'deferred');
+            },
+        });
+
+        await session.initializePanel(document);
+        session.handleWebviewReady();
+        await waitForCondition(
+            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            'Expected the deferred content update.',
+        );
+        const firstUpdate = postMessages[0] as any;
+        session.handleContentApplied(firstUpdate.snapshotVersion, firstUpdate.documentVersion, 'firstContentApplied');
+        await waitForCondition(() => requestedModes.length === 2, 'Expected acknowledgement-driven hydration.');
+
+        assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
+        session.dispose();
     });
 
     it('uses snapshot updates instead of resetting html after the webview is ready', async () => {

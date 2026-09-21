@@ -1,4 +1,4 @@
-import { FocusTree } from "./schema";
+import { focusTreeProtocolVersion, FocusTreeView } from './viewmodel';
 
 export type FocusTreeContentSlot =
     | 'treeDefinitions'
@@ -10,6 +10,9 @@ export type FocusTreeContentSlot =
     | 'styleDeps';
 
 export interface FocusTreeContentUpdateMessage {
+    protocolVersion?: typeof focusTreeProtocolVersion;
+    requestId?: number;
+    updateType?: 'structure' | 'assets' | 'patch';
     snapshotVersion: number;
     documentVersion: number;
     focusPositionActiveFile?: string;
@@ -19,8 +22,8 @@ export interface FocusTreeContentUpdateMessage {
     structurallyChangedTreeIds?: string[];
     changedFocusIds?: string[];
     changedInlayWindowIds?: string[];
-    focusTrees?: FocusTree[];
-    focusTreePatches?: Array<{ treeId: string; tree: FocusTree }>;
+    focusTrees?: FocusTreeView[];
+    focusTreePatches?: Array<{ treeId: string; tree: FocusTreeView }>;
     continuousFocusHtml?: string;
     renderedFocus?: Record<string, string>;
     renderedFocusPatch?: Record<string, string>;
@@ -57,8 +60,8 @@ export interface FocusTreeContentUpdateDecision {
 }
 
 export function getFocusTreeContentUpdateDecision(
-    previousCurrentTree: FocusTree | undefined,
-    nextCurrentTree: FocusTree | undefined,
+    previousCurrentTree: FocusTreeView | undefined,
+    nextCurrentTree: FocusTreeView | undefined,
     message: FocusTreeContentUpdateMessage,
 ): FocusTreeContentUpdateDecision {
     const changedSlots = new Set(message.changedSlots);

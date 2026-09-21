@@ -14,7 +14,7 @@ import { PreviewProviderResolver } from './previewproviderresolver';
 import { PreviewDependencyTracker } from './previewdependencytracker';
 import { PreviewContextService } from './previewcontextservice';
 import { PreviewSessionStore } from './previewsessionstore';
-import type { PreviewBase } from './previewbase';
+import type { PreviewBase, PreviewExternalFileChange } from './previewbase';
 import type { PreviewDescriptor, StandardPreviewDescriptor } from './descriptor';
 
 type PreviewUpdateScheduler = Pick<UpdateScheduler<string>, 'schedule' | 'dispose'>;
@@ -39,6 +39,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
     private modRootWatchers: vscode.Disposable[] = [];
     private modRootWatcherGeneration = 0;
     private registrationGeneration = 0;
+    private readonly pendingDependencyChangesByPreview = new Map<string, Map<string, PreviewExternalFileChange>>();
 
     constructor(
         options: PreviewManagerOptions,
@@ -226,7 +227,10 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         debug('preview.create', { uri: key, provider: previewProvider.type, deserialized: !!panel });
         this.ensurePreviewDependencyWatchers();
         this.previewSessionStore.add(key, previewItem);
-        previewItem.onDispose(() => this.disposePreviewDependencyWatchersIfIdle());
+        previewItem.onDispose(() => {
+            this.pendingDependencyChangesByPreview.delete(key);
+            this.disposePreviewDependencyWatchersIfIdle();
+        });
         return previewItem;
     }
 
@@ -253,11 +257,18 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
                 continue;
             }
 
+            const pendingChanges = this.pendingDependencyChangesByPreview.get(previewUri) ?? new Map<string, PreviewExternalFileChange>();
+            pendingChanges.set(changedUri, { uri, changeKind });
+            this.pendingDependencyChangesByPreview.set(previewUri, pendingChanges);
             this.dependencyUpdateScheduler.schedule(previewUri, otherPreview.getDependencyChangeDebounceMs(uri, changeKind), async () => {
                 const otherDocument = getDocumentByUri(otherPreview.uri);
                 if (otherDocument && !otherPreview.isDisposed) {
+                    const changedDependencies = Array.from(
+                        this.pendingDependencyChangesByPreview.get(previewUri)?.values() ?? [],
+                    );
+                    this.pendingDependencyChangesByPreview.delete(previewUri);
                     await measureAsync('preview.refresh', { source: 'dependency', preview: otherPreview.constructor.name }, () =>
-                        otherPreview.onDocumentChange(otherDocument, { source: 'dependency' }));
+                        otherPreview.onDocumentChange(otherDocument, { source: 'dependency', changedDependencies }));
                 }
             });
         }

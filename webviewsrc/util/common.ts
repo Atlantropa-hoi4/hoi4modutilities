@@ -109,6 +109,35 @@ export function subscribeNavigators(root: ParentNode = document) {
     }
 }
 
+export function subscribeNavigatorDelegation(root: HTMLElement): void {
+    if (root.dataset.navigatorDelegated === 'true') {
+        return;
+    }
+    root.dataset.navigatorDelegated = 'true';
+    root.addEventListener('click', event => {
+        const target = event.target as Element | null;
+        if (target?.closest('.checkbox-container, input, button')) {
+            return;
+        }
+        const navigator = target?.closest<HTMLElement>('.navigator');
+        if (!navigator || !root.contains(navigator)) {
+            return;
+        }
+
+        event.stopPropagation();
+        const startStr = navigator.getAttribute('start') ?? undefined;
+        const endStr = navigator.getAttribute('end') ?? undefined;
+        const file = navigator.getAttribute('file') ?? undefined;
+        const start = !startStr || startStr === 'undefined' ? undefined : parseInt(startStr);
+        const end = !endStr ? undefined : parseInt(endStr);
+        const focusId = navigator.dataset.focusId || undefined;
+        const documentVersion = typeof (window as any).focusPositionDocumentVersion === 'number'
+            ? (window as any).focusPositionDocumentVersion
+            : undefined;
+        navigateText(start, end, file, focusId, documentVersion);
+    });
+}
+
 export function tryRun<T extends (...args: any[]) => any>(func: T): (...args: Parameters<T>) => ReturnType<T> | undefined {
     return function(this: any, ...args) {
         try {

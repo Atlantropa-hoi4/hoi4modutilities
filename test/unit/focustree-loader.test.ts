@@ -154,6 +154,10 @@ const {
 const {
     LoaderSession,
 } = require('../../src/util/loader/loader') as typeof import('../../src/util/loader/loader');
+const {
+    getPerfSnapshot,
+    resetPerfMetrics,
+} = require('../../src/util/perf') as typeof import('../../src/util/perf');
 
 nodeModule._load = originalLoad;
 
@@ -215,5 +219,27 @@ describe('focustree loader', () => {
 
         assert.ok(focusIconFallbackLimits.length >= 1);
         assert.ok(focusIconFallbackLimits.every(limit => limit === undefined));
+    });
+
+    it('parses one source snapshot for deferred structure and full hydration of one document version', async () => {
+        resetPerfMetrics();
+        const rootLoader = new FocusTreeLoader(mainFocusFile);
+        const deferredLoader = rootLoader.createSnapshotLoader(
+            async () => fileContents[mainFocusFile],
+            'deferred',
+            '7',
+        );
+        const fullLoader = rootLoader.createSnapshotLoader(
+            async () => fileContents[mainFocusFile],
+            'full',
+            '7',
+        );
+
+        await deferredLoader.load(new LoaderSession(true));
+        await fullLoader.load(new LoaderSession(true));
+
+        const sourceSnapshotBuilds = getPerfSnapshot({ limit: 100 }).entries.filter(entry =>
+            entry.label === 'focustree.sourceSnapshot' && entry.tags.file === mainFocusFile);
+        assert.strictEqual(sourceSnapshotBuilds.length, 1);
     });
 });

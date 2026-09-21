@@ -1,7 +1,7 @@
 import { HOIPartial } from "../../hoiformat/schema";
 import { GridBoxType } from "../../hoiformat/gui";
 import { StyleTable } from "../../util/styletable";
-import { recordPerf } from "../../util/perf";
+import { isPerfTraceEnabled, recordPerf } from "../../util/perf";
 import { resolveSearchFilterLabels, type FocusTreeRenderBaseState, type FocusTreeRenderPayload } from "./contentbuilder";
 import { Focus, FocusTree, FocusTreeInlay } from "./schema";
 import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
@@ -11,11 +11,12 @@ import {
     yieldToFocusTreeRenderCancellation,
 } from "./rendercancellation";
 import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
+import { FocusTreeView, toFocusTreeView, toFocusTreeViews } from './viewmodel';
 
 export interface FocusTreeRenderCache {
     snapshotVersion: number;
     selectedTreeId?: string;
-    focusTrees: FocusTree[];
+    focusTrees: FocusTreeView[];
     continuousFocusHtml?: string;
     renderedFocus: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
@@ -63,7 +64,7 @@ export function createFocusTreeRenderCache(
     payload: FocusTreeRenderPayload,
     previousVersion: number = 0,
     metadata: DerivedRenderStateMetadata = deriveRenderStateMetadata(
-        payload.focusTrees,
+        payload.sourceFocusTrees ?? payload.focusTrees as unknown as FocusTree[],
         payload.xGridSize,
         payload.yGridSize,
         payload.gfxFiles,
@@ -108,7 +109,7 @@ export async function createFullFocusTreeRenderUpdateWithCancellation(
 ): Promise<{ update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache }> {
     throwIfFocusTreeRenderCancelled(isCancelled);
     const metadata = await deriveRenderStateMetadataWithCancellation(
-        payload.focusTrees,
+        payload.sourceFocusTrees ?? payload.focusTrees as unknown as FocusTree[],
         payload.xGridSize,
         payload.yGridSize,
         payload.gfxFiles,
@@ -126,6 +127,10 @@ function createFullFocusTreeRenderUpdateWithMetadata(
     metadata?: DerivedRenderStateMetadata,
 ): { update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache } {
     const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion, metadata);
+    const isAssetHydration = !!previousCache
+        && previousCache.deferredAssetLoad
+        && !payload.deferredAssetLoad
+        && hasSameTreeStructure(previousCache, cache);
     recordFocusTreePayloadSize('full', payload.deferredAssetLoad, {
         focusTrees: payload.focusTrees,
         continuousFocusHtml: payload.continuousFocusHtml,
@@ -137,7 +142,23 @@ function createFullFocusTreeRenderUpdateWithMetadata(
     });
     return {
         cache,
-        update: {
+        update: isAssetHydration ? {
+            updateType: 'assets',
+            snapshotVersion: cache.snapshotVersion,
+            documentVersion: payload.focusPositionDocumentVersion,
+            focusPositionActiveFile: payload.focusPositionActiveFile,
+            selectedTreeId: cache.selectedTreeId,
+            changedSlots: ['treeDefinitions', 'warnings', 'treeBody', 'inlays', 'styleDeps'],
+            changedTreeIds: payload.focusTrees.map(tree => tree.id),
+            changedFocusIds: Object.keys(payload.renderedFocus),
+            changedInlayWindowIds: Object.keys(payload.renderedInlayWindows),
+            focusTreePatches: payload.focusTrees.map(tree => ({ treeId: tree.id, tree })),
+            continuousFocusHtml: payload.continuousFocusHtml,
+            renderedFocusPatch: payload.renderedFocus,
+            renderedInlayWindows: payload.renderedInlayWindows,
+            dynamicStyleCss: payload.dynamicStyleCss,
+        } : {
+            updateType: 'structure',
             snapshotVersion: cache.snapshotVersion,
             documentVersion: payload.focusPositionDocumentVersion,
             focusPositionActiveFile: payload.focusPositionActiveFile,
@@ -183,7 +204,7 @@ export async function createFocusTreeRenderUpdate(
 
     const focusTreePatches = nextBaseState.focusTrees
         .filter(tree => previous.treePatchSignatures[tree.id] !== nextMetadata.treePatchSignatures[tree.id])
-        .map(tree => ({ treeId: tree.id, tree }));
+        .map(tree => ({ treeId: tree.id, tree: toFocusTreeView(tree) }));
     const changedTreeIds = focusTreePatches.map(patch => patch.treeId);
     const structurallyChangedTreeIds = changedTreeIds
         .filter(treeId => previous.treeStructureSignatures[treeId] !== nextMetadata.treeStructureSignatures[treeId]);
@@ -216,7 +237,7 @@ export async function createFocusTreeRenderUpdate(
     const cache: FocusTreeRenderCache = {
         snapshotVersion: previous.snapshotVersion + 1,
         selectedTreeId: nextBaseState.focusTrees[0]?.id,
-        focusTrees: nextBaseState.focusTrees,
+        focusTrees: toFocusTreeViews(nextBaseState.focusTrees),
         renderedFocus: mergeStringMap(previous.renderedFocus, renderedFocusPatch, focusSignatureDiff.removedKeys),
         continuousFocusHtml: previous.continuousFocusHtml,
         renderedInlayWindows: previous.renderedInlayWindows,
@@ -247,6 +268,7 @@ export async function createFocusTreeRenderUpdate(
     return {
         kind: 'partial',
         update: {
+            updateType: 'patch',
             snapshotVersion: cache.snapshotVersion,
             documentVersion: nextBaseState.focusPositionDocumentVersion,
             focusPositionActiveFile: nextBaseState.focusPositionActiveFile,
@@ -266,6 +288,16 @@ export async function createFocusTreeRenderUpdate(
     };
 }
 
+function hasSameTreeStructure(previous: FocusTreeRenderCache, next: FocusTreeRenderCache): boolean {
+    if (previous.focusTrees.length !== next.focusTrees.length) {
+        return false;
+    }
+
+    return next.focusTrees.every((tree, index) =>
+        previous.focusTrees[index]?.id === tree.id
+        && previous.treeStructureSignatures[tree.id] === next.treeStructureSignatures[tree.id]);
+}
+
 function recordFocusTreePayloadSize(
     kind: 'full' | 'partial',
     deferredAssetLoad: boolean,
@@ -279,6 +311,9 @@ function recordFocusTreePayloadSize(
         inlayCount: number;
     },
 ): void {
+    if (!isPerfTraceEnabled()) {
+        return;
+    }
     recordPerf('focustree.payloadSize', 0, {
         kind,
         deferredAssetLoad,

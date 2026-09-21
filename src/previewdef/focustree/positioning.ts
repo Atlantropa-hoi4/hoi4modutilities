@@ -1,6 +1,6 @@
 import { ConditionItem, applyCondition } from "../../hoiformat/condition";
 import { NumberPosition } from "../../util/common";
-import { Focus, FocusTree } from "./schema";
+import { FocusTreeView as FocusTree, FocusView as Focus } from './viewmodel';
 
 export function getFocusPosition(
     focus: Focus | undefined,

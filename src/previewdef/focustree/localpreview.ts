@@ -1,11 +1,12 @@
 import { StyleTable } from "../../util/styletable";
 import { renderFocusHtmlTemplate } from "./focusrender";
-import { Focus, FocusTree } from "./schema";
+import { Focus } from './schema';
+import { FocusTreeView } from './viewmodel';
 
 const emptyCondition = { _type: 'and', items: [] } as any;
 
 export function createPlaceholderFocus(
-    focusTree: FocusTree,
+    focusTree: FocusTreeView,
     focusId: string,
     targetAbsoluteX: number,
     targetAbsoluteY: number,
@@ -100,7 +101,7 @@ export function renderPendingPlaceholderFocusTemplate(
 }
 
 export function applyLocalFocusDeletion(
-    focusTree: FocusTree,
+    focusTree: FocusTreeView,
     deletedFocusIds: readonly string[],
 ): void {
     const deletedSet = new Set(deletedFocusIds.filter(Boolean));

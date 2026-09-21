@@ -16,6 +16,9 @@ import {
 } from './positioneditcommon';
 import { FocusTreePreviewSession } from './previewsession';
 import { shouldRefreshFocusTreeOnExternalFileChange } from './refreshpolicy';
+import { focusTreeProtocolVersion } from './viewmodel';
+import { classifyFocusTreeInvalidation, FocusTreeInvalidation } from './invalidation';
+import type { PreviewDocumentChangeOptions } from '../previewbase';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 const focusTreeLiveRefreshExtensions = new Set(['.txt', '.gfx', '.gui', '.yml', '.dds', '.tga', '.png', '.mod']);
@@ -104,10 +107,14 @@ export class FocusTreePreview extends PreviewBase {
 
     public override async onDocumentChange(
         document: vscode.TextDocument,
-        options?: { source?: 'document' | 'dependency' },
+        options?: PreviewDocumentChangeOptions,
     ): Promise<void> {
+        const invalidation = options?.source === 'dependency'
+            ? classifyFocusTreeInvalidation(options.changedDependencies ?? []) || FocusTreeInvalidation.All
+            : FocusTreeInvalidation.All;
         await this.session.refreshDocument(document, {
             source: options?.source ?? 'document',
+            invalidation,
         });
     }
 
@@ -133,7 +140,27 @@ export class FocusTreePreview extends PreviewBase {
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
         const command = (msg as { command?: string }).command;
         if (command === 'focusTreeWebviewReady') {
+            if ((msg as { protocolVersion?: number }).protocolVersion !== focusTreeProtocolVersion) {
+                return true;
+            }
             this.session.handleWebviewReady();
+            return true;
+        }
+
+        if (command === 'focusTreeContentApplied') {
+            const applied = msg as unknown as {
+                protocolVersion?: number;
+                snapshotVersion?: number;
+                documentVersion?: number;
+                stage?: string;
+            };
+            if (applied.protocolVersion === focusTreeProtocolVersion) {
+                this.session.handleContentApplied(
+                    applied.snapshotVersion,
+                    applied.documentVersion,
+                    applied.stage,
+                );
+            }
             return true;
         }
 

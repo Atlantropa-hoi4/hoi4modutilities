@@ -36,6 +36,7 @@ import {
     throwIfFocusTreeRenderCancelled,
     yieldToFocusTreeRenderCancellation,
 } from './rendercancellation';
+import { FocusTreeView, toFocusTreeViews } from './viewmodel';
 
 import { FocusPresentation, renderFocusGui, renderContinuousFocusGui } from './presentation';
 
@@ -44,7 +45,9 @@ const focusToolbarHeight = 68;
 const focusTreeAssetRenderBatchSize = 32;
 
 export interface FocusTreeRenderPayload {
-    focusTrees: FocusTree[];
+    focusTrees: FocusTreeView[];
+    /** Host-only source used to calculate patch signatures. Never sent to the webview. */
+    sourceFocusTrees: FocusTree[];
     selectedTreeId?: string;
     continuousFocusHtml?: string;
     renderedFocus: Record<string, string>;
@@ -288,6 +291,10 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             await yieldToFocusTreeRenderCancellation(isCancelled);
         }
 
+        if (baseState.deferredAssetLoad) {
+            continue;
+        }
+
         const focus = baseState.allFocuses[index];
         renderedFocus[focus.id] = renderFocusHtmlTemplate(
             focus,
@@ -328,7 +335,8 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
 
     return {
         payload: {
-            focusTrees: baseState.focusTrees,
+            focusTrees: toFocusTreeViews(baseState.focusTrees),
+            sourceFocusTrees: baseState.focusTrees,
             selectedTreeId: baseState.focusTrees[0]?.id,
             renderedFocus,
             continuousFocusHtml,
@@ -512,6 +520,7 @@ function createEmptyFocusTreeRenderPayload(
     const emptyIconAssetResolution = createEmptyFocusIconAssetResolution();
     return {
         focusTrees: [],
+        sourceFocusTrees: [],
         selectedTreeId: undefined,
         renderedFocus: {},
         renderedInlayWindows: {},
@@ -568,6 +577,13 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw('#inlaywindowplaceholder .navigator, #inlaywindowplaceholder .navigator *, #inlaywindowplaceholder button, #inlaywindowplaceholder button *', 'pointer-events: auto;');
 
     const shellMarkup =
+        `<template id="focus-card-template">
+            <div class="navigator st-focus-common">
+                <div class="focus-checkbox st-focus-checkbox"><input type="checkbox"/></div>
+                <div class="st-focus-icon-slot"><div class="st-focus-icon-image"></div></div>
+                <span class="st-focus-span"><span class="st-focus-code-line"></span></span>
+            </div>
+        </template>` +
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
             width: 100vw;
             height: 100vh;

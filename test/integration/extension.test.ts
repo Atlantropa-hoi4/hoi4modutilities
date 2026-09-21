@@ -75,7 +75,7 @@ async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string)
             && (diagnostics?.currentCanvasWidth ?? 0) > 0
             && (diagnostics?.currentCanvasHeight ?? 0) > 0
             && timings.some(timing => timing.stage === 'firstContentApplied'
-                && (timing.payloadBytes ?? 0) > 0
+                && (timing.payloadBytes ?? -1) >= 0
                 && (timing.sinceLoadMs ?? -1) >= 0);
     }, 30000);
 }

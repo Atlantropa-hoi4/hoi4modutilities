@@ -10,6 +10,16 @@ import { mkdirs, writeFile } from '../util/vsccommon';
 import { sendByMessage } from '../util/telemetry';
 import { forceError } from '../util/common';
 
+export interface PreviewExternalFileChange {
+    uri: vscode.Uri;
+    changeKind: 'change' | 'create' | 'delete';
+}
+
+export interface PreviewDocumentChangeOptions {
+    source?: 'document' | 'dependency';
+    changedDependencies?: PreviewExternalFileChange[];
+}
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -83,7 +93,7 @@ export abstract class PreviewBase {
 
     public async onDocumentChange(
         document: vscode.TextDocument,
-        _options?: { source?: 'document' | 'dependency' },
+        _options?: PreviewDocumentChangeOptions,
     ): Promise<void> {
         const renderGeneration = ++this.contentRenderGeneration;
         this.contentRenderQueue = this.contentRenderQueue

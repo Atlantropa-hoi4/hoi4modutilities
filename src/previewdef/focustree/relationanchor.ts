@@ -1,5 +1,5 @@
 import { NumberPosition } from "../../util/common";
-import type { FocusTree } from "./schema";
+import type { FocusTreeView } from './viewmodel';
 
 export function getTopMostFocusAnchorId(
     focusIds: readonly string[],
@@ -27,7 +27,7 @@ export function getTopMostFocusAnchorId(
 
 export function getRelativePositionBranchRootFocusId(
     focusId: string,
-    focusTree: Pick<FocusTree, 'focuses'> | undefined,
+    focusTree: Pick<FocusTreeView, 'focuses'> | undefined,
 ): string {
     const focusIdChain: string[] = [];
     let currentFocusId = focusId;
@@ -52,7 +52,7 @@ export function getRelativePositionBranchRootFocusId(
 
 export function getTopMostBranchRootFocusAnchorId(
     focusIds: readonly string[],
-    focusTree: Pick<FocusTree, 'focuses'> | undefined,
+    focusTree: Pick<FocusTreeView, 'focuses'> | undefined,
     positions: Record<string, NumberPosition>,
     fallbackFocusId: string,
 ): string {

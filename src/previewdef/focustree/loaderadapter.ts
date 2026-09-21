@@ -36,7 +36,7 @@ export class FocusTreeLoaderAdapter {
         webview: vscode.Webview,
         conditionPresetsByTree: FocusConditionPresetsByTree,
     ): Promise<string> {
-        const loader = this.createSnapshotLoader(document.getText(), 'full');
+        const loader = this.createSnapshotLoader(document.getText(), 'full', document.version);
         const content = await renderFocusTreeFile(
             loader,
             document.uri,
@@ -55,7 +55,7 @@ export class FocusTreeLoaderAdapter {
         assetLoadMode: FocusTreeAssetLoadMode,
         isCancelled?: () => boolean,
     ): Promise<FocusTreeRenderBaseState> {
-        const loader = this.createSnapshotLoader(content, assetLoadMode);
+        const loader = this.createSnapshotLoader(content, assetLoadMode, documentVersion);
         const baseState = await buildFocusTreeRenderBaseState(
             loader,
             documentVersion,
@@ -69,9 +69,18 @@ export class FocusTreeLoaderAdapter {
     private createSnapshotLoader(
         content: string,
         assetLoadMode: FocusTreeAssetLoadMode,
+        documentVersion: number,
     ): FocusTreeLoader {
-        const loader = this.focusTreeLoader.createSnapshotLoader(() => Promise.resolve(content), assetLoadMode);
+        const loader = this.focusTreeLoader.createSnapshotLoader(
+            () => Promise.resolve(content),
+            assetLoadMode,
+            String(documentVersion),
+        );
         loader.onLoadDone(result => this.updateDependencies(result.dependencies));
         return loader;
+    }
+
+    public dispose(): void {
+        this.focusTreeLoader.clearSourceSnapshot();
     }
 }

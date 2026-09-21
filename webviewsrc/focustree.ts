@@ -1,11 +1,16 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, runSafely, enableZoom, refreshPreviewLabelMode, setPreviewPanDisabled, startPreviewPan, subscribePreviewLabelToggle, subscribeRefreshButton } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigatorDelegation, scrollToState, tryRun, runSafely, enableZoom, currentScale, refreshPreviewLabelMode, setPreviewPanDisabled, startPreviewPan, subscribePreviewLabelToggle, subscribeRefreshButton } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference } from "lodash";
 import { renderGridBoxCommon } from "../src/util/hoi4gui/gridboxcommon";
 import { StyleTable, normalizeForStyle } from "../src/util/styletable";
-import { FocusTree, Focus } from "../src/previewdef/focustree/schema";
+import {
+    focusTreeProtocolVersion,
+    FocusTreeView as FocusTree,
+    FocusView as Focus,
+} from '../src/previewdef/focustree/viewmodel';
 import { applyCondition, ConditionItem } from "../src/hoiformat/condition";
 import { NumberPosition } from "../src/util/common";
+import { htmlAttributeEscape, htmlTextEscape } from '../src/util/htmlescape';
 import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
 import { Checkbox } from "./util/checkbox";
@@ -37,7 +42,6 @@ import {
 import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 import { normalizeParentFocusIds, updatePrerequisiteGroupsAfterLinkApply } from "../src/previewdef/focustree/prerequisitelink";
 import { getTopMostBranchRootFocusAnchorId } from "../src/previewdef/focustree/relationanchor";
-import { getDirectlyRelatedFocusIds } from "../src/previewdef/focustree/hoverrelations";
 import { getFocusTreeViewportAnchorId } from "../src/previewdef/focustree/viewanchor";
 import {
     clampFocusTreeIndex as clampFocusTreeIndexValue,
@@ -87,23 +91,36 @@ function showBranch(visibility: boolean, optionClass: string) {
 }
 
 function search(searchContent: string, navigate: boolean = true) {
-    const focuses = document.getElementsByClassName('focus');
-    const searchedFocus: HTMLDivElement[] = [];
-    let navigated = false;
-    for (let i = 0; i < focuses.length; i++) {
-        const focus = focuses[i] as HTMLDivElement;
-        if (searchContent && focus.id.toLowerCase().replace(/^focus_/, '').includes(searchContent)) {
-            focus.style.outline = '1px solid #E33';
-            focus.style.background = 'rgba(255, 0, 0, 0.5)';
-            if (navigate && !navigated) {
-                focus.scrollIntoView({ block: "center", inline: "center" });
-                navigated = true;
+    const normalizedSearch = searchContent.trim().toLowerCase();
+    const nextResultIds = new Set<string>();
+    if (normalizedSearch) {
+        for (const [focusId, normalizedText] of Object.entries(currentSearchTextByFocusId)) {
+            if (normalizedText.includes(normalizedSearch)) {
+                nextResultIds.add(focusId);
             }
-            searchedFocus.push(focus);
-        } else {
-            focus.style.outlineWidth = '0';
-            focus.style.background = 'transparent';
         }
+    }
+
+    const changedResultIds = new Set([...currentSearchResultIds, ...nextResultIds]);
+    changedResultIds.forEach(focusId => {
+        if (currentSearchResultIds.has(focusId) === nextResultIds.has(focusId)) {
+            return;
+        }
+        const focus = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
+        if (!focus) {
+            return;
+        }
+        const matches = nextResultIds.has(focusId);
+        focus.style.outline = matches ? '1px solid #E33' : '';
+        focus.style.background = matches ? 'rgba(255, 0, 0, 0.5)' : 'transparent';
+    });
+    currentSearchResultIds = nextResultIds;
+
+    const searchedFocus = Array.from(nextResultIds)
+        .map(focusId => document.getElementById(`focus_${focusId}`) as HTMLDivElement | null)
+        .filter((focus): focus is HTMLDivElement => !!focus);
+    if (navigate) {
+        searchedFocus[0]?.scrollIntoView({ block: 'center', inline: 'center' });
     }
     return searchedFocus;
 }
@@ -138,6 +155,11 @@ let currentRenderedFocusTree: FocusTree | undefined = undefined;
 let currentFocusPositions: Record<string, NumberPosition> = {};
 let currentRenderedFocusElements: Record<string, HTMLElement> = {};
 let currentRenderedFocusElementsList: HTMLElement[] = [];
+let currentRelatedFocusIdsById: Record<string, ReadonlySet<string>> = {};
+let currentConnectionElementsByFocusId: Record<string, Set<HTMLElement | SVGElement>> = {};
+let currentSearchTextByFocusId: Record<string, string> = {};
+let currentSearchResultIds = new Set<string>();
+let currentSearchFilterMatchIds = new Set<string>();
 let currentOccupiedFocusPositionKeys = new Set<string>();
 let currentSelectedFocusIds = new Set<string>();
 let currentRenderedExprs: ConditionItem[] = [];
@@ -187,6 +209,9 @@ type ActiveFocusSelectionMarquee = {
     dragGestureStarted: boolean;
     pointerId: number;
     captureOwner: HTMLElement;
+    latestClientX: number;
+    latestClientY: number;
+    animationFrame?: number;
 };
 let activeFocusSelectionMarquee: ActiveFocusSelectionMarquee | undefined = undefined;
 const focusTreeWebviewLoadStartedAt = performance.now();
@@ -333,11 +358,27 @@ function getContentAppliedTimingStage(message: FocusTreeContentUpdateMessage): s
     return 'contentUpdated';
 }
 
+function postFocusTreeContentApplied(
+    message: FocusTreeContentUpdateMessage,
+    timings: { applyMs: number; rebuildMs: number; rebindMs: number },
+): void {
+    const stage = getContentAppliedTimingStage(message);
+    postFocusTreeWebviewTiming(createFocusTreeContentTiming(stage, message, timings));
+    vscode.postMessage({
+        command: 'focusTreeContentApplied',
+        protocolVersion: focusTreeProtocolVersion,
+        requestId: message.requestId,
+        snapshotVersion: message.snapshotVersion,
+        documentVersion: message.documentVersion,
+        stage,
+    });
+}
+
 function normalizeFocusIdForClassName(focusId: string): string {
     return normalizeForStyle(focusId);
 }
 
-function connectionTouchesFocusId(connectionElement: HTMLElement, prefix: 'source' | 'target', focusId: string): boolean {
+function connectionTouchesFocusId(connectionElement: HTMLElement | SVGElement, prefix: 'source' | 'target', focusId: string): boolean {
     return connectionElement.classList.contains(`focus-connection-${prefix}-${normalizeFocusIdForClassName(focusId)}`);
 }
 
@@ -364,6 +405,47 @@ function rebuildRenderedFocusElementCache() {
 
         currentRenderedFocusElements[focusId] = element;
         currentRenderedFocusElementsList.push(element);
+    });
+    currentSearchTextByFocusId = Object.fromEntries(
+        Object.keys(currentRenderedFocusElements).map(focusId => [focusId, focusId.toLowerCase()]),
+    );
+    currentSearchResultIds = new Set();
+    currentSearchFilterMatchIds = new Set();
+    rebuildConnectionElementIndex();
+}
+
+function rebuildRelationIndex(focusTree: FocusTree): void {
+    const mutableIndex: Record<string, Set<string>> = {};
+    const ensure = (focusId: string) => mutableIndex[focusId] ?? (mutableIndex[focusId] = new Set([focusId]));
+    for (const focus of Object.values(focusTree.focuses)) {
+        const related = ensure(focus.id);
+        for (const relatedFocusId of [
+            ...focus.prerequisite.flat(),
+            ...focus.exclusive,
+            ...(focus.relativePositionId ? [focus.relativePositionId] : []),
+        ]) {
+            if (!focusTree.focuses[relatedFocusId]) {
+                continue;
+            }
+            related.add(relatedFocusId);
+            ensure(relatedFocusId).add(focus.id);
+        }
+    }
+    currentRelatedFocusIdsById = mutableIndex;
+}
+
+function rebuildConnectionElementIndex(): void {
+    currentConnectionElementsByFocusId = {};
+    document.querySelectorAll<HTMLElement | SVGElement>('.focus-connection').forEach(element => {
+        for (const className of Array.from(element.classList)) {
+            const match = /^focus-connection-(?:source|target)-(.+)$/.exec(className);
+            if (!match) {
+                continue;
+            }
+            const elements = currentConnectionElementsByFocusId[match[1]] ?? new Set<HTMLElement | SVGElement>();
+            elements.add(element);
+            currentConnectionElementsByFocusId[match[1]] = elements;
+        }
     });
 }
 
@@ -777,11 +859,22 @@ function setCurrentSelectedFocusIds(nextIds: Iterable<string>, persistState = tr
         return;
     }
 
+    const changedFocusIds = new Set<string>();
+    currentSelectedFocusIds.forEach(focusId => {
+        if (!nextSelectedFocusIds.has(focusId)) {
+            changedFocusIds.add(focusId);
+        }
+    });
+    nextSelectedFocusIds.forEach(focusId => {
+        if (!currentSelectedFocusIds.has(focusId)) {
+            changedFocusIds.add(focusId);
+        }
+    });
     currentSelectedFocusIds = nextSelectedFocusIds;
     if (persistState) {
         persistCurrentSelectedFocusIds();
     }
-    updateFocusPositionEditUi();
+    updateFocusPositionEditUi({ focusIds: changedFocusIds, updateConnections: false });
 }
 
 function syncCurrentSelectedFocusIds() {
@@ -938,12 +1031,26 @@ function applySearchFilters(): void {
     if (!focusTree) {
         return;
     }
-    for (const [focusId, element] of Object.entries(currentRenderedFocusElements)) {
+    const nextMatchIds = new Set<string>();
+    for (const focusId of Object.keys(currentRenderedFocusElements)) {
         const focus = focusTree.focuses[focusId];
         const matches = selectedSearchFilters.length === 0
             || selectedSearchFilters.some(filter => focus?.searchFilters.includes(filter));
-        element.style.opacity = matches ? '1' : '0.2';
+        if (matches) {
+            nextMatchIds.add(focusId);
+        }
     }
+    const changedFocusIds = new Set([...currentSearchFilterMatchIds, ...nextMatchIds]);
+    changedFocusIds.forEach(focusId => {
+        if (currentSearchFilterMatchIds.has(focusId) === nextMatchIds.has(focusId)) {
+            return;
+        }
+        const element = currentRenderedFocusElements[focusId];
+        if (element) {
+            element.style.opacity = nextMatchIds.has(focusId) ? '1' : '0.2';
+        }
+    });
+    currentSearchFilterMatchIds = nextMatchIds;
 }
 
 function postFocusEdit(command: string, payload: Record<string, unknown>): boolean {
@@ -972,11 +1079,39 @@ function setHoveredRelationFocusId(focusId: string | undefined) {
         return;
     }
 
+    const previousRelated = hoveredRelationFocusId
+        ? currentRelatedFocusIdsById[hoveredRelationFocusId] ?? new Set<string>()
+        : new Set<string>();
     hoveredRelationFocusId = focusId;
+    const nextRelated = focusId
+        ? currentRelatedFocusIdsById[focusId] ?? new Set<string>()
+        : new Set<string>();
+    if (previousRelated.size > 0 && nextRelated.size > 0) {
+        const changedFocusIds = new Set<string>();
+        previousRelated.forEach(relatedFocusId => {
+            if (!nextRelated.has(relatedFocusId)) {
+                changedFocusIds.add(relatedFocusId);
+            }
+        });
+        nextRelated.forEach(relatedFocusId => {
+            if (!previousRelated.has(relatedFocusId)) {
+                changedFocusIds.add(relatedFocusId);
+            }
+        });
+        updateFocusPositionEditUi({
+            focusIds: changedFocusIds,
+            connectionFocusIds: changedFocusIds,
+        });
+        return;
+    }
     updateFocusPositionEditUi();
 }
 
-function updateFocusPositionEditUi() {
+function updateFocusPositionEditUi(options?: {
+    focusIds?: Iterable<string>;
+    connectionFocusIds?: Iterable<string>;
+    updateConnections?: boolean;
+}) {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
         editButton.disabled = activeFocusEditRequestId !== undefined;
@@ -987,8 +1122,8 @@ function updateFocusPositionEditUi() {
     }
 
     const hoveredRelatedFocusIds = new Set(
-        currentRenderedFocusTree
-            ? getDirectlyRelatedFocusIds(currentRenderedFocusTree.focuses, hoveredRelationFocusId)
+        hoveredRelationFocusId
+            ? currentRelatedFocusIdsById[hoveredRelationFocusId] ?? []
             : [],
     );
     const hoveredRelatedFocusIdList = Array.from(hoveredRelatedFocusIds);
@@ -996,7 +1131,12 @@ function updateFocusPositionEditUi() {
     const pendingFocusLinkActive = hasPendingFocusLink();
     const hasHoveredRelations = hoveredRelatedFocusIds.size > 0 && !pendingFocusLinkActive;
 
-    currentRenderedFocusElementsList.forEach(element => {
+    const targetFocusElements = options?.focusIds
+        ? Array.from(options.focusIds)
+            .map(focusId => currentRenderedFocusElements[focusId])
+            .filter((element): element is HTMLDivElement => !!element)
+        : currentRenderedFocusElementsList;
+    targetFocusElements.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
         const isPendingParent = pendingFocusLinkActive && !!element.dataset.focusId && pendingFocusLinkParentIdSet.has(element.dataset.focusId);
         const isSelected = isFocusSelected(element.dataset.focusId);
@@ -1019,7 +1159,12 @@ function updateFocusPositionEditUi() {
                 : '';
     });
 
-    document.querySelectorAll<HTMLElement>('.focus-connection').forEach(connectionElement => {
+    if (options?.updateConnections !== false) {
+        const targetConnectionElements = options?.connectionFocusIds
+            ? Array.from(new Set(Array.from(options.connectionFocusIds).flatMap(focusId =>
+                Array.from(currentConnectionElementsByFocusId[normalizeFocusIdForClassName(focusId)] ?? []))))
+            : Array.from(document.querySelectorAll<HTMLElement | SVGElement>('.focus-connection'));
+        targetConnectionElements.forEach(connectionElement => {
         if (!hasHoveredRelations) {
             connectionElement.style.opacity = '';
             connectionElement.style.filter = '';
@@ -1031,7 +1176,8 @@ function updateFocusPositionEditUi() {
 
         connectionElement.style.opacity = isHoverRelatedConnection ? '1' : '0.14';
         connectionElement.style.filter = isHoverRelatedConnection ? 'saturate(1.1)' : 'saturate(0.35)';
-    });
+        });
+    }
 
     const continuousFocusElement = document.getElementById('continuousFocuses') as HTMLDivElement | null;
     const continuousEditable = isContinuousFocusEditable(currentRenderedFocusTree);
@@ -1095,7 +1241,7 @@ function updateFocusSelectionOverlay(selectionRect: FocusSelectionRect) {
     overlay.style.height = `${selectionRect.height}px`;
 }
 
-function rectsIntersect(selectionRect: FocusSelectionRect, rect: DOMRect): boolean {
+function rectsIntersect(selectionRect: FocusSelectionRect, rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>): boolean {
     return selectionRect.left <= rect.right
         && selectionRect.right >= rect.left
         && selectionRect.top <= rect.bottom
@@ -1103,21 +1249,34 @@ function rectsIntersect(selectionRect: FocusSelectionRect, rect: DOMRect): boole
 }
 
 function getSelectedFocusIdsFromRect(selectionRect: FocusSelectionRect): string[] {
-    return currentRenderedFocusElementsList
-        .filter(element => {
-            if (!element.dataset.focusId) {
-                return false;
-            }
+    const contentElement = document.getElementById('focustreecontent') as HTMLDivElement | null;
+    if (!contentElement) {
+        return [];
+    }
 
-            const rect = element.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0 && rectsIntersect(selectionRect, rect);
-        })
-        .map(element => element.dataset.focusId!)
-        .filter((focusId, index, focusIds) => focusIds.indexOf(focusId) === index);
+    const contentRect = contentElement.getBoundingClientRect();
+    const scale = currentScale();
+    const selectedFocusIds: string[] = [];
+    for (const [focusId, position] of Object.entries(currentFocusPositions)) {
+        const left = contentRect.left + (currentGridLeftPadding + position.x * xGridSize) * scale;
+        const top = contentRect.top + (currentGridTopPadding + position.y * yGridSize) * scale;
+        if (rectsIntersect(selectionRect, {
+            left,
+            top,
+            right: left + xGridSize * scale,
+            bottom: top + yGridSize * scale,
+        })) {
+            selectedFocusIds.push(focusId);
+        }
+    }
+    return selectedFocusIds;
 }
 
 function clearActiveFocusSelectionMarquee() {
     if (activeFocusSelectionMarquee) {
+        if (activeFocusSelectionMarquee.animationFrame !== undefined) {
+            cancelAnimationFrame(activeFocusSelectionMarquee.animationFrame);
+        }
         try {
             activeFocusSelectionMarquee.captureOwner.releasePointerCapture(activeFocusSelectionMarquee.pointerId);
         } catch {
@@ -1565,6 +1724,8 @@ function setupFocusSelectionMarqueeHandler() {
             dragGestureStarted: false,
             pointerId: event.pointerId,
             captureOwner,
+            latestClientX: event.clientX,
+            latestClientY: event.clientY,
         };
         hideFocusSelectionOverlay();
     }, true);
@@ -1574,21 +1735,31 @@ function setupFocusSelectionMarqueeHandler() {
             return;
         }
 
-        const selectionRect = getSelectionRect(
-            activeFocusSelectionMarquee.startClientX,
-            activeFocusSelectionMarquee.startClientY,
-            event.clientX,
-            event.clientY,
-        );
-
-        if (!activeFocusSelectionMarquee.dragGestureStarted
-            && Math.max(selectionRect.width, selectionRect.height) < focusPositionDragThresholdPx) {
+        const marquee = activeFocusSelectionMarquee;
+        marquee.latestClientX = event.clientX;
+        marquee.latestClientY = event.clientY;
+        if (marquee.animationFrame !== undefined) {
             return;
         }
-
-        activeFocusSelectionMarquee.dragGestureStarted = true;
-        updateFocusSelectionOverlay(selectionRect);
-        setCurrentSelectedFocusIds(getSelectedFocusIdsFromRect(selectionRect), false);
+        marquee.animationFrame = requestAnimationFrame(() => {
+            marquee.animationFrame = undefined;
+            if (activeFocusSelectionMarquee !== marquee) {
+                return;
+            }
+            const selectionRect = getSelectionRect(
+                marquee.startClientX,
+                marquee.startClientY,
+                marquee.latestClientX,
+                marquee.latestClientY,
+            );
+            if (!marquee.dragGestureStarted
+                && Math.max(selectionRect.width, selectionRect.height) < focusPositionDragThresholdPx) {
+                return;
+            }
+            marquee.dragGestureStarted = true;
+            updateFocusSelectionOverlay(selectionRect);
+            setCurrentSelectedFocusIds(getSelectedFocusIdsFromRect(selectionRect), false);
+        });
     }, true);
 
     const finishSelectionMarquee = () => {
@@ -2354,6 +2525,7 @@ async function buildContent(): Promise<boolean> {
         exprs: renderExprs,
         focusPositions: focusPosition,
         renderedFocus: renderedFocusMap,
+        styleTable,
     };
     let renderedFocusHitCount = 0;
 
@@ -2372,12 +2544,15 @@ async function buildContent(): Promise<boolean> {
         styleTable,
         items: arrayToMap(focusGridBoxItems, 'id'),
         onRenderItem: item => {
-            const renderedHtml = renderCurrentFocusHtml(focusTree, item.id, renderContext);
-            if (renderedHtml) {
+            const renderedHtml = renderedFocusMap[item.id]
+                ? renderCurrentFocusHtml(focusTree, item.id, renderContext)
+                : `<div data-focus-card-slot="${htmlAttributeEscape(item.id)}"></div>`;
+            if (renderedFocusMap[item.id]) {
                 renderedFocusHitCount += 1;
             }
             return Promise.resolve(renderedHtml ?? '');
         },
+        lineRenderMode: 'svg',
         cornerPosition: 0.5,
     });
     if (!contentBuildGuard.isCurrent(buildVersion)) {
@@ -2387,6 +2562,7 @@ async function buildContent(): Promise<boolean> {
     clearCheckedFocuses();
     currentCompletableFocusIds = collectCompletedFocusIds(focusTree.conditionExprs);
     currentRenderedFocusTree = focusTree;
+    rebuildRelationIndex(focusTree);
     if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
         clearPendingFocusLink();
     }
@@ -2400,6 +2576,7 @@ async function buildContent(): Promise<boolean> {
     currentGridTopPadding = topPadding;
     applyContinuousFocusElementPosition(focusTree);
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement(window.styleNonce);
+    instantiateFocusCardTemplates(focustreeplaceholder, focusTree, renderContext);
     const minimumCanvasWidth = currentGridLeftPadding + Math.max(stableLayout.maxX + 1 + focusCreateRightPaddingColumns, focusCreateMinimumColumns) * xGridSize;
     const minimumCanvasHeight = currentGridTopPadding + Math.max(stableLayout.maxY + 1 + focusCreateBottomPaddingRows, focusCreateMinimumRows) * yGridSize;
     currentCanvasWidth = minimumCanvasWidth;
@@ -2415,7 +2592,6 @@ async function buildContent(): Promise<boolean> {
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
     inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, renderExprs);
 
-    subscribeNavigators();
     updateFocusPositionEditUi();
     postFocusTreeDiagnostics('buildContent', {
         focusTree,
@@ -2423,6 +2599,58 @@ async function buildContent(): Promise<boolean> {
         renderedFocusHitCount,
     });
     return true;
+}
+
+function instantiateFocusCardTemplates(
+    root: HTMLElement,
+    focusTree: FocusTree,
+    context: FocusRenderContext,
+): void {
+    const template = document.getElementById('focus-card-template') as HTMLTemplateElement | null;
+    if (!template) {
+        return;
+    }
+
+    root.querySelectorAll<HTMLElement>('[data-focus-card-slot]').forEach(slot => {
+        const focusId = slot.dataset.focusCardSlot;
+        const focus = focusId ? focusTree.focuses[focusId] : undefined;
+        const position = focusId ? context.focusPositions[focusId] : undefined;
+        if (!focusId || !focus || !position) {
+            return;
+        }
+
+        const fragment = template.content.cloneNode(true) as DocumentFragment;
+        const card = fragment.querySelector<HTMLElement>('.navigator');
+        const input = fragment.querySelector<HTMLInputElement>('input[type="checkbox"]');
+        const icon = fragment.querySelector<HTMLElement>('.st-focus-icon-image');
+        const label = fragment.querySelector<HTMLElement>('.st-focus-code-line');
+        if (!card || !input || !icon || !label) {
+            return;
+        }
+
+        const positionText = `${position.x}, ${position.y}`;
+        card.dataset.focusId = focusId;
+        card.dataset.focusEditable = focus.editable === true ? 'true' : 'false';
+        card.dataset.focusSourceFile = focus.sourceFile ?? focus.file;
+        card.title = `${focusId}\n(${positionText})`;
+        card.dataset.previewTitleId = card.title;
+        card.dataset.previewTitleName = card.title;
+        if (focus.start !== undefined) {
+            card.setAttribute('start', String(focus.start));
+        }
+        if (focus.end !== undefined) {
+            card.setAttribute('end', String(focus.end));
+        }
+        if (focus.file !== focusPositionActiveFile) {
+            card.setAttribute('file', focus.file);
+        }
+        input.id = `checkbox-${normalizeForStyle(focusId)}`;
+        icon.classList.add(getFocusIconClassName(focus, context.exprs));
+        label.dataset.previewLabelId = focusId;
+        label.dataset.previewLabelName = focusId;
+        label.textContent = focusId;
+        slot.replaceChildren(fragment);
+    });
 }
 
 function updateSelectedFocusTree(clearCondition: boolean) {
@@ -2573,6 +2801,7 @@ interface FocusRenderContext {
     exprs: ConditionItem[];
     focusPositions: Record<string, NumberPosition>;
     renderedFocus: Record<string, string>;
+    styleTable?: StyleTable;
 }
 
 function renderCurrentFocusHtml(
@@ -2589,7 +2818,7 @@ function renderCurrentFocusHtml(
     const template = renderedFocus[focusId] ?? (
         isPendingPlaceholderFocus(focus) || getPendingPlaceholderFocusIds(focusTree.id).has(focusId)
             ? renderPendingPlaceholderFocusTemplate(focus)
-            : undefined
+            : renderFocusSkeletonTemplate(focus, context?.styleTable)
     );
     if (!template) {
         return undefined;
@@ -2604,6 +2833,29 @@ function renderCurrentFocusHtml(
     return template
         .split('{{position}}').join(`${position.x}, ${position.y}`)
         .replace('{{iconClass}}', iconClass);
+}
+
+function renderFocusSkeletonTemplate(focus: Focus, styleTable: StyleTable = new StyleTable()): string {
+    const id = htmlAttributeEscape(focus.id);
+    const title = htmlAttributeEscape(`${focus.id}\n({{position}})`);
+    const fileAttribute = focus.file === focusPositionActiveFile
+        ? ''
+        : ` file="${htmlAttributeEscape(focus.file)}"`;
+    return `<div class="navigator ${styleTable.name('focus-common')}"`
+        + `${focus.start === undefined ? '' : ` start="${focus.start}"`}`
+        + `${focus.end === undefined ? '' : ` end="${focus.end}"`}`
+        + fileAttribute
+        + ` data-focus-id="${id}"`
+        + ` data-focus-editable="${focus.editable === true ? 'true' : 'false'}"`
+        + ` data-focus-source-file="${htmlAttributeEscape(focus.sourceFile ?? focus.file)}"`
+        + ` title="${title}" data-preview-title-id="${title}" data-preview-title-name="${title}">`
+        + `<div class="focus-checkbox ${styleTable.name('focus-checkbox')}">`
+        + `<input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/></div>`
+        + `<div class="${styleTable.name('focus-icon-slot')}">`
+        + `<div class="{{iconClass}} ${styleTable.name('focus-icon-image')}"></div></div>`
+        + `<span class="${styleTable.name('focus-span')}">`
+        + `<span class="${styleTable.name('focus-code-line')}" data-preview-label-id="${id}"`
+        + ` data-preview-label-name="${id}">${htmlTextEscape(focus.id)}</span></span></div>`;
 }
 
 function clearCheckedFocuses(focusIds?: readonly string[]) {
@@ -2621,42 +2873,88 @@ function setupCheckedFocuses(focuses: Focus[], completableFocusIds: ReadonlySet<
         if (checkbox) {
             if (completableFocusIds.has(focus.id)) {
                 checkbox.checked = !!focusCheckState[focus.id];
-                const checkboxItem = new Checkbox(checkbox);
+                checkbox.dataset.focusCheckboxId = focus.id;
+                const checkboxItem = new Checkbox(checkbox, undefined, undefined, 'delegated');
                 checkedFocuses[focus.id] = checkboxItem;
-                checkbox.addEventListener('change', runSafely(async () => {
-                    if (checkbox.checked) {
-                        for (const exclusiveFocus of focus.exclusive) {
-                            const exclusiveCheckbox = checkedFocuses[exclusiveFocus];
-                            if (exclusiveCheckbox) {
-                                exclusiveCheckbox.input.checked = false;
-                                focusCheckState[exclusiveFocus] = false;
-                            }
-                        }
-                    }
-                    focusCheckState[focus.id] = checkbox.checked;
-                    setState({ checkedFocuses: focusCheckState });
-
-                    const rect = checkbox.getBoundingClientRect();
-                    const oldLeft = rect.left;
-                    const oldTop = rect.top;
-                    const applied = await buildContent();
-                    if (!applied) {
-                        return;
-                    }
-
-                    const newCheckbox = document.getElementById(`checkbox-${normalizeForStyle(focus.id)}`) as HTMLInputElement;
-                    if (newCheckbox) {
-                        const newRect = newCheckbox.getBoundingClientRect();
-                        window.scrollBy(newRect.left - oldLeft, newRect.top - oldTop);
-                    }
-
-                    retriggerSearch();
-                }));
             } else {
                 checkbox.parentElement?.remove();
             }
         }
     }
+}
+
+function subscribeFocusCheckboxDelegation(root: HTMLElement): void {
+    if (root.dataset.focusCheckboxDelegated === 'true') {
+        return;
+    }
+    root.dataset.focusCheckboxDelegated = 'true';
+
+    const toggleCheckbox = (container: HTMLElement) => {
+        const outer = container.parentElement;
+        const input = outer?.previousElementSibling as HTMLInputElement | null;
+        if (!input || input.type !== 'checkbox' || !input.dataset.focusCheckboxId) {
+            return;
+        }
+        input.checked = !input.checked;
+        container.setAttribute('aria-checked', input.checked.toString());
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    root.addEventListener('click', event => {
+        const container = (event.target as Element | null)?.closest<HTMLElement>('.checkbox-container');
+        if (!container || !root.contains(container)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCheckbox(container);
+    });
+    root.addEventListener('keydown', event => {
+        const keyboardEvent = event as KeyboardEvent;
+        if (keyboardEvent.code !== 'Enter' && keyboardEvent.code !== 'Space') {
+            return;
+        }
+        const container = (event.target as Element | null)?.closest<HTMLElement>('.checkbox-container');
+        if (!container || !root.contains(container)) {
+            return;
+        }
+        event.preventDefault();
+        toggleCheckbox(container);
+    });
+    root.addEventListener('change', runSafely(async event => {
+        const checkbox = event.target as HTMLInputElement | null;
+        const focusId = checkbox?.dataset.focusCheckboxId;
+        const focus = focusId ? getCurrentFocusTree()?.focuses[focusId] : undefined;
+        if (!checkbox || !focusId || !focus) {
+            return;
+        }
+
+        const focusCheckState = getState().checkedFocuses ?? {};
+        if (checkbox.checked) {
+            for (const exclusiveFocusId of focus.exclusive) {
+                const exclusiveCheckbox = checkedFocuses[exclusiveFocusId];
+                if (exclusiveCheckbox) {
+                    exclusiveCheckbox.input.checked = false;
+                    exclusiveCheckbox.syncAriaChecked();
+                    focusCheckState[exclusiveFocusId] = false;
+                }
+            }
+        }
+        focusCheckState[focusId] = checkbox.checked;
+        setState({ checkedFocuses: focusCheckState });
+
+        const rect = checkbox.getBoundingClientRect();
+        const applied = await buildContent();
+        if (!applied) {
+            return;
+        }
+        const nextCheckbox = document.getElementById(`checkbox-${normalizeForStyle(focusId)}`) as HTMLInputElement | null;
+        if (nextCheckbox) {
+            const nextRect = nextCheckbox.getBoundingClientRect();
+            window.scrollBy(nextRect.left - rect.left, nextRect.top - rect.top);
+        }
+        retriggerSearch();
+    }));
 }
 
 function syncCheckedFocusesForIds(focusTree: FocusTree, focusIds: readonly string[], completableFocusIds: ReadonlySet<string>) {
@@ -2899,6 +3197,7 @@ function applyIncrementalCurrentTreeUpdate(
     decision: FocusTreeContentUpdateDecision,
 ): boolean {
     currentRenderedFocusTree = focusTree;
+    rebuildRelationIndex(focusTree);
     currentCompletableFocusIds = collectCompletedFocusIds(focusTree.conditionExprs);
 
     if (decision.changedCurrentTreeFocusIds.length > 0) {
@@ -2910,7 +3209,6 @@ function applyIncrementalCurrentTreeUpdate(
             }
 
             focusElement.innerHTML = nextHtml;
-            subscribeNavigators(focusElement);
         }
 
         refreshRenderedFocusElementsForIds(decision.changedCurrentTreeFocusIds);
@@ -2925,12 +3223,70 @@ function applyIncrementalCurrentTreeUpdate(
 
         refreshInlayWindowSelector(focusTree, currentRenderedExprs);
         inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, currentRenderedExprs);
-        subscribeNavigators(inlayWindowPlaceholder);
     }
 
     updateFocusPositionEditUi();
     refreshPreviewLabelMode();
     retriggerSearch();
+    return true;
+}
+
+async function applyAssetHydrationCurrentTreeUpdate(
+    focusTree: FocusTree,
+    decision: FocusTreeContentUpdateDecision,
+    snapshotVersion: number,
+): Promise<boolean> {
+    currentRenderedFocusTree = focusTree;
+    rebuildRelationIndex(focusTree);
+    currentCompletableFocusIds = collectCompletedFocusIds(focusTree.conditionExprs);
+
+    const changedFocusIds = [...decision.changedCurrentTreeFocusIds].sort((left, right) => {
+        const leftSelected = currentSelectedFocusIds.has(left) ? 1 : 0;
+        const rightSelected = currentSelectedFocusIds.has(right) ? 1 : 0;
+        return rightSelected - leftSelected;
+    });
+    let index = 0;
+    while (index < changedFocusIds.length) {
+        if (focusTreeSnapshotVersion !== snapshotVersion) {
+            return true;
+        }
+
+        const frameStartedAt = performance.now();
+        do {
+            const focusId = changedFocusIds[index++];
+            const focusElement = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
+            const nextHtml = renderCurrentFocusHtml(focusTree, focusId);
+            if (!focusElement || !nextHtml) {
+                return false;
+            }
+            focusElement.innerHTML = nextHtml;
+            refreshRenderedFocusElementsForIds([focusId]);
+            syncCheckedFocusesForIds(focusTree, [focusId], currentCompletableFocusIds);
+        } while (index < changedFocusIds.length && performance.now() - frameStartedAt < 8);
+
+        if (index < changedFocusIds.length) {
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        }
+    }
+
+    if (decision.shouldRefreshCurrentTreeInlay) {
+        const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement | null;
+        if (!inlayWindowPlaceholder) {
+            return false;
+        }
+        refreshInlayWindowSelector(focusTree, currentRenderedExprs);
+        inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, currentRenderedExprs);
+    }
+
+    rebuildConnectionElementIndex();
+    updateFocusPositionEditUi();
+    refreshPreviewLabelMode();
+    retriggerSearch();
+    postFocusTreeDiagnostics('assetHydration', {
+        focusTree,
+        focusGridBoxItemCount: Object.keys(currentFocusPositions).length,
+        renderedFocusHitCount: changedFocusIds.length,
+    });
     return true;
 }
 
@@ -2969,7 +3325,8 @@ window.addEventListener('load', runSafely(async function() {
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;
-            requestId?: string;
+            requestId?: string | number;
+            protocolVersion?: number;
             reason?: string;
             snapshotVersion?: number;
             documentVersion?: number;
@@ -3008,6 +3365,9 @@ window.addEventListener('load', runSafely(async function() {
         };
         if (message.command === 'focusTreeContentUpdated') {
             const contentUpdateMessage = message as FocusTreeContentUpdateMessage;
+            if (contentUpdateMessage.protocolVersion !== focusTreeProtocolVersion) {
+                return;
+            }
             postFocusTreeWebviewTiming(createFocusTreeContentTiming('contentUpdateReceived', contentUpdateMessage, {
                 applyMs: 0,
                 rebuildMs: 0,
@@ -3030,59 +3390,71 @@ window.addEventListener('load', runSafely(async function() {
                 const rebuildStartedAt = performance.now();
                 const rebuildPromise = rebuildContentSafely();
                 void rebuildPromise?.finally(() => {
-                    postFocusTreeWebviewTiming(createFocusTreeContentTiming(
-                        getContentAppliedTimingStage(contentUpdateMessage),
-                        contentUpdateMessage,
-                        {
+                    postFocusTreeContentApplied(contentUpdateMessage, {
                             applyMs: applyDurationMs,
                             rebuildMs: performance.now() - rebuildStartedAt,
                             rebindMs: 0,
-                        },
-                    ));
+                        });
                 });
                 return;
             }
 
             if (updateDecision.shouldApplyIncrementalUpdate && nextCurrentTree) {
                 const rebindStartedAt = performance.now();
+                if (contentUpdateMessage.updateType === 'assets') {
+                    void applyAssetHydrationCurrentTreeUpdate(
+                        nextCurrentTree,
+                        updateDecision,
+                        contentUpdateMessage.snapshotVersion,
+                    ).then(appliedIncrementally => {
+                        if (!appliedIncrementally && focusTreeSnapshotVersion === contentUpdateMessage.snapshotVersion) {
+                            const rebuildStartedAt = performance.now();
+                            const rebuildPromise = rebuildContentSafely();
+                            void rebuildPromise?.finally(() => {
+                                postFocusTreeContentApplied(contentUpdateMessage, {
+                                    applyMs: applyDurationMs,
+                                    rebuildMs: performance.now() - rebuildStartedAt,
+                                    rebindMs: performance.now() - rebindStartedAt,
+                                });
+                            });
+                            return;
+                        }
+                        if (focusTreeSnapshotVersion === contentUpdateMessage.snapshotVersion) {
+                            postFocusTreeContentApplied(contentUpdateMessage, {
+                                applyMs: applyDurationMs,
+                                rebuildMs: 0,
+                                rebindMs: performance.now() - rebindStartedAt,
+                            });
+                        }
+                    });
+                    return;
+                }
                 const appliedIncrementally = applyIncrementalCurrentTreeUpdate(nextCurrentTree, updateDecision);
                 if (!appliedIncrementally) {
                     const rebuildStartedAt = performance.now();
                     const rebuildPromise = rebuildContentSafely();
                     void rebuildPromise?.finally(() => {
-                        postFocusTreeWebviewTiming(createFocusTreeContentTiming(
-                            getContentAppliedTimingStage(contentUpdateMessage),
-                            contentUpdateMessage,
-                            {
+                        postFocusTreeContentApplied(contentUpdateMessage, {
                                 applyMs: applyDurationMs,
                                 rebuildMs: performance.now() - rebuildStartedAt,
                                 rebindMs: performance.now() - rebindStartedAt,
-                            },
-                        ));
+                            });
                     });
                     return;
                 }
-                postFocusTreeWebviewTiming(createFocusTreeContentTiming(
-                    getContentAppliedTimingStage(contentUpdateMessage),
-                    contentUpdateMessage,
-                    {
+                postFocusTreeContentApplied(contentUpdateMessage, {
                         applyMs: applyDurationMs,
                         rebuildMs: 0,
                         rebindMs: performance.now() - rebindStartedAt,
-                    },
-                ));
+                    });
                 return;
             }
 
-            postFocusTreeWebviewTiming(createFocusTreeContentTiming(
-                getContentAppliedTimingStage(contentUpdateMessage),
-                contentUpdateMessage,
-                {
+            postFocusTreeContentApplied(contentUpdateMessage, {
                     applyMs: applyDurationMs,
                     rebuildMs: 0,
                     rebindMs: 0,
-                },
-            ));
+                });
             return;
         }
 
@@ -3385,6 +3757,8 @@ window.addEventListener('load', runSafely(async function() {
         }
 
         const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
+        subscribeNavigatorDelegation(contentElement);
+        subscribeFocusCheckboxDelegation(contentElement);
         enableZoom(contentElement, 0, focusToolbarHeight);
         setPreviewPanDisabled(focusPositionEditMode);
 
@@ -3412,6 +3786,11 @@ window.addEventListener('load', runSafely(async function() {
         await rebuildContentSafely({ restoreScroll: true });
     } finally {
         postFocusTreeWebviewTiming({ stage: 'webviewReady' });
-        vscode.postMessage({ command: 'focusTreeWebviewReady' });
+        vscode.postMessage({
+            command: 'focusTreeWebviewReady',
+            protocolVersion: focusTreeProtocolVersion,
+            snapshotVersion: focusTreeSnapshotVersion,
+            documentVersion: focusPositionDocumentVersion,
+        });
     }
 }));
