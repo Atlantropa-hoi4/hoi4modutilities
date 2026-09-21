@@ -429,7 +429,7 @@ function buildNestedFocusTemplateBlock(
     const text =
         `${separator}${childIndent}${blockName} = {${lineEnding}` +
         `${nestedIndent}id = ${placeholder}${lineEnding}` +
-        `${nestedIndent}icon = GFX${lineEnding}` +
+        `${nestedIndent}icon = GFX_goal_unknown${lineEnding}` +
         `${nestedIndent}cost = 1${lineEnding}` +
         `${lineEnding}` +
         (parentFocusId ? `${nestedIndent}relative_position_id = ${parentFocusId}${lineEnding}` : '') +
@@ -469,7 +469,7 @@ function buildTopLevelFocusTemplateBlock(
     const text =
         `${prefix}${blockName} = {${lineEnding}` +
         `${childIndent}id = ${placeholder}${lineEnding}` +
-        `${childIndent}icon = GFX${lineEnding}` +
+        `${childIndent}icon = GFX_goal_unknown${lineEnding}` +
         `${childIndent}cost = 1${lineEnding}` +
         `${lineEnding}` +
         (parentFocusId ? `${childIndent}relative_position_id = ${parentFocusId}${lineEnding}` : '') +

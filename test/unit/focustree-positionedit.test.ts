@@ -567,7 +567,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{\n        id = MEO_FOCUS_ID\n        icon = GFX\n        cost = 1\n\n        x = 5\n        y = 6\n\n        ai_will_do = \{ factor = 1 \}\n        completion_reward = \{\n\n        \}\n        search_filters = \{ \}\n    \}\n\}/);
+        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{\n        id = MEO_FOCUS_ID\n        icon = GFX_goal_unknown\n        cost = 1\n\n        x = 5\n        y = 6\n\n        ai_will_do = \{ factor = 1 \}\n        completion_reward = \{\n\n        \}\n        search_filters = \{ \}\n    \}\n\}/);
     });
 
     it('creates the requested full shared focus template after the last local shared focus block', () => {
@@ -583,7 +583,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\r?\n\r?\nshared_focus = \{\r?\n    id = TAG_FOCUS_ID\r?\n    icon = GFX\r?\n    cost = 1\r?\n\r?\n    x = 7\r?\n    y = 8\r?\n\r?\n    ai_will_do = \{ factor = 1 \}\r?\n    completion_reward = \{\r?\n\r?\n    \}\r?\n    search_filters = \{ \}\r?\n\}\r?\n\r?\njoint_focus = \{/);
+        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\r?\n\r?\nshared_focus = \{\r?\n    id = TAG_FOCUS_ID\r?\n    icon = GFX_goal_unknown\r?\n    cost = 1\r?\n\r?\n    x = 7\r?\n    y = 8\r?\n\r?\n    ai_will_do = \{ factor = 1 \}\r?\n    completion_reward = \{\r?\n\r?\n    \}\r?\n    search_filters = \{ \}\r?\n\}\r?\n\r?\njoint_focus = \{/);
     });
 
     it('creates a child template with selected prerequisites, a branch-root relative anchor, and local coordinates', () => {
@@ -615,7 +615,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /id = MEO_FOCUS_ID\n        icon = GFX\n        cost = 1\n\n        relative_position_id = BRANCH_ROOT\n        x = 2\n        y = 3\n\n        ai_will_do = \{ factor = 1 \}\n        prerequisite = \{ focus = SELECTED_PARENT \}\n        completion_reward = \{\n\n        \}\n        search_filters = \{ \}/);
+        assert.match(updated, /id = MEO_FOCUS_ID\n        icon = GFX_goal_unknown\n        cost = 1\n\n        relative_position_id = BRANCH_ROOT\n        x = 2\n        y = 3\n\n        ai_will_do = \{ factor = 1 \}\n        prerequisite = \{ focus = SELECTED_PARENT \}\n        completion_reward = \{\n\n        \}\n        search_filters = \{ \}/);
     });
 
     it('rejects parent-linked focus creation without local coordinates', () => {
