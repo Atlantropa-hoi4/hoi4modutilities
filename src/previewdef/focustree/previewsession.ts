@@ -25,11 +25,9 @@ import { debug } from '../../util/debug';
 import { isPerfTraceEnabled, measureAsync, recordPerf } from '../../util/perf';
 import { UserError } from '../../util/common';
 import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
-import { isLocalisationIndexEnabled } from '../../util/featureflags';
-import { isGfxIndexReady } from '../../util/gfxindex';
-import { isSharedFocusIndexReady } from '../../util/sharedFocusIndex';
-import { focusTreeProtocolVersion } from './viewmodel';
+import { focusTreeProtocolVersion, toFocusTreeCatalogViews } from './viewmodel';
 import { FocusTreeInvalidation } from './invalidation';
+import { getFocusTreeHostCommand } from './webviewupdate';
 
 export interface FocusTreeRefreshOptions {
     ignorePendingLocalEditDocumentVersion?: boolean;
@@ -55,6 +53,8 @@ export interface FocusTreePreviewSessionOptions {
 
 export interface FocusTreeSnapshotBuilderLike {
     dispose?(): void;
+    invalidate?(invalidation: FocusTreeInvalidation): void;
+    setPriorityAssetKeys?(assetKeys: readonly string[]): void;
     renderShell(documentVersion: number): string;
     renderDocument(document: vscode.TextDocument): Promise<string>;
     buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean): Promise<FocusTreeRenderBaseState>;
@@ -73,7 +73,6 @@ export class FocusTreePreviewSession {
     private readonly getConditionPresetsByTree: () => FocusConditionPresetsByTree;
     private readonly getLatestDocument: (uri: vscode.Uri) => vscode.TextDocument | undefined;
     private readonly snapshotBuilder: FocusTreeSnapshotBuilderLike;
-    private readonly isInitialFullLoadReady: () => boolean;
     private readonly runtimeState: FocusTreeRuntimeState;
     private readonly deferredHydrationDelayMs: number;
     private readonly patchPlanner = new FocusTreePatchPlanner();
@@ -86,6 +85,8 @@ export class FocusTreePreviewSession {
         snapshotVersion: number;
     } | undefined;
     private pendingLocalisationRefreshDocumentVersion: number | undefined;
+    private preferredTreeId: string | undefined;
+    private sceneRevision = 0;
     private disposed = false;
 
     constructor(options: FocusTreePreviewSessionOptions) {
@@ -109,7 +110,6 @@ export class FocusTreePreviewSession {
         }
         this.runtimeState = options.runtimeState ?? createFocusTreeRuntimeState();
         this.deferredHydrationDelayMs = options.deferredHydrationDelayMs ?? FocusTreePreviewSession.defaultDeferredHydrationDelayMs;
-        this.isInitialFullLoadReady = options.isInitialFullLoadReady ?? areFocusTreePreviewIndexesReady;
     }
 
     public renderShell(documentVersion: number): string {
@@ -148,9 +148,7 @@ export class FocusTreePreviewSession {
         this.resetSessionState();
         this.webview.html = this.renderShell(document.version);
         const requestId = beginFocusTreeRefresh(this.runtimeState);
-        const initialAssetLoadMode: FocusTreeAssetLoadMode = this.isInitialFullLoadReady()
-            ? 'full'
-            : 'deferred';
+        const initialAssetLoadMode: FocusTreeAssetLoadMode = 'deferred';
         this.trace('initializePanel', {
             requestId,
             documentVersion: document.version,
@@ -179,6 +177,7 @@ export class FocusTreePreviewSession {
 
         const requestId = beginFocusTreeRefresh(this.runtimeState);
         const requestDocumentVersion = document.version;
+        this.snapshotBuilder.invalidate?.(options?.invalidation ?? FocusTreeInvalidation.All);
         const assetLoadMode = options?.assetLoadMode ?? this.resolveDefaultRefreshAssetLoadMode();
         this.trace('refreshDocument', {
             requestId,
@@ -194,12 +193,13 @@ export class FocusTreePreviewSession {
         });
     }
 
-    public handleWebviewReady(): void {
+    public handleWebviewReady(selectedTreeId?: string): void {
         if (this.disposed) {
             return;
         }
 
         markFocusTreeWebviewReady(this.runtimeState);
+        this.preferredTreeId = selectedTreeId || this.preferredTreeId;
         this.trace('handleWebviewReady', {
             latestDocumentVersion: this.latestDocument?.version,
             latestRefreshRequestId: this.runtimeState.latestRefreshRequestId,
@@ -227,14 +227,55 @@ export class FocusTreePreviewSession {
         );
     }
 
+    public async handleSceneRequest(treeId: string): Promise<void> {
+        const cache = this.runtimeState.lastRenderCache;
+        const tree = cache?.focusTrees.find(candidate => candidate.id === treeId);
+        if (this.disposed || !cache || !tree || this.latestDocument?.version !== cache.focusPositionDocumentVersion) {
+            return;
+        }
+
+        this.preferredTreeId = treeId;
+        const focusIds = new Set(Object.keys(tree.focuses));
+        const inlayIds = new Set(tree.inlayWindows.map(inlay => inlay.id));
+        await this.webview.postMessage({
+            command: 'focusTreeScene',
+            protocolVersion: focusTreeProtocolVersion,
+            requestId: this.runtimeState.latestRefreshRequestId,
+            snapshotVersion: cache.snapshotVersion,
+            documentVersion: cache.focusPositionDocumentVersion,
+            sceneRevision: ++this.sceneRevision,
+            treeId,
+            sceneMode: 'merge',
+            updateType: 'structure',
+            selectedTreeId: treeId,
+            catalog: toFocusTreeCatalogViews(cache.focusTrees),
+            changedSlots: ['treeDefinitions', 'selector', 'warnings', 'treeBody', 'inlays', 'layout', 'styleDeps'],
+            changedTreeIds: [treeId],
+            structurallyChangedTreeIds: [treeId],
+            changedFocusIds: [...focusIds],
+            changedInlayWindowIds: [...inlayIds],
+            focusTrees: [tree],
+            continuousFocusHtml: cache.continuousFocusHtml,
+            renderedFocus: pickStringEntries(cache.renderedFocus, focusIds),
+            renderedInlayWindows: pickStringEntries(cache.renderedInlayWindows, inlayIds),
+            gridBox: cache.gridBox,
+            dynamicStyleCss: cache.dynamicStyleCss,
+            xGridSize: cache.xGridSize,
+            yGridSize: cache.yGridSize,
+            focusPositionActiveFile: cache.focusPositionActiveFile,
+        });
+    }
+
     public handleContentApplied(
         snapshotVersion: number | undefined,
         documentVersion: number | undefined,
         stage: string | undefined,
+        visibleFocusIds: readonly string[] = [],
+        priorityAssetKeys: readonly string[] = [],
     ): void {
         const pending = this.pendingDeferredHydration;
         if (this.disposed
-            || stage !== 'firstContentApplied'
+            || stage !== 'firstScenePainted'
             || !pending
             || snapshotVersion !== pending.snapshotVersion
             || documentVersion !== pending.documentVersion) {
@@ -244,7 +285,10 @@ export class FocusTreePreviewSession {
         this.trace('deferredHydrationAcknowledged', {
             snapshotVersion,
             documentVersion,
+            visibleFocusIds,
+            priorityAssetKeys,
         });
+        this.snapshotBuilder.setPriorityAssetKeys?.(priorityAssetKeys);
         this.consumePendingDeferredHydration();
         void this.runDeferredHydration(pending.document, pending.documentVersion);
     }
@@ -442,11 +486,15 @@ export class FocusTreePreviewSession {
                         return;
                     }
                     await this.webview.postMessage({
-                        command: 'focusTreeAssetStyleChunk',
+                        command: 'focusTreeAssetBatch',
                         protocolVersion: focusTreeProtocolVersion,
                         requestId,
                         snapshotVersion: targetSnapshotVersion,
                         documentVersion: requestDocumentVersion,
+                        sceneRevision: this.sceneRevision + 1,
+                        treeId: this.runtimeState.lastRenderCache?.focusTrees[0]?.id ?? '',
+                        updateType: 'assets',
+                        batchKind: 'style',
                         ...batch,
                     });
                 };
@@ -489,16 +537,46 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        const command = getFocusTreeHostCommand(update.updateType);
         const updateMessage: FocusTreeSnapshot['update'] & {
-            command: 'focusTreeContentUpdated';
+            command: 'focusTreeScene' | 'focusTreeAssetBatch' | 'focusTreeScenePatch';
             protocolVersion: typeof focusTreeProtocolVersion;
             requestId: number;
+            sceneRevision: number;
+            treeId: string;
         } = {
-            command: 'focusTreeContentUpdated',
+            command,
             protocolVersion: focusTreeProtocolVersion,
             requestId,
+            sceneRevision: ++this.sceneRevision,
+            treeId: update.selectedTreeId ?? update.focusTrees?.[0]?.id ?? '',
             ...update,
         };
+        if (command === 'focusTreeScene' && updateMessage.focusTrees) {
+            updateMessage.catalog = toFocusTreeCatalogViews(updateMessage.focusTrees);
+            const allFocusTrees = updateMessage.focusTrees;
+            const selectedTree = allFocusTrees.find(tree => tree.id === this.preferredTreeId)
+                ?? allFocusTrees.find(tree => tree.id === updateMessage.selectedTreeId)
+                ?? allFocusTrees[0];
+            if (selectedTree) {
+                const focusIds = new Set(Object.keys(selectedTree.focuses));
+                const inlayIds = new Set(selectedTree.inlayWindows.map(inlay => inlay.id));
+                updateMessage.sceneMode = 'replace';
+                updateMessage.treeId = selectedTree.id;
+                updateMessage.selectedTreeId = selectedTree.id;
+                updateMessage.focusTrees = [selectedTree];
+                updateMessage.changedTreeIds = [selectedTree.id];
+                updateMessage.structurallyChangedTreeIds = [selectedTree.id];
+                updateMessage.changedFocusIds = updateMessage.changedFocusIds?.filter(id => focusIds.has(id));
+                updateMessage.changedInlayWindowIds = updateMessage.changedInlayWindowIds?.filter(id => inlayIds.has(id));
+                if (updateMessage.renderedFocus) {
+                    updateMessage.renderedFocus = pickStringEntries(updateMessage.renderedFocus, focusIds);
+                }
+                if (updateMessage.renderedInlayWindows) {
+                    updateMessage.renderedInlayWindows = pickStringEntries(updateMessage.renderedInlayWindows, inlayIds);
+                }
+            }
+        }
         const payloadBytes = isPerfTraceEnabled() ? getApproximateJsonByteLength(updateMessage) : 0;
         updateMessage.perf = {
             source: options.source,
@@ -611,6 +689,7 @@ export class FocusTreePreviewSession {
             void this.refreshDocument(latestDocument, {
                 assetLoadMode: 'full',
                 source: 'dependency',
+                invalidation: FocusTreeInvalidation.Localisation,
             });
         }, error => {
             this.pendingLocalisationRefreshDocumentVersion = undefined;
@@ -719,6 +798,7 @@ export class FocusTreePreviewSession {
     private resetSessionState(): void {
         this.cancelDeferredHydrationTimer();
         this.pendingLocalisationRefreshDocumentVersion = undefined;
+        this.sceneRevision = 0;
         resetFocusTreeRuntimeState(this.runtimeState);
     }
 
@@ -761,17 +841,14 @@ export class FocusTreePreviewSession {
     }
 }
 
-function areFocusTreePreviewIndexesReady(): boolean {
-    return isLocalisationIndexEnabled()
-        && isLocalisationIndexReady()
-        && isGfxIndexReady()
-        && isSharedFocusIndexReady();
-}
-
 function getApproximateJsonByteLength(value: unknown): number {
     try {
         return Buffer.byteLength(JSON.stringify(value), 'utf8');
     } catch {
         return 0;
     }
+}
+
+function pickStringEntries(source: Readonly<Record<string, string>>, keys: ReadonlySet<string>): Record<string, string> {
+    return Object.fromEntries(Object.entries(source).filter(([key]) => keys.has(key)));
 }

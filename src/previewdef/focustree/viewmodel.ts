@@ -8,7 +8,43 @@ import type {
 } from './schema';
 import type { ContinuousFocusPositionMeta, FocusTreeCreateMeta } from './positioneditcommon';
 
-export const focusTreeProtocolVersion = 2 as const;
+export const focusTreeProtocolVersion = 3 as const;
+
+export interface FocusTreeCatalogView {
+    id: string;
+    kind: FocusTreeKind;
+    focusCount: number;
+    warningCount: number;
+}
+
+export interface FocusPresentationTemplateView {
+    id: string;
+    html: string;
+}
+
+export interface FocusSceneView {
+    tree: FocusTreeView;
+    presentationTemplates?: FocusPresentationTemplateView[];
+}
+
+export interface FocusAssetRequest {
+    treeId: string;
+    visibleFocusIds: string[];
+    assetKeys: string[];
+}
+
+export interface FocusAssetBatch extends FocusTreeAssetPatch {
+    treeId: string;
+    focusIds: string[];
+    assetKeys: string[];
+}
+
+export interface FocusScenePatch {
+    treeId: string;
+    changedFocusIds: string[];
+    removedFocusIds?: string[];
+    tree?: FocusTreeView;
+}
 
 export interface FocusView {
     id: string;
@@ -76,6 +112,15 @@ export interface FocusTreeAssetPatch {
     renderedInlayWindowPatch?: Record<string, string>;
     removedRenderedFocusIds?: string[];
     removedRenderedInlayWindowIds?: string[];
+}
+
+export function toFocusTreeCatalogViews(focusTrees: readonly FocusTreeView[]): FocusTreeCatalogView[] {
+    return focusTrees.map(tree => ({
+        id: tree.id,
+        kind: tree.kind,
+        focusCount: Object.keys(tree.focuses).length,
+        warningCount: tree.warnings.length,
+    }));
 }
 
 export function toFocusTreeViews(

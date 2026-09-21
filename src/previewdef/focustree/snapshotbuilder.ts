@@ -9,6 +9,7 @@ import { FocusTreeLoaderAdapter } from "./loaderadapter";
 import { createFullFocusTreeRenderUpdateWithCancellation, FocusTreeRenderCache } from "./renderpayloadpatch";
 import { FocusTreeAssetLoadMode } from "./loader";
 import { FocusTreeSnapshot } from "./runtime";
+import { FocusTreeInvalidation } from './invalidation';
 
 export interface FocusTreeSnapshotBuilderOptions {
     uri: vscode.Uri;
@@ -83,6 +84,14 @@ export class FocusTreeSnapshotBuilder {
             cache,
             metrics,
         };
+    }
+
+    public invalidate(invalidation: FocusTreeInvalidation): void {
+        this.loaderAdapter.invalidate(invalidation);
+    }
+
+    public setPriorityAssetKeys(assetKeys: readonly string[]): void {
+        this.loaderAdapter.setPriorityAssetKeys(assetKeys);
     }
 
     public dispose(): void {

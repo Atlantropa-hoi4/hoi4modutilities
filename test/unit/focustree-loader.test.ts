@@ -213,12 +213,12 @@ describe('focustree loader', () => {
         assert.ok(result.result.gfxFiles.includes(indexedGfxFile));
     });
 
-    it('does not bound full focus icon fallback scans when icons are not indexed or explicitly declared', async () => {
+    it('does not scan every GFX file for unresolved icons on the initial hydration path', async () => {
         const loader = new FocusTreeLoader(mainFocusFile, undefined, 'full');
         await loader.load(new LoaderSession(true));
 
         assert.ok(focusIconFallbackLimits.length >= 1);
-        assert.ok(focusIconFallbackLimits.every(limit => limit === undefined));
+        assert.ok(focusIconFallbackLimits.every(limit => limit === 0));
     });
 
     it('parses one source snapshot for deferred structure and full hydration of one document version', async () => {

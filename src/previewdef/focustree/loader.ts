@@ -76,6 +76,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         private assetLoadMode: FocusTreeAssetLoadMode = 'full',
         private readonly sourceSnapshotCache: FocusTreeSourceSnapshotCache = {},
         private readonly sourceSnapshotKey?: string,
+        private readonly priorityIconNames: string[] = [],
     ) {
         super(file, contentProvider);
     }
@@ -91,6 +92,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             assetLoadMode,
             this.sourceSnapshotCache,
             sourceSnapshotKey,
+            this.priorityIconNames,
         );
         this.copyDependencyLoadersTo(loader);
         return loader;
@@ -104,6 +106,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         this.sourceSnapshotCache.key = undefined;
         this.sourceSnapshotCache.content = undefined;
         this.sourceSnapshotCache.snapshot = undefined;
+    }
+
+    public setPriorityIconNames(iconNames: readonly string[]): void {
+        this.priorityIconNames.splice(0, this.priorityIconNames.length, ...uniq(iconNames.filter(Boolean)));
     }
 
     protected async postLoad(content: string | undefined, dependencies: Dependency[], error: any, session: LoaderSession): Promise<LoadResultOD<FocusTreeLoaderResult>> {
@@ -261,15 +267,21 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
         ]);
+        const priorityIconNameSet = new Set(this.priorityIconNames);
+        const orderedFocusIconNames = [
+            ...this.priorityIconNames.filter(iconName => focusIconNames.includes(iconName)),
+            ...focusIconNames.filter(iconName => !priorityIconNameSet.has(iconName)),
+        ];
         const iconGfxAssets = deferAssetLoad
             ? createEmptyFocusIconAssetResolution()
-            : await resolveFocusIconGfxAssets([...focusIconNames, ...collectPresentationSprites(presentation)], {
+            : await resolveFocusIconGfxAssets([...orderedFocusIconNames, ...collectPresentationSprites(presentation)], {
                 resolveIndexedFile: async gfxName => getGfxContainerFile(gfxName),
                 listInterfaceGfxFiles: async () => orderFocusIconFallbackGfxFiles(await getCachedInterfaceGfxFiles()),
                 readSpriteNames: getCachedInterfaceGfxSpriteNames,
                 readSpriteTextureFiles: getSpriteTextureFilesByGfxFile,
                 readTextureExpiryToken: hoiFileExpiryToken,
                 priorityGfxFiles: explicitGfxDependencies,
+                fallbackScanLimit: 0,
                 throwIfCancelled: () => session.throwIfCancelled(),
             });
         session.throwIfCancelled();

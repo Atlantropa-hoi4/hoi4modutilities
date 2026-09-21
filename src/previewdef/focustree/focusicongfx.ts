@@ -23,6 +23,14 @@ export interface FocusIconAssetResolution {
 
 export type FocusIconGfxAssets = FocusIconAssetResolution;
 
+export class FocusAssetResolver {
+    constructor(private readonly resolver: FocusIconGfxResolver) {}
+
+    public resolve(assetKeys: readonly (string | undefined)[]): Promise<FocusIconAssetResolution> {
+        return resolveFocusIconGfxAssets([...assetKeys], this.resolver);
+    }
+}
+
 export async function resolveFocusIconGfxFiles(
     iconNames: (string | undefined)[],
     resolver: FocusIconGfxResolver,
@@ -98,13 +106,20 @@ export async function resolveFocusIconGfxAssets(
         await scanGfxFile(gfxFile);
     }
 
-    for (const iconName of Array.from(unresolvedNames)) {
+    const indexedNames = Array.from(unresolvedNames);
+    for (let batchStart = 0; batchStart < indexedNames.length; batchStart += 32) {
         resolver.throwIfCancelled?.();
-        const indexedFile = await resolver.resolveIndexedFile(iconName);
+        const batchNames = indexedNames.slice(batchStart, batchStart + 32);
+        const indexedFiles = await mapWithConcurrency(batchNames, 8, async iconName => ({
+            iconName,
+            indexedFile: await resolver.resolveIndexedFile(iconName),
+        }));
         resolver.throwIfCancelled?.();
-        if (indexedFile) {
-            unresolvedNames.delete(iconName);
-            addResolvedIcon(indexedFile, iconName);
+        for (const { iconName, indexedFile } of indexedFiles) {
+            if (indexedFile) {
+                unresolvedNames.delete(iconName);
+                addResolvedIcon(indexedFile, iconName);
+            }
         }
     }
 
@@ -142,6 +157,23 @@ export async function resolveFocusIconGfxAssets(
         textureExpiryTokenByIconName: textureResolution.textureExpiryTokenByIconName,
         unresolvedIconNames: Array.from(unresolvedNames),
     });
+}
+
+async function mapWithConcurrency<T, R>(
+    values: readonly T[],
+    concurrency: number,
+    mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+    const results = new Array<R>(values.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+        while (nextIndex < values.length) {
+            const index = nextIndex++;
+            results[index] = await mapper(values[index]);
+        }
+    });
+    await Promise.all(workers);
+    return results;
 }
 
 function isResolvableFocusIconName(iconName: string | undefined): iconName is string {

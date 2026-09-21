@@ -143,22 +143,34 @@ export class FocusTreePreview extends PreviewBase {
             if ((msg as { protocolVersion?: number }).protocolVersion !== focusTreeProtocolVersion) {
                 return true;
             }
-            this.session.handleWebviewReady();
+            this.session.handleWebviewReady((msg as { selectedTreeId?: string }).selectedTreeId);
             return true;
         }
 
-        if (command === 'focusTreeContentApplied') {
+        if (command === 'focusTreeSceneRequest') {
+            const request = msg as unknown as { protocolVersion?: number; treeId?: string };
+            if (request.protocolVersion === focusTreeProtocolVersion && request.treeId) {
+                await this.session.handleSceneRequest(request.treeId);
+            }
+            return true;
+        }
+
+        if (command === 'focusTreeScenePainted') {
             const applied = msg as unknown as {
                 protocolVersion?: number;
                 snapshotVersion?: number;
                 documentVersion?: number;
                 stage?: string;
+                visibleFocusIds?: string[];
+                priorityAssetKeys?: string[];
             };
             if (applied.protocolVersion === focusTreeProtocolVersion) {
                 this.session.handleContentApplied(
                     applied.snapshotVersion,
                     applied.documentVersion,
                     applied.stage,
+                    applied.visibleFocusIds,
+                    applied.priorityAssetKeys,
                 );
             }
             return true;

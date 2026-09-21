@@ -64,6 +64,37 @@ function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
     };
 }
 
+function createTreeView(id: string, focusId: string): any {
+    return {
+        id,
+        kind: 'national',
+        focuses: {
+            [focusId]: {
+                id: focusId,
+                layoutEditKey: focusId,
+                x: 0,
+                y: 0,
+                icon: [],
+                prerequisite: [],
+                prerequisiteGroupCount: 0,
+                prerequisiteFocusCount: 0,
+                exclusive: [],
+                exclusiveCount: 0,
+                inAllowBranch: [],
+                offset: { x: 0, y: 0 },
+                searchFilters: [],
+                file: 'common/national_focus/test.txt',
+            },
+        },
+        inlayWindows: [],
+        allowBranchOptions: [],
+        conditionExprs: [],
+        isSharedFocues: false,
+        warnings: [],
+        searchFilters: [],
+    };
+}
+
 async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
     const deadline = Date.now() + 1000;
     while (!predicate() && Date.now() < deadline) {
@@ -183,7 +214,7 @@ describe('focustree preview session', () => {
         assert.strictEqual(runtimeState.webviewReady, false);
     });
 
-    it('uses a full initial snapshot only when the preview index readiness gate passes', async () => {
+    it('always uses a structure-first deferred initial snapshot regardless of index readiness', async () => {
         const requestedModes: Array<'full' | 'deferred'> = [];
         const first = createSession({
             isInitialFullLoadReady: () => false,
@@ -207,7 +238,7 @@ describe('focustree preview session', () => {
         });
 
         await second.session.initializePanel(createDocument(41));
-        assert.deepStrictEqual(requestedModes, ['full']);
+        assert.deepStrictEqual(requestedModes, ['deferred']);
         second.session.dispose();
     });
 
@@ -243,14 +274,82 @@ describe('focustree preview session', () => {
         await session.initializePanel(document);
         session.handleWebviewReady();
         await waitForCondition(
-            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            () => postMessages.some(message => (message as any).command === 'focusTreeScene'),
             'Expected a snapshot update after the webview became ready.',
         );
 
         assert.strictEqual(webview.html, 'shell:6');
-        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
+        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeScene'));
         assert.strictEqual(sessionState.lastRenderCache?.snapshotVersion, 1);
         assert.strictEqual(sessionState.webviewReady, true);
+    });
+
+    it('sends only the selected scene initially and loads another catalog scene on request', async () => {
+        const document = createDocument(42);
+        const firstTree = createTreeView('first_tree', 'FIRST');
+        const secondTree = createTreeView('second_tree', 'SECOND');
+        const { session, postMessages } = createSession({
+            deferredHydrationDelayMs: 10_000,
+            createFullSnapshot: async baseState => ({
+                payload: { focusPositionDocumentVersion: baseState.focusPositionDocumentVersion },
+                update: {
+                    updateType: 'structure',
+                    snapshotVersion: 1,
+                    documentVersion: baseState.focusPositionDocumentVersion,
+                    selectedTreeId: 'first_tree',
+                    changedSlots: ['treeDefinitions', 'selector', 'warnings', 'treeBody', 'inlays', 'layout', 'styleDeps'],
+                    changedTreeIds: ['first_tree', 'second_tree'],
+                    structurallyChangedTreeIds: ['first_tree', 'second_tree'],
+                    changedFocusIds: ['FIRST', 'SECOND'],
+                    focusTrees: [firstTree, secondTree],
+                    renderedFocus: { FIRST: '<div>first</div>', SECOND: '<div>second</div>' },
+                    renderedInlayWindows: {},
+                    gridBox: baseState.gridBox,
+                    dynamicStyleCss: '',
+                    xGridSize: 96,
+                    yGridSize: 130,
+                },
+                cache: {
+                    snapshotVersion: 1,
+                    selectedTreeId: 'first_tree',
+                    focusTrees: [firstTree, secondTree],
+                    renderedFocus: { FIRST: '<div>first</div>', SECOND: '<div>second</div>' },
+                    renderedInlayWindows: {},
+                    focusIconGfxFileByName: {},
+                    focusIconStyleSignature: '',
+                    gridBox: baseState.gridBox,
+                    dynamicStyleCss: '',
+                    xGridSize: 96,
+                    yGridSize: 130,
+                    focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
+                    focusPositionActiveFile: baseState.focusPositionActiveFile,
+                    hasFocusSelector: true,
+                    hasWarningsButton: false,
+                    deferredAssetLoad: true,
+                    localisationIndexReady: false,
+                    treePatchSignatures: {},
+                    treeStructureSignatures: {},
+                    focusRenderSignatures: {},
+                    inlayRenderSignatures: {},
+                    styleDependencySignature: '',
+                },
+                metrics: { focusCount: 2, inlayCount: 0, deferredAssetLoad: true },
+            }) as any,
+        });
+
+        await session.initializePanel(document);
+        session.handleWebviewReady('first_tree');
+        await waitForCondition(() => postMessages.length === 1, 'Expected the selected initial scene.');
+
+        assert.deepStrictEqual(postMessages[0].focusTrees.map((tree: any) => tree.id), ['first_tree']);
+        assert.deepStrictEqual(postMessages[0].catalog.map((tree: any) => tree.id), ['first_tree', 'second_tree']);
+        assert.deepStrictEqual(Object.keys(postMessages[0].renderedFocus), ['FIRST']);
+
+        await session.handleSceneRequest('second_tree');
+        assert.strictEqual(postMessages[1].sceneMode, 'merge');
+        assert.deepStrictEqual(postMessages[1].focusTrees.map((tree: any) => tree.id), ['second_tree']);
+        assert.deepStrictEqual(Object.keys(postMessages[1].renderedFocus), ['SECOND']);
+        session.dispose();
     });
 
     it('catches cancellation when a pending-ready snapshot is disposed during planning', async () => {
@@ -278,17 +377,17 @@ describe('focustree preview session', () => {
         await session.initializePanel(document);
         session.handleWebviewReady();
         await waitForCondition(
-            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            () => postMessages.some(message => (message as any).command === 'focusTreeScene'),
             'Expected a snapshot update with timing metadata.',
         );
 
-        const contentUpdate = postMessages.find(message => (message as any).command === 'focusTreeContentUpdated') as any;
+        const contentUpdate = postMessages.find(message => (message as any).command === 'focusTreeScene') as any;
         assert.ok(contentUpdate);
         assert.strictEqual(contentUpdate.perf.source, 'initialize');
         assert.strictEqual(contentUpdate.perf.assetLoadMode, 'deferred');
         assert.strictEqual(contentUpdate.perf.updateKind, 'full');
         assert.strictEqual(contentUpdate.perf.payloadBytes, 0);
-        assert.strictEqual(contentUpdate.protocolVersion, 2);
+        assert.strictEqual(contentUpdate.protocolVersion, 3);
         assert.strictEqual(typeof contentUpdate.requestId, 'number');
         assert.strictEqual(contentUpdate.perf.changedSlotCount, contentUpdate.changedSlots.length);
     });
@@ -307,11 +406,11 @@ describe('focustree preview session', () => {
         await session.initializePanel(document);
         session.handleWebviewReady();
         await waitForCondition(
-            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            () => postMessages.some(message => (message as any).command === 'focusTreeScene'),
             'Expected the deferred content update.',
         );
         const firstUpdate = postMessages[0] as any;
-        session.handleContentApplied(firstUpdate.snapshotVersion, firstUpdate.documentVersion, 'firstContentApplied');
+        session.handleContentApplied(firstUpdate.snapshotVersion, firstUpdate.documentVersion, 'firstScenePainted');
         await waitForCondition(() => requestedModes.length === 2, 'Expected acknowledgement-driven hydration.');
 
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
@@ -329,7 +428,7 @@ describe('focustree preview session', () => {
         await session.refreshDocument(document);
 
         assert.strictEqual(webview.html, '');
-        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
+        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeScene'));
         assert.strictEqual(runtimeState.webviewReady, true);
     });
 
@@ -524,13 +623,13 @@ describe('focustree preview session', () => {
         const updatedVersion = session.reconcileAfterLocalEdit(document);
         latestDocument.current = document;
         await waitForCondition(
-            () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+            () => postMessages.some(message => (message as any).command === 'focusTreeScene'),
             'Expected the local edit reconciliation snapshot.',
         );
 
         assert.strictEqual(updatedVersion, 12);
         assert.strictEqual(webview.html, '');
-        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'));
+        assert.ok(postMessages.some(message => (message as any).command === 'focusTreeScene'));
         assert.deepStrictEqual(requestedModes.slice(0, 1), ['deferred']);
     });
 
@@ -644,11 +743,11 @@ describe('focustree preview session', () => {
         session.handleWebviewReady();
         resolveDeferred?.(createBaseState(document.version, true));
         await waitForCondition(
-            () => postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length === 1,
+            () => postMessages.filter(message => (message as any).command === 'focusTreeScene').length === 1,
             'Expected the deferred snapshot before hydration.',
         );
 
-        assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+        assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeScene').length, 1);
         await waitForCondition(
             () => requestedModes.length === 2,
             'Expected full hydration to start after the deferred snapshot.',
@@ -659,11 +758,11 @@ describe('focustree preview session', () => {
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
         resolveFull?.(createBaseState(document.version, false));
         await waitForCondition(
-            () => postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length === 2,
+            () => postMessages.filter(message => (message as any).command === 'focusTreeScene').length === 2,
             'Expected the hydrated snapshot update.',
         );
 
-        assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 2);
+        assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeScene').length, 2);
         assert.deepStrictEqual(requestedModes, ['deferred', 'full']);
     });
 
@@ -691,12 +790,12 @@ describe('focustree preview session', () => {
             await session.initializePanel(document);
             session.handleWebviewReady();
             await waitForCondition(
-                () => postMessages.some(message => (message as any).command === 'focusTreeContentUpdated'),
+                () => postMessages.some(message => (message as any).command === 'focusTreeScene'),
                 'Expected the deferred snapshot before disposal.',
             );
 
             assert.deepStrictEqual(requestedModes, ['deferred']);
-            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeScene').length, 1);
 
             session.dispose();
             session.dispose();
@@ -704,7 +803,7 @@ describe('focustree preview session', () => {
             await new Promise(resolve => setTimeout(resolve, 40));
 
             assert.deepStrictEqual(requestedModes, ['deferred']);
-            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated').length, 1);
+            assert.strictEqual(postMessages.filter(message => (message as any).command === 'focusTreeScene').length, 1);
         } finally {
             (localisationIndex as any).isLocalisationIndexReady = originalIsLocalisationIndexReady;
             (localisationIndex as any).whenLocalisationIndexReady = originalWhenLocalisationIndexReady;
@@ -763,7 +862,7 @@ describe('focustree preview session', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
         await new Promise(resolve => setTimeout(resolve, 0));
 
-        const contentUpdates = postMessages.filter(message => (message as any).command === 'focusTreeContentUpdated');
+        const contentUpdates = postMessages.filter(message => (message as any).command === 'focusTreeScene');
         assert.ok(contentUpdates.some(message => (message as any).documentVersion === 17));
         assert.ok(contentUpdates.some(message => (message as any).documentVersion === 18));
         assert.strictEqual((contentUpdates.at(-1) as any).documentVersion, 18);

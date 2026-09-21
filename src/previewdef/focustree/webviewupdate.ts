@@ -1,4 +1,4 @@
-import { focusTreeProtocolVersion, FocusTreeView } from './viewmodel';
+import { focusTreeProtocolVersion, FocusTreeCatalogView, FocusTreeView } from './viewmodel';
 
 export type FocusTreeContentSlot =
     | 'treeDefinitions'
@@ -12,6 +12,9 @@ export type FocusTreeContentSlot =
 export interface FocusTreeContentUpdateMessage {
     protocolVersion?: typeof focusTreeProtocolVersion;
     requestId?: number;
+    sceneRevision?: number;
+    treeId?: string;
+    sceneMode?: 'replace' | 'merge';
     updateType?: 'structure' | 'assets' | 'patch';
     snapshotVersion: number;
     documentVersion: number;
@@ -23,6 +26,7 @@ export interface FocusTreeContentUpdateMessage {
     changedFocusIds?: string[];
     changedInlayWindowIds?: string[];
     focusTrees?: FocusTreeView[];
+    catalog?: FocusTreeCatalogView[];
     focusTreePatches?: Array<{ treeId: string; tree: FocusTreeView }>;
     continuousFocusHtml?: string;
     renderedFocus?: Record<string, string>;
@@ -37,6 +41,43 @@ export interface FocusTreeContentUpdateMessage {
     xGridSize?: number;
     yGridSize?: number;
     perf?: FocusTreeContentUpdatePerf;
+}
+
+export interface FocusTreeCatalogMessage extends FocusTreeContentUpdateMessage {
+    command: 'focusTreeCatalog';
+    catalog: FocusTreeCatalogView[];
+}
+
+export interface FocusTreeSceneMessage extends FocusTreeContentUpdateMessage {
+    command: 'focusTreeScene';
+    updateType: 'structure';
+}
+
+export interface FocusTreeScenePatchMessage extends FocusTreeContentUpdateMessage {
+    command: 'focusTreeScenePatch';
+    updateType: 'patch';
+}
+
+export interface FocusTreeAssetBatchMessage extends FocusTreeContentUpdateMessage {
+    command: 'focusTreeAssetBatch';
+    updateType: 'assets';
+    batchKind?: 'content';
+}
+
+export type FocusTreeHostMessage =
+    | FocusTreeCatalogMessage
+    | FocusTreeSceneMessage
+    | FocusTreeScenePatchMessage
+    | FocusTreeAssetBatchMessage;
+
+export function getFocusTreeHostCommand(
+    updateType: FocusTreeContentUpdateMessage['updateType'],
+): Exclude<FocusTreeHostMessage['command'], 'focusTreeCatalog'> {
+    return updateType === 'assets'
+        ? 'focusTreeAssetBatch'
+        : updateType === 'patch'
+            ? 'focusTreeScenePatch'
+            : 'focusTreeScene';
 }
 
 export interface FocusTreeContentUpdatePerf {
