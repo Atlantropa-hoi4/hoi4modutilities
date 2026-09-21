@@ -218,6 +218,12 @@
         "enablement": "workspaceFolderCount > 0"
       },
       {
+        "command": "server.hoi4modutilities.updateWorkspaceLogging",
+        "title": "%hoi4modutilities.updateWorkspaceLogging.title%",
+        "category": "%hoi4modutilities.category%",
+        "enablement": "workspaceFolderCount > 0"
+      },
+      {
         "command": "server.hoi4modutilities.showIndexStatus",
         "title": "%hoi4modutilities.showIndexStatus.title%",
         "category": "%hoi4modutilities.category%"
@@ -301,6 +307,10 @@
         {
           "command": "server.hoi4modutilities.formatWorkspace",
           "group": "2_tools@4"
+        },
+        {
+          "command": "server.hoi4modutilities.updateWorkspaceLogging",
+          "group": "2_tools@5"
         }
       ]
     }

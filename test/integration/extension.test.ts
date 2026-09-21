@@ -113,6 +113,7 @@ suite('extension smoke', () => {
             Commands.GenerateFocusGfxShine,
             Commands.ResizeFlags,
             Commands.FormatWorkspace,
+            Commands.UpdateWorkspaceLogging,
             Commands.SelectModFile,
             Commands.SelectHoiFolder,
         ]) {

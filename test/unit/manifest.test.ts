@@ -24,6 +24,25 @@ describe('extension manifest', () => {
         }
     });
 
+    it('contributes workspace logging with translated UI messages', () => {
+        const command = manifest.contributes.commands
+            .find(entry => entry.command === 'server.hoi4modutilities.updateWorkspaceLogging');
+        assert.ok(command);
+        assert.strictEqual(command.enablement, 'workspaceFolderCount > 0');
+        assert.strictEqual(command.title, '%hoi4modutilities.updateWorkspaceLogging.title%');
+        for (const message of [
+            'Open a workspace folder to insert or update HOI4 logs.',
+            'Insert and Update Workspace Logs',
+            'Failed to find workspace HOI4 logging files: {0}',
+            'Workspace logging: {0} files changed ({1} logs inserted, {2} updated), {3} unchanged, {4} failed. Changes are not saved automatically.',
+            'Logging update cancelled. {0}',
+        ]) {
+            for (const bundle of [defaultBundle, koreanBundle, russianBundle, chineseBundle]) {
+                assert.ok((bundle as Record<string, string>)[message]);
+            }
+        }
+    });
+
     it('uses contextual activation with runtime l10n metadata', () => {
         assert.ok(!manifest.activationEvents.includes('onStartupFinished'));
         assert.ok(!manifest.activationEvents.some(event => event.startsWith('onLanguage:')));
@@ -102,6 +121,8 @@ describe('extension manifest', () => {
         assert.strictEqual(entryByCommand['server.hoi4modutilities.generateFocusGfxShine'].group, '2_tools@1');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.resizeFlags'].group, '2_tools@2');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.scanreferences'].group, '2_tools@3');
+        assert.strictEqual(entryByCommand['server.hoi4modutilities.formatWorkspace'].group, '2_tools@4');
+        assert.strictEqual(entryByCommand['server.hoi4modutilities.updateWorkspaceLogging'].group, '2_tools@5');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.selectmodfile'].group, '3_setup@1');
         assert.strictEqual(entryByCommand['server.hoi4modutilities.selecthoifolder'].group, '3_setup@2');
     });

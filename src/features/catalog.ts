@@ -11,6 +11,7 @@ import { imageFeature } from './images';
 import { ideaFeature } from './ideas';
 import { localisationFeature } from './localisation';
 import { lintFeature } from './lint';
+import { loggingFeature } from './logging';
 import { mioFeature } from './mio';
 import { referencesFeature } from './references';
 import { technologyFeature } from './technology';
@@ -37,6 +38,7 @@ export const extensionFeatures: readonly ExtensionFeature[] = [
     lintFeature,
     countryColorFeature,
     formatterFeature,
+    loggingFeature,
 ];
 
 export function getPreviewDescriptors(): PreviewDescriptor[] {

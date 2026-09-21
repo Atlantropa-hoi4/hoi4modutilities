@@ -264,7 +264,7 @@ function getFocus(
         x: o.x ?? 0,
         y: o.y ?? 0,
         trigger: o.trigger && o.trigger.length > 0
-            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, []).condition
+            ? extractConditionValues(o.trigger.filter((v): v is Raw => v !== undefined).map(v => v._raw.value), countryScope, conditionExprs).condition
             : undefined,
     }));
 
@@ -417,6 +417,12 @@ function addImportedSharedFocus(
 function updateConditionExprsByFocus(focus: Focus, conditionExprs: ConditionItem[]) {
     if (focus.allowBranch) {
         extractConditionalExprs(focus.allowBranch, conditionExprs);
+    }
+
+    for (const offset of focus.offset) {
+        if (offset.trigger) {
+            extractConditionalExprs(offset.trigger, conditionExprs);
+        }
     }
 }
 

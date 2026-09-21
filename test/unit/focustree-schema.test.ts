@@ -238,7 +238,7 @@ describe('focus tree schema fixtures', () => {
         assert.strictEqual(tree.continuousFocusPositionY, undefined);
     });
 
-    it('collects Conditions options from conditional icons and allow_branch triggers', () => {
+    it('collects Conditions options from conditional icons, allow_branch, and position offsets', () => {
         const { getFocusTree } = loadFocusTreeSchema();
         const [tree] = getFocusTree(
             parseHoi4File(`
@@ -275,7 +275,50 @@ describe('focus tree schema fixtures', () => {
                 scopeName: '',
                 nodeContent: 'has_global_flag = BRANCH_FLAG',
             },
+            {
+                scopeName: '',
+                nodeContent: 'owns_state = 977',
+            },
         ]);
+    });
+
+    it('collects target focus-tree offsets from joint focuses', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const trees = getFocusTree(
+            parseHoi4File(`
+                joint_focus = {
+                    id = DNV_ROOT
+                    x = 1
+                    y = 2
+                    offset = {
+                        x = 10
+                        y = 0
+                        trigger = { has_focus_tree = DNV_focus_tree }
+                    }
+                }
+
+                focus_tree = {
+                    id = DNV_focus_tree
+                    shared_focus = DNV_ROOT
+                    focus = { id = DNV_LOCAL x = 0 y = 0 }
+                }
+            `),
+            [],
+            'common/national_focus/joint-focuses.txt',
+        );
+        const jointTree = trees.find(tree => tree.kind === 'joint');
+        const focusTree = trees.find(tree => tree.kind === 'focus');
+
+        assert.ok(jointTree);
+        assert.ok(focusTree);
+        assert.deepStrictEqual(jointTree.conditionExprs, [{
+            scopeName: '',
+            nodeContent: 'has_focus_tree = DNV_focus_tree',
+        }]);
+        assert.deepStrictEqual(focusTree.conditionExprs, [{
+            scopeName: '',
+            nodeContent: 'has_focus_tree = DNV_focus_tree',
+        }]);
     });
 
     it('parses alternate, conditional-map, and overlay focus artwork', () => {

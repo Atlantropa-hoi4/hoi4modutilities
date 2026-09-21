@@ -21,7 +21,7 @@ import {
 } from "../src/previewdef/focustree/conditionpresets";
 import { resolveSelectedConditionExprKeys, shouldHideDisallowedFocuses } from "../src/previewdef/focustree/conditionselection";
 import { getCachedFocusTreeLayoutPlan, invalidateCachedFocusTreeLayoutPlan, resolveFocusTreeLayoutPlan } from "../src/previewdef/focustree/layoutplan";
-import { collectCompletedFocusIds } from "../src/previewdef/focustree/conditionexprs";
+import { collectCompletedFocusIds, isSelectableFocusTreeConditionExpr } from "../src/previewdef/focustree/conditionexprs";
 import {
     applyLocalFocusDeletion,
     createPlaceholderFocus,
@@ -576,9 +576,7 @@ function exprKeyToConditionItem(exprKey: string): ConditionItem {
 function getTreeConditionExprKeys(focusTree: FocusTree): string[] {
     return normalizeConditionExprKeys(
         dedupeConditionExprs(focusTree.conditionExprs)
-            .filter(e => e.scopeName !== ''
-                || (!e.nodeContent.startsWith('has_focus_tree = ')
-                    && !e.nodeContent.startsWith('has_completed_focus = ')))
+            .filter(e => isSelectableFocusTreeConditionExpr(focusTree.kind, e))
             .map(conditionItemToExprKey),
     );
 }

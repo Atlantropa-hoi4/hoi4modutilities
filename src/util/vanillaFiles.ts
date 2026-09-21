@@ -22,7 +22,8 @@ const vanillaDerivedPatterns = [
     '**/history/states/**',
 ];
 
-// Formatting and lint fixes leave vanilla files alone so they stay identical to the game's copies.
+// Formatting, workspace logging, and lint fixes leave vanilla files alone so they stay identical
+// to the game's copies.
 export function isHoi4VanillaFileSkipped(document: vscode.TextDocument): boolean {
     return isHoi4VanillaInstallFileSkipped(document.uri)
         || (isVanillaFileSkippingEnabled(document.uri) && matchesWorkspaceGlobs(document, vanillaDerivedPatterns));

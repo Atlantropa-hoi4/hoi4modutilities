@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { collectCompletedFocusIds } from '../../src/previewdef/focustree/conditionexprs';
+import { collectCompletedFocusIds, isSelectableFocusTreeConditionExpr } from '../../src/previewdef/focustree/conditionexprs';
 
 describe('focus tree condition expression helpers', () => {
     it('collects completed focus ids from root-scope expressions only', () => {
@@ -12,5 +12,17 @@ describe('focus tree condition expression helpers', () => {
         ]);
 
         assert.deepStrictEqual(Array.from(result), ['ROOT_FOCUS', 'SECOND_FOCUS']);
+    });
+
+    it('exposes target focus-tree conditions for standalone shared and joint previews only', () => {
+        const targetTreeCondition = { scopeName: '', nodeContent: 'has_focus_tree = DNV_focus_tree' };
+
+        assert.strictEqual(isSelectableFocusTreeConditionExpr('focus', targetTreeCondition), false);
+        assert.strictEqual(isSelectableFocusTreeConditionExpr('shared', targetTreeCondition), true);
+        assert.strictEqual(isSelectableFocusTreeConditionExpr('joint', targetTreeCondition), true);
+        assert.strictEqual(isSelectableFocusTreeConditionExpr('joint', {
+            scopeName: '',
+            nodeContent: 'has_completed_focus = DNV_root',
+        }), false);
     });
 });
