@@ -53,6 +53,7 @@ import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } fro
 import { createFocusTreeWebviewInitialState } from "./focustree/state";
 import { applyStringMapPatchInPlace } from "./focustree/stringmappatch";
 import { initializeFocusPresentation } from "./focustree/presentation";
+import { measureFocusSceneNodeVisuals } from "./focustree/scenegeometry";
 import {
     buildFocusSceneGeometry,
     FocusEdgeGeometry,
@@ -2766,33 +2767,17 @@ function scheduleFocusSceneGeometryMeasurement(focusIds: readonly string[]): voi
         const scale = currentScale();
         const sceneRect = sceneRoot.getBoundingClientRect();
         const visualByFocusId: Record<string, FocusSceneRect> = {};
+        const exclusiveVisualByFocusId: Record<string, FocusSceneRect> = {};
         for (const focusId of focusIds) {
             const wrapper = document.getElementById(`focus_${focusId}`);
             if (!wrapper || wrapper.style.display === 'none') {
                 continue;
             }
-            const candidates = Array.from(wrapper.querySelectorAll<HTMLElement>(
-                '.navigator > :not(.focus-checkbox):not([hidden]), .navigator > :not(.focus-checkbox):not([hidden]) [data-preview-label-css-toggle="true"]',
-            )).filter(element => {
-                const rect = element.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            });
-            if (candidates.length === 0) {
-                candidates.push(wrapper.querySelector<HTMLElement>('.navigator') ?? wrapper);
-            }
-            const rects = candidates.map(element => element.getBoundingClientRect());
-            const left = Math.min(...rects.map(rect => rect.left));
-            const top = Math.min(...rects.map(rect => rect.top));
-            const right = Math.max(...rects.map(rect => rect.right));
-            const bottom = Math.max(...rects.map(rect => rect.bottom));
-            visualByFocusId[focusId] = {
-                x: (left - sceneRect.left) / scale,
-                y: (top - sceneRect.top) / scale,
-                width: (right - left) / scale,
-                height: (bottom - top) / scale,
-            };
+            const measured = measureFocusSceneNodeVisuals(wrapper, sceneRect, scale);
+            visualByFocusId[focusId] = measured.visual;
+            exclusiveVisualByFocusId[focusId] = measured.exclusiveVisual;
         }
-        const changedEdges = updateFocusSceneNodeVisuals(currentFocusSceneGeometry, visualByFocusId);
+        const changedEdges = updateFocusSceneNodeVisuals(currentFocusSceneGeometry, visualByFocusId, exclusiveVisualByFocusId);
         for (const edge of changedEdges) {
             const path = currentFocusSceneEdgeLayer?.querySelector<SVGPathElement>(
                 `path[data-focus-edge-id="${CSS.escape(edge.id)}"]`,
@@ -2880,6 +2865,7 @@ function reflowFocusSceneInPlace(): void {
         const previousNode = previousGeometry.nodes[focusId];
         if (previousNode?.slot.x === nextNode.slot.x && previousNode.slot.y === nextNode.slot.y) {
             nextNode.visual = previousNode.visual;
+            nextNode.exclusiveVisual = previousNode.exclusiveVisual;
             nextNode.anchors = previousNode.anchors;
             continue;
         }
@@ -3800,6 +3786,7 @@ function applyIncrementalCurrentTreeUpdate(
 
     updateFocusPositionEditUi();
     refreshPreviewLabelMode();
+    scheduleFocusSceneGeometryMeasurement(decision.changedCurrentTreeFocusIds);
     retriggerSearch();
     return true;
 }
@@ -3829,6 +3816,7 @@ async function applyAssetHydrationCurrentTreeUpdate(
         }
 
         const frameStartedAt = performance.now();
+        const batchStart = index;
         do {
             const focusId = changedFocusIds[index++];
             const focusElement = document.getElementById(`focus_${focusId}`) as HTMLDivElement | null;
@@ -3852,6 +3840,7 @@ async function applyAssetHydrationCurrentTreeUpdate(
             }
         } while (index < changedFocusIds.length && performance.now() - frameStartedAt < 8);
 
+        scheduleFocusSceneGeometryMeasurement(changedFocusIds.slice(batchStart, index));
         if (index < changedFocusIds.length) {
             await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
         }
@@ -3909,7 +3898,7 @@ const rebuildContentSafely = tryRun(async (options?: { restoreScroll?: boolean }
 window.addEventListener('load', runSafely(async function() {
     postFocusTreeWebviewTiming({ stage: 'load' });
     subscribePreviewLabelToggle('id');
-    initializeFocusPresentation();
+    initializeFocusPresentation(() => scheduleFocusSceneGeometryMeasurement(Array.from(currentFocusSceneMountedIds)));
     window.addEventListener('message', event => {
         const message = event.data as {
             command?: string;

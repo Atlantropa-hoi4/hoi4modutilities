@@ -68,7 +68,7 @@ export async function renderFocusGui(focus: Focus, presentation: FocusPresentati
             const [x, y] = calculateBBox(icon, parent);
             const css = styleTable.oneTimeStyle('focus-gui-symbol', () =>
                 `position:absolute;left:${x}px;top:${y}px;transform:${icon.centerposition ? 'translate(-50%, -50%) ' : ''}scale(${icon.scale ?? 1});transform-origin:${icon.centerposition ? 'center' : 'top left'};pointer-events:none;`);
-            return `<div class="{{iconClass}} ${css}"></div>`;
+            return `<div class="{{iconClass}} focus-gui-symbol ${css}"></div>`;
         }
         if ((type === 'icon' || type === 'button') && (child.name === 'bg' || child.name === 'overlay')) {
             const sprite = child.name === 'bg' ? background : focus.overlay;

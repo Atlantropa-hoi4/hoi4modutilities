@@ -117,6 +117,75 @@ describe('focus retained scene geometry', () => {
         assert.deepStrictEqual(changed[0].points[0], geometry.nodes.parent.anchors.bottom);
     });
 
+    it('connects exclusive links to icon edges even when long labels overlap', () => {
+        const geometry = createGeometry('up', 'related');
+        updateFocusSceneNodeVisuals(geometry, {
+            parent: { x: -72, y: 10, width: 240, height: 95 },
+            child: { x: 120, y: 10, width: 240, height: 95 },
+        }, {
+            parent: { x: 20, y: 18, width: 56, height: 56 },
+            child: { x: 212, y: 18, width: 56, height: 56 },
+        });
+
+        const edge = geometry.edges[0];
+        assert.deepStrictEqual(edge.points[0], { x: 212, y: 46 });
+        assert.deepStrictEqual(edge.points[edge.points.length - 1], { x: 76, y: 46 });
+        assert.ok(edge.points.every(point => point.y === 46 && point.x >= 76 && point.x <= 212));
+
+        const previousPath = edge.path;
+        updateFocusSceneNodeVisuals(geometry, {
+            parent: { x: -200, y: 10, width: 496, height: 95 },
+        }, { parent: geometry.nodes.parent.exclusiveVisual });
+        assert.strictEqual(edge.path, previousPath);
+    });
+
+    it('keeps the stationary endpoint attached when an exclusive focus moves to another row', () => {
+        const geometry = createGeometry('up', 'related');
+        const icons = {
+            parent: { x: 20, y: 18, width: 56, height: 56 },
+            child: { x: 212, y: 18, width: 56, height: 56 },
+        };
+        updateFocusSceneNodeVisuals(geometry, icons, icons);
+        updateFocusSceneNodeVisuals(geometry, {
+            child: { x: 120, y: 140, width: 240, height: 95 },
+        }, {
+            child: { x: 212, y: 148, width: 56, height: 56 },
+        });
+
+        assert.deepStrictEqual(geometry.edges[0].points, [
+            { x: 212, y: 176 }, { x: 144, y: 176 }, { x: 144, y: 46 }, { x: 76, y: 46 },
+        ]);
+    });
+
+    it('connects vertically aligned exclusive focuses to the top and bottom of their icons', () => {
+        const geometry = createGeometry('up', 'related');
+        const icons = {
+            parent: { x: 20, y: 18, width: 56, height: 56 },
+            child: { x: 20, y: 148, width: 56, height: 56 },
+        };
+        updateFocusSceneNodeVisuals(geometry, icons, icons);
+
+        const edge = geometry.edges[0];
+        assert.deepStrictEqual(edge.points[0], { x: 48, y: 148 });
+        assert.deepStrictEqual(edge.points[edge.points.length - 1], { x: 48, y: 74 });
+        assert.ok(edge.points.every(point => point.x === 48));
+    });
+
+    it('retains label clearance for prerequisites when exclusive icon bounds are measured', () => {
+        const geometry = createGeometry('up');
+        updateFocusSceneNodeVisuals(geometry, {
+            parent: { x: 0, y: 10, width: 96, height: 95 },
+            child: { x: 192, y: 140, width: 96, height: 95 },
+        }, {
+            parent: { x: 20, y: 18, width: 56, height: 56 },
+            child: { x: 212, y: 148, width: 56, height: 56 },
+        });
+
+        const edge = geometry.edges[0];
+        assert.deepStrictEqual(edge.points[0], { x: 48, y: 109 });
+        assert.deepStrictEqual(edge.points[edge.points.length - 1], { x: 240, y: 136 });
+    });
+
     it('keeps scene coordinates stable across zoom factors', () => {
         const geometry = createGeometry('up');
         const point = geometry.edges[0].points[0];

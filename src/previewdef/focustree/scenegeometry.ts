@@ -15,6 +15,7 @@ export interface FocusNodeGeometry {
     id: string;
     slot: FocusSceneRect;
     visual: FocusSceneRect;
+    exclusiveVisual: FocusSceneRect;
     anchors: FocusNodeAnchors;
 }
 
@@ -99,6 +100,7 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
             id: item.id,
             slot,
             visual,
+            exclusiveVisual: visual,
             anchors: createAnchors(visual, anchorGap),
         };
     }
@@ -166,6 +168,7 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
 export function updateFocusSceneNodeVisuals(
     geometry: FocusSceneGeometry,
     visualByFocusId: Readonly<Record<string, FocusSceneRect>>,
+    exclusiveVisualByFocusId: Readonly<Record<string, FocusSceneRect>> = visualByFocusId,
 ): FocusEdgeGeometry[] {
     const changedFocusIds = new Set<string>();
     for (const [focusId, visual] of Object.entries(visualByFocusId)) {
@@ -174,6 +177,7 @@ export function updateFocusSceneNodeVisuals(
             continue;
         }
         node.visual = { ...visual };
+        node.exclusiveVisual = { ...(exclusiveVisualByFocusId[focusId] ?? visual) };
         node.anchors = createAnchors(node.visual, geometry.anchorGap);
         changedFocusIds.add(focusId);
     }
@@ -242,19 +246,22 @@ function routePrerequisite(
 }
 
 function routeExclusive(source: FocusNodeGeometry, target: FocusNodeGeometry): NumberPosition[] {
-    const sourceCenter = center(source.visual);
-    const targetCenter = center(target.visual);
+    // Labels and layout padding must not move exclusive links away from the focus icon.
+    const sourceCenter = center(source.exclusiveVisual);
+    const targetCenter = center(target.exclusiveVisual);
+    const sourceAnchors = createAnchors(source.exclusiveVisual, 0);
+    const targetAnchors = createAnchors(target.exclusiveVisual, 0);
     if (Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y)) {
         const forward = targetCenter.x >= sourceCenter.x;
-        const start = forward ? source.anchors.right : source.anchors.left;
-        const end = forward ? target.anchors.left : target.anchors.right;
+        const start = forward ? sourceAnchors.right : sourceAnchors.left;
+        const end = forward ? targetAnchors.left : targetAnchors.right;
         const corridorX = (start.x + end.x) / 2;
         return compactPoints([start, { x: corridorX, y: start.y }, { x: corridorX, y: end.y }, end]);
     }
 
     const forward = targetCenter.y >= sourceCenter.y;
-    const start = forward ? source.anchors.bottom : source.anchors.top;
-    const end = forward ? target.anchors.top : target.anchors.bottom;
+    const start = forward ? sourceAnchors.bottom : sourceAnchors.top;
+    const end = forward ? targetAnchors.top : targetAnchors.bottom;
     const corridorY = (start.y + end.y) / 2;
     return compactPoints([start, { x: start.x, y: corridorY }, { x: end.x, y: corridorY }, end]);
 }

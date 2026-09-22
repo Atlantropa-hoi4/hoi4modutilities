@@ -66,6 +66,7 @@ describe('focus GUI presentation', () => {
                 assert.ok(html);
                 assert.deepStrictEqual(sprites.sort(), ['GFX_mod_ornament', 'GFX_overlay', 'GFX_special']);
                 assert.strictEqual(html!.split('{{iconClass}}').length - 1, 1);
+                assert.match(html!, /class="\{\{iconClass\}\} focus-gui-symbol /);
                 assert.match(html!, /focus-frame-gfx/);
                 assert.match(html!, /focus-decoration-gfx/);
                 assert.match(html!, /data-preview-label-name="&lt;translated&gt;"/);
@@ -106,7 +107,7 @@ describe('focus GUI presentation', () => {
 });
 
 describe('focus GFX visibility controls', () => {
-    function preview(initial: Record<string, unknown> = {}) {
+    function preview(initial: Record<string, unknown> = {}, onVisibilityChange?: () => void) {
         const state = { ...initial };
         const dataset: Record<string, string> = {};
         const controls = Object.fromEntries(['focus-frame-gfx', 'focus-decoration-gfx'].map(id => {
@@ -126,7 +127,7 @@ describe('focus GFX visibility controls', () => {
             document: { body: { dataset }, getElementById: (id: string) => controls[id] },
             acquireVsCodeApi: () => ({ getState: () => state, setState: (value: unknown) => Object.assign(state, value), postMessage: () => undefined }),
         });
-        (module.exports as typeof import('../../webviewsrc/focustree/presentation')).initializeFocusPresentation();
+        (module.exports as typeof import('../../webviewsrc/focustree/presentation')).initializeFocusPresentation(onVisibilityChange);
         return { state, dataset, controls };
     }
 
@@ -143,5 +144,14 @@ describe('focus GFX visibility controls', () => {
         assert.strictEqual(restored.dataset.focusFrames, 'true');
         assert.strictEqual(restored.state.selectedFocusTreeId, 'tree');
         assert.strictEqual(restored.state.scale, 0.8);
+    });
+
+    it('requests geometry measurement after applying visibility changes', () => {
+        const changes: string[] = [];
+        const view = preview({}, () => changes.push(`${view.dataset.focusFrames}/${view.dataset.focusDecorations}`));
+        assert.deepStrictEqual(changes, []);
+        view.controls['focus-frame-gfx'].listeners.click();
+        view.controls['focus-decoration-gfx'].listeners.click();
+        assert.deepStrictEqual(changes, ['false/true', 'false/false']);
     });
 });

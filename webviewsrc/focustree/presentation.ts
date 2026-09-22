@@ -1,6 +1,6 @@
 import { getState, setState } from '../util/common';
 
-export function initializeFocusPresentation(): void {
+export function initializeFocusPresentation(onVisibilityChange?: () => void): void {
     const controls = [
         { id: 'focus-frame-gfx', stateKey: 'focusFrames', datasetKey: 'focusFrames' },
         { id: 'focus-decoration-gfx', stateKey: 'focusDecorations', datasetKey: 'focusDecorations' },
@@ -17,6 +17,7 @@ export function initializeFocusPresentation(): void {
             visible = !visible;
             setState({ [stateKey]: visible });
             apply();
+            onVisibilityChange?.();
         });
     }
 }
