@@ -54,12 +54,15 @@ import { createFocusTreeWebviewInitialState } from "./focustree/state";
 import { applyStringMapPatchInPlace } from "./focustree/stringmappatch";
 import { initializeFocusPresentation } from "./focustree/presentation";
 import { measureFocusSceneNodeVisuals } from "./focustree/scenegeometry";
+import { FocusSceneMeasurementBatcher } from "./focustree/measurementbatcher";
 import {
     buildFocusSceneGeometry,
     FocusEdgeGeometry,
     FocusSceneGeometry,
+    FocusSceneGeometryOptions,
     FocusSceneRect,
     updateFocusSceneNodeVisuals,
+    updateFocusScenePositions,
 } from "../src/previewdef/focustree/scenegeometry";
 
 declare global {
@@ -232,7 +235,8 @@ let currentFocusSceneMountedIds = new Set<string>();
 let currentFocusSceneMountedEdgeIds = new Set<string>();
 let currentFocusSceneItemsById: Record<string, GridBoxItem> = {};
 let currentFocusSceneRenderContext: FocusRenderContext | undefined;
-let currentFocusSceneEdgesByNode: Record<string, FocusEdgeGeometry[]> = {};
+const currentFocusSceneEdgeElements = new Map<string, SVGPathElement>();
+const focusSceneMeasurementBatcher = new FocusSceneMeasurementBatcher(measureFocusSceneGeometry, focusSceneInitialNodeLimit);
 const focusAssetCssRules = new Set<string>();
 const pendingPlaceholderFocusIdsByTree: Record<string, Set<string>> = {};
 type FocusSelectionRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -436,10 +440,6 @@ function postFocusTreeContentApplied(
 
 function normalizeFocusIdForClassName(focusId: string): string {
     return normalizeForStyle(focusId);
-}
-
-function connectionTouchesFocusId(connectionElement: HTMLElement | SVGElement, prefix: 'source' | 'target', focusId: string): boolean {
-    return connectionElement.classList.contains(`focus-connection-${prefix}-${normalizeFocusIdForClassName(focusId)}`);
 }
 
 function getFocusPositionKey(position: NumberPosition): string {
@@ -1189,7 +1189,6 @@ function updateFocusPositionEditUi(options?: {
             ? currentRelatedFocusIdsById[hoveredRelationFocusId] ?? []
             : [],
     );
-    const hoveredRelatedFocusIdList = Array.from(hoveredRelatedFocusIds);
     const pendingFocusLinkParentIdSet = new Set(pendingFocusLinkParentIds);
     const pendingFocusLinkActive = hasPendingFocusLink();
     const hasHoveredRelations = hoveredRelatedFocusIds.size > 0 && !pendingFocusLinkActive;
@@ -1226,7 +1225,7 @@ function updateFocusPositionEditUi(options?: {
         const targetConnectionElements = options?.connectionFocusIds
             ? Array.from(new Set(Array.from(options.connectionFocusIds).flatMap(focusId =>
                 Array.from(currentConnectionElementsByFocusId[normalizeFocusIdForClassName(focusId)] ?? []))))
-            : Array.from(document.querySelectorAll<HTMLElement | SVGElement>('.focus-connection'));
+            : Array.from(currentFocusSceneEdgeElements.values());
         targetConnectionElements.forEach(connectionElement => {
         if (!hasHoveredRelations) {
             connectionElement.style.opacity = '';
@@ -1234,8 +1233,8 @@ function updateFocusPositionEditUi(options?: {
             return;
         }
 
-        const isHoverRelatedConnection = hoveredRelatedFocusIdList.some(relatedFocusId => connectionTouchesFocusId(connectionElement, 'source', relatedFocusId))
-            && hoveredRelatedFocusIdList.some(relatedFocusId => connectionTouchesFocusId(connectionElement, 'target', relatedFocusId));
+        const isHoverRelatedConnection = hoveredRelatedFocusIds.has(connectionElement.dataset.focusSourceId ?? '')
+            && hoveredRelatedFocusIds.has(connectionElement.dataset.focusTargetId ?? '');
 
         connectionElement.style.opacity = isHoverRelatedConnection ? '1' : '0.14';
         connectionElement.style.filter = isHoverRelatedConnection ? 'saturate(1.1)' : 'saturate(0.35)';
@@ -2145,6 +2144,7 @@ function startFocusPositionDrag(focusElement: HTMLElement, event: PointerEvent) 
     }
 
     cancelActiveFocusPositionDrag?.();
+    focusSceneMeasurementBatcher.suspend(focusId);
     event.preventDefault();
     event.stopPropagation();
 
@@ -2208,6 +2208,7 @@ function startFocusPositionDrag(focusElement: HTMLElement, event: PointerEvent) 
         focusElement.style.cursor = focusPositionEditMode ? 'grab' : 'pointer';
         focusElement.style.zIndex = '';
         focusElement.style.willChange = '';
+        focusSceneMeasurementBatcher.resume(focusId);
 
         if (!commit || !dragGestureStarted) {
             return;
@@ -2534,11 +2535,12 @@ function updateDeleteFocusAfterApply(focusIds: readonly string[]) {
 
 function resetFocusSceneLayers(root: HTMLElement, geometry: FocusSceneGeometry): void {
     currentFocusSceneGeneration += 1;
+    focusSceneMeasurementBatcher.clear();
     currentFocusScenePendingIds = [];
     currentFocusSceneMountedIds = new Set<string>();
     currentFocusSceneMountedEdgeIds = new Set<string>();
     currentConnectionElementsByFocusId = {};
-    currentFocusSceneEdgesByNode = indexFocusSceneEdges(geometry.edges);
+    currentFocusSceneEdgeElements.clear();
 
     let sceneRoot = document.getElementById('focus-gridbox') as HTMLDivElement | null;
     if (!sceneRoot) {
@@ -2660,6 +2662,8 @@ function createFocusSceneNode(focusTree: FocusTree, focusId: string, context: Fo
 function createFocusSceneEdge(edge: FocusEdgeGeometry): SVGPathElement {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.dataset.focusEdgeId = edge.id;
+    path.dataset.focusSourceId = edge.sourceId;
+    path.dataset.focusTargetId = edge.targetId;
     path.setAttribute('d', edge.path);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', edge.stroke);
@@ -2674,15 +2678,6 @@ function createFocusSceneEdge(edge: FocusEdgeGeometry): SVGPathElement {
     return path;
 }
 
-function indexFocusSceneEdges(edges: readonly FocusEdgeGeometry[]): Record<string, FocusEdgeGeometry[]> {
-    const result: Record<string, FocusEdgeGeometry[]> = {};
-    for (const edge of edges) {
-        (result[edge.sourceId] ??= []).push(edge);
-        (result[edge.targetId] ??= []).push(edge);
-    }
-    return result;
-}
-
 function appendFocusSceneEdgesForMountedNodes(focusIds: readonly string[]): void {
     const geometry = currentFocusSceneGeometry;
     const edgeLayer = currentFocusSceneEdgeLayer;
@@ -2692,7 +2687,7 @@ function appendFocusSceneEdgesForMountedNodes(focusIds: readonly string[]): void
 
     const fragment = document.createDocumentFragment();
     const candidateEdges = new Map<string, FocusEdgeGeometry>();
-    focusIds.forEach(focusId => currentFocusSceneEdgesByNode[focusId]?.forEach(edge => candidateEdges.set(edge.id, edge)));
+    focusIds.forEach(focusId => geometry.edgesByNode.get(focusId)?.forEach(edge => candidateEdges.set(edge.id, edge)));
     for (const edge of candidateEdges.values()) {
         if (currentFocusSceneMountedEdgeIds.has(edge.id)
             || !currentFocusSceneMountedIds.has(edge.sourceId)
@@ -2701,6 +2696,7 @@ function appendFocusSceneEdgesForMountedNodes(focusIds: readonly string[]): void
         }
         currentFocusSceneMountedEdgeIds.add(edge.id);
         const path = createFocusSceneEdge(edge);
+        currentFocusSceneEdgeElements.set(edge.id, path);
         fragment.appendChild(path);
         for (const focusId of [edge.sourceId, edge.targetId]) {
             const key = normalizeFocusIdForClassName(focusId);
@@ -2755,36 +2751,34 @@ function mountFocusSceneNodes(focusTree: FocusTree, focusIds: readonly string[],
 }
 
 function scheduleFocusSceneGeometryMeasurement(focusIds: readonly string[]): void {
-    const generation = currentFocusSceneGeneration;
-    requestAnimationFrame(() => {
-        if (generation !== currentFocusSceneGeneration || !currentFocusSceneGeometry) {
-            return;
+    focusSceneMeasurementBatcher.schedule(focusIds);
+}
+
+function measureFocusSceneGeometry(focusIds: readonly string[]): void {
+    if (!currentFocusSceneGeometry) {
+        return;
+    }
+    const sceneRoot = document.getElementById('focus-gridbox');
+    if (!sceneRoot) {
+        return;
+    }
+    const scale = currentScale();
+    const sceneRect = sceneRoot.getBoundingClientRect();
+    const visualByFocusId: Record<string, FocusSceneRect> = {};
+    const exclusiveVisualByFocusId: Record<string, FocusSceneRect> = {};
+    for (const focusId of focusIds) {
+        const wrapper = document.getElementById(`focus_${focusId}`);
+        if (!wrapper || wrapper.style.display === 'none') {
+            continue;
         }
-        const sceneRoot = document.getElementById('focus-gridbox');
-        if (!sceneRoot) {
-            return;
-        }
-        const scale = currentScale();
-        const sceneRect = sceneRoot.getBoundingClientRect();
-        const visualByFocusId: Record<string, FocusSceneRect> = {};
-        const exclusiveVisualByFocusId: Record<string, FocusSceneRect> = {};
-        for (const focusId of focusIds) {
-            const wrapper = document.getElementById(`focus_${focusId}`);
-            if (!wrapper || wrapper.style.display === 'none') {
-                continue;
-            }
-            const measured = measureFocusSceneNodeVisuals(wrapper, sceneRect, scale);
-            visualByFocusId[focusId] = measured.visual;
-            exclusiveVisualByFocusId[focusId] = measured.exclusiveVisual;
-        }
-        const changedEdges = updateFocusSceneNodeVisuals(currentFocusSceneGeometry, visualByFocusId, exclusiveVisualByFocusId);
-        for (const edge of changedEdges) {
-            const path = currentFocusSceneEdgeLayer?.querySelector<SVGPathElement>(
-                `path[data-focus-edge-id="${CSS.escape(edge.id)}"]`,
-            );
-            path?.setAttribute('d', edge.path);
-        }
-    });
+        const measured = measureFocusSceneNodeVisuals(wrapper, sceneRect, scale);
+        visualByFocusId[focusId] = measured.visual;
+        exclusiveVisualByFocusId[focusId] = measured.exclusiveVisual;
+    }
+    const changedEdges = updateFocusSceneNodeVisuals(currentFocusSceneGeometry, visualByFocusId, exclusiveVisualByFocusId);
+    for (const edge of changedEdges) {
+        currentFocusSceneEdgeElements.get(edge.id)?.setAttribute('d', edge.path);
+    }
 }
 
 function scheduleRemainingFocusSceneNodes(focusTree: FocusTree, context: FocusRenderContext, buildVersion: number): void {
@@ -2832,8 +2826,12 @@ function ensureFocusSceneNodesMounted(focusIds: readonly string[]): void {
 }
 
 function createFocusSceneGeometry(items: readonly GridBoxItem[]): FocusSceneGeometry {
+    return buildFocusSceneGeometry(getFocusSceneGeometryOptions(items));
+}
+
+function getFocusSceneGeometryOptions(items: readonly GridBoxItem[]): FocusSceneGeometryOptions {
     const gridbox: GridBoxType = window.gridBox;
-    return buildFocusSceneGeometry({
+    return {
         items,
         slotSize: { width: xGridSize, height: yGridSize },
         format: gridbox.format?._name ?? 'up',
@@ -2847,7 +2845,7 @@ function createFocusSceneGeometry(items: readonly GridBoxItem[]): FocusSceneGeom
             width: focusCreateMinimumColumns * xGridSize,
             height: focusCreateMinimumRows * yGridSize,
         },
-    });
+    };
 }
 
 function reflowFocusSceneInPlace(): void {
@@ -2859,42 +2857,25 @@ function reflowFocusSceneInPlace(): void {
         const position = currentFocusPositions[item.id];
         return position ? { ...item, gridX: position.x, gridY: position.y } : item;
     });
-    const nextGeometry = createFocusSceneGeometry(items);
-    const changedIds: string[] = [];
-    for (const [focusId, nextNode] of Object.entries(nextGeometry.nodes)) {
-        const previousNode = previousGeometry.nodes[focusId];
-        if (previousNode?.slot.x === nextNode.slot.x && previousNode.slot.y === nextNode.slot.y) {
-            nextNode.visual = previousNode.visual;
-            nextNode.exclusiveVisual = previousNode.exclusiveVisual;
-            nextNode.anchors = previousNode.anchors;
-            continue;
-        }
-        changedIds.push(focusId);
+    const { movedFocusIds, changedEdges } = updateFocusScenePositions(previousGeometry, getFocusSceneGeometryOptions(items));
+    for (const focusId of movedFocusIds) {
+        const node = previousGeometry.nodes[focusId];
         const wrapper = document.getElementById(`focus_${focusId}`);
         if (wrapper) {
-            wrapper.style.transform = `translate3d(${nextNode.slot.x}px, ${nextNode.slot.y}px, 0)`;
+            wrapper.style.transform = `translate3d(${node.slot.x}px, ${node.slot.y}px, 0)`;
         }
     }
-    currentFocusSceneGeometry = nextGeometry;
-    currentFocusSceneEdgesByNode = indexFocusSceneEdges(nextGeometry.edges);
     currentFocusSceneItemsById = Object.fromEntries(items.map(item => [item.id, item]));
-    currentGridLeftPadding = nextGeometry.origin.x;
-    currentGridTopPadding = nextGeometry.origin.y;
+    currentGridLeftPadding = previousGeometry.origin.x;
+    currentGridTopPadding = previousGeometry.origin.y;
     const sceneRoot = document.getElementById('focus-gridbox');
     if (sceneRoot) {
-        sceneRoot.style.width = `${nextGeometry.width}px`;
-        sceneRoot.style.height = `${nextGeometry.height}px`;
+        sceneRoot.style.width = `${previousGeometry.width}px`;
+        sceneRoot.style.height = `${previousGeometry.height}px`;
     }
-    const changedSet = new Set(changedIds);
-    for (const edge of nextGeometry.edges) {
-        if (!changedSet.has(edge.sourceId) && !changedSet.has(edge.targetId)) {
-            continue;
-        }
-        currentFocusSceneEdgeLayer?.querySelector<SVGPathElement>(
-            `path[data-focus-edge-id="${CSS.escape(edge.id)}"]`,
-        )?.setAttribute('d', edge.path);
+    for (const edge of changedEdges) {
+        currentFocusSceneEdgeElements.get(edge.id)?.setAttribute('d', edge.path);
     }
-    scheduleFocusSceneGeometryMeasurement(changedIds);
 }
 
 async function buildContent(): Promise<boolean> {
@@ -3855,7 +3836,6 @@ async function applyAssetHydrationCurrentTreeUpdate(
         inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, currentRenderedExprs);
     }
 
-    rebuildConnectionElementIndex();
     updateFocusPositionEditUi();
     refreshPreviewLabelMode();
     retriggerSearch();

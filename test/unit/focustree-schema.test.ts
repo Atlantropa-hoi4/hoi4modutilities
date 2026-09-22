@@ -55,6 +55,47 @@ describe('focus tree schema fixtures', () => {
         assert.deepStrictEqual(ids, ['SHARED_ROOT', 'JOINT_ALPHA']);
     });
 
+    it('propagates allow-branch membership through reverse-ordered parsed focuses', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const trees = getFocusTree(parseHoi4File(`
+            focus_tree = {
+                id = branch_tree
+                focus = { id = CHILD prerequisite = { focus = PARENT } }
+                focus = { id = PARENT prerequisite = { focus = ROOT } }
+                focus = { id = ROOT allow_branch = { has_country_flag = enabled } }
+            }
+        `), [], 'common/national_focus/branches.txt');
+
+        assert.deepStrictEqual(trees[0].focuses.CHILD.inAllowBranch, ['ROOT']);
+        assert.deepStrictEqual(trees[0].focuses.PARENT.inAllowBranch, ['ROOT']);
+        assert.deepStrictEqual(trees[0].focuses.ROOT.inAllowBranch, ['ROOT']);
+    });
+
+    it('preserves relative cycle warning origins, paths, and navigation ranges', () => {
+        const { getFocusTree } = loadFocusTreeSchema();
+        const trees = getFocusTree(parseHoi4File(`
+            focus_tree = {
+                id = cycle_tree
+                focus = { id = ENTRY relative_position_id = A }
+                focus = { id = A relative_position_id = B }
+                focus = { id = B relative_position_id = A }
+                focus = { id = MISSING relative_position_id = UNKNOWN }
+            }
+        `), [], 'common/national_focus/cycles.txt');
+        const cycle = trees[0].warnings.find(warning => warning.code === 'relative-position-circular');
+
+        assert.ok(cycle);
+        assert.strictEqual(cycle.source, 'B');
+        assert.ok(cycle.text.includes('B -> A -> B'));
+        assert.deepStrictEqual(cycle.relatedFocusIds, ['B', 'A']);
+        assert.deepStrictEqual(cycle.navigations?.map(navigation => navigation.start), [
+            trees[0].focuses.B.token!.start,
+            trees[0].focuses.A.token!.start,
+            trees[0].focuses.B.token!.start,
+        ]);
+        assert.ok(trees[0].warnings.some(warning => warning.code === 'relative-position-target-missing'));
+    });
+
     it('creates separate joint focus trees and links them from focus_tree shared_focus references', () => {
         const { convertFocusFileNodeToJson, getFocusTreeWithFocusFile } = loadFocusTreeSchema();
         const constants = {};

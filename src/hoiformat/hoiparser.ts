@@ -50,9 +50,6 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
     let token: Token<T> | null = null;
     let groups: RegExpExecArray | null = null;
 
-    let sum = 0;
-    const lineLengthSums = input.split('\n').map(v => v.length).map(v => sum = (sum+ v + 1));
-
     function nextGroups() {
         prevPos = pos;
         do {
@@ -87,6 +84,9 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
     }
 
     function throwError(message: string, prev: boolean = false): never {
+        // Successful parses only need token offsets, not a line index for diagnostics.
+        let sum = 0;
+        const lineLengthSums = input.split('\n').map(v => v.length).map(v => sum = (sum+ v + 1));
         const calculatePos = prev ? prevPos : pos;
         const line = lineLengthSums.findIndex(v => v > calculatePos);
         const column = line > 0 ? calculatePos - lineLengthSums[line - 1] : calculatePos;

@@ -3,6 +3,7 @@ import {
     buildFocusSceneGeometry,
     FocusSceneRect,
     updateFocusSceneNodeVisuals,
+    updateFocusScenePositions,
 } from '../../src/previewdef/focustree/scenegeometry';
 import type { GridBoxItem } from '../../src/util/hoi4gui/gridboxcommon';
 
@@ -195,4 +196,69 @@ describe('focus retained scene geometry', () => {
             assert.ok(Math.abs(screen.y / scale - point.y) <= 0.5);
         }
     });
+
+    it('skips unchanged measurements and paths without scanning unrelated edges', () => {
+        const geometry = buildFocusSceneGeometry({
+            items: Array.from({ length: 1000 }, (_, index) => ({
+                id: String(index), gridX: index % 20, gridY: Math.floor(index / 20),
+                connections: index === 0 ? [] : [{ target: String(index - 1), targetType: 'parent' as const }],
+            })),
+            slotSize: { width: 96, height: 130 },
+            padding: { left: 0, top: 0, right: 0, bottom: 0 },
+        });
+        const node = geometry.nodes['500'];
+        const anchors = node.anchors;
+        assert.deepStrictEqual(updateFocusSceneNodeVisuals(geometry, { '500': { ...node.visual } }), []);
+        assert.strictEqual(node.anchors, anchors);
+        Object.defineProperty(geometry.edges[0], 'sourceId', {
+            get: () => { throw new Error('Unrelated edge was inspected during a local update'); },
+        });
+        const changed = updateFocusSceneNodeVisuals(geometry, { '500': { ...node.visual, y: node.visual.y + 8 } });
+        assert.strictEqual(changed.length, 2);
+        assert.ok(changed.every(edge => edge.sourceId === '500' || edge.targetId === '500'));
+    });
+
+    it('does not request an SVG update when only an exclusive label bounds change', () => {
+        const geometry = createGeometry('up', 'related');
+        const child = geometry.nodes.child;
+        const changed = updateFocusSceneNodeVisuals(geometry,
+            { child: { ...child.visual, width: child.visual.width + 200 } },
+            { child: child.exclusiveVisual });
+        assert.deepStrictEqual(changed, []);
+    });
+
+    for (const format of ['up', 'down', 'left', 'right'] as const) {
+        it(`retains measured icon bounds and edge identity when repositioning a ${format} scene`, () => {
+            const items = createItems('related');
+            const options = {
+                items, format,
+                slotSize: { width: 100, height: 120 },
+                padding: { left: 20, top: 30, right: 20, bottom: 30 },
+            };
+            const geometry = buildFocusSceneGeometry(options);
+            const measured = Object.fromEntries(Object.entries(geometry.nodes).map(([id, node]) => [id, {
+                x: node.slot.x + 22, y: node.slot.y + 18, width: 56, height: 56,
+            }]));
+            updateFocusSceneNodeVisuals(geometry, measured, measured);
+            const edges = geometry.edges;
+            const edgeIndex = geometry.edgesByNode;
+            items[0] = { ...items[0], gridX: -3, gridY: -2 };
+            const expected = buildFocusSceneGeometry(options);
+            const expectedVisuals = Object.fromEntries(Object.entries(expected.nodes).map(([id, node]) => [id, {
+                x: node.slot.x + 22, y: node.slot.y + 18, width: 56, height: 56,
+            }]));
+            updateFocusSceneNodeVisuals(expected, expectedVisuals, expectedVisuals);
+
+            const update = updateFocusScenePositions(geometry, options);
+            assert.strictEqual(geometry.edges, edges);
+            assert.strictEqual(geometry.edgesByNode, edgeIndex);
+            assert.ok(update.movedFocusIds.length > 0);
+            assert.deepStrictEqual(geometry.nodes, expected.nodes);
+            assert.deepStrictEqual(geometry.edges.map(edge => edge.path), expected.edges.map(edge => edge.path));
+            assert.deepStrictEqual(geometry.origin, expected.origin);
+            assert.strictEqual(geometry.width, expected.width);
+            assert.strictEqual(geometry.height, expected.height);
+            assert.deepStrictEqual(updateFocusScenePositions(geometry, options), { movedFocusIds: [], changedEdges: [] });
+        });
+    }
 });

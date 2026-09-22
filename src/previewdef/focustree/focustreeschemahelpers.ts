@@ -10,6 +10,8 @@ import { createFocusPositionEditKey } from "./positioneditcommon";
 import { collectFocusLint, sortFocusWarnings } from "./focuslint";
 import { parseInlayWindowRef } from "./inlay";
 import { getJointFocusTreeId, parseFocusIcon } from "./focustreeschematypes";
+import { propagateFocusBranchMembership } from "./branchmembership";
+import { findFocusRelativePositionCycles } from "./relativepositioncycles";
 import type { Focus, FocusDef, FocusFile, FocusTree, FocusTreeInlayRef, FocusWarning } from "./focustreeschematypes";
 
 export function buildFocusTreesFromFile(
@@ -181,24 +183,7 @@ function getFocuses(
         focuses[focus.id] = focus;
     }
 
-    let hasChangedInAllowBranch = true;
-    while (hasChangedInAllowBranch) {
-        hasChangedInAllowBranch = false;
-        for (const key in focuses) {
-            const focus = focuses[key];
-            const allPrerequisites = flatten(focus.prerequisite).filter(p => p in focuses);
-            if (allPrerequisites.length === 0) {
-                continue;
-            }
-
-            for (const allowBranchId of allPrerequisites.flatMap(p => focuses[p].inAllowBranch)) {
-                if (!focus.inAllowBranch.includes(allowBranchId)) {
-                    focus.inAllowBranch.push(allowBranchId);
-                    hasChangedInAllowBranch = true;
-                }
-            }
-        }
-    }
+    propagateFocusBranchMembership(focuses);
 
     return focuses;
 }
@@ -435,10 +420,6 @@ function getAllowBranchOptions(focuses: Record<string, Focus>): string[] {
 }
 
 function validateRelativePositionId(focuses: Record<string, Focus>, warnings: FocusWarning[]) {
-    const relativePositionId: Record<string, Focus | undefined> = {};
-    const relativePositionIdChain: string[] = [];
-    const circularReported: Record<string, boolean> = {};
-
     for (const focus of Object.values(focuses)) {
         if (focus.relativePositionId === undefined) {
             continue;
@@ -456,42 +437,24 @@ function validateRelativePositionId(focuses: Record<string, Focus>, warnings: Fo
                     end: focus.token.end,
                 }] : undefined,
             }));
-            continue;
         }
+    }
 
-        relativePositionIdChain.length = 0;
-        relativePositionId[focus.id] = focuses[focus.relativePositionId];
-        let currentFocus: Focus | undefined = focus;
-        while (currentFocus) {
-            if (circularReported[currentFocus.id]) {
-                break;
-            }
-
-            relativePositionIdChain.push(currentFocus.id);
-            const nextFocus: Focus | undefined = relativePositionId[currentFocus.id];
-            if (nextFocus && relativePositionIdChain.includes(nextFocus.id)) {
-                relativePositionIdChain.forEach(r => {
-                    circularReported[r] = true;
-                });
-                relativePositionIdChain.push(nextFocus.id);
-                const navigationTargets = relativePositionIdChain
-                    .map(focusId => focuses[focusId])
-                    .filter((value): value is Focus => value !== undefined && !!value.token)
-                    .map(focusEntry => ({
-                        file: focusEntry.file,
-                        start: focusEntry.token!.start,
-                        end: focusEntry.token!.end,
-                    }));
-                warnings.push(createParseWarning({
-                    code: 'relative-position-circular',
-                    text: localize('focustree.warnings.relativepositioncircularref', "There're circular reference in relative position ID of these focuses: {0}.", relativePositionIdChain.join(' -> ')),
-                    source: focus.id,
-                    relatedFocusIds: Array.from(new Set(relativePositionIdChain)),
-                    navigations: navigationTargets.length > 0 ? navigationTargets : undefined,
-                }));
-                break;
-            }
-            currentFocus = nextFocus;
-        }
+    for (const chain of findFocusRelativePositionCycles(focuses)) {
+        const navigationTargets = chain
+            .map(focusId => focuses[focusId])
+            .filter((value): value is Focus => value !== undefined && !!value.token)
+            .map(focusEntry => ({
+                file: focusEntry.file,
+                start: focusEntry.token!.start,
+                end: focusEntry.token!.end,
+            }));
+        warnings.push(createParseWarning({
+            code: 'relative-position-circular',
+            text: localize('focustree.warnings.relativepositioncircularref', "There're circular reference in relative position ID of these focuses: {0}.", chain.join(' -> ')),
+            source: chain[0],
+            relatedFocusIds: Array.from(new Set(chain)),
+            navigations: navigationTargets.length > 0 ? navigationTargets : undefined,
+        }));
     }
 }

@@ -404,6 +404,59 @@ describe('fileloader mod root helpers', () => {
         assert.deepStrictEqual(withoutDlc, ['shared.txt', 'base-only.txt']);
     });
 
+    for (const replaceBase of [false, true]) {
+        it(`preserves first-source listing order with duplicate paths and replace_path=${replaceBase}`, async () => {
+            const firstWorkspace = path.join('C:', 'listing-workspace-first');
+            const secondWorkspace = path.join('C:', 'listing-workspace-second');
+            const modFile = path.join('C:', 'mods', `listing-order-${replaceBase}.mod`);
+            const modRoot = path.join('C:', 'mods', `listing-order-${replaceBase}`);
+            const baseRoot = 'server.hoi4installpath:/';
+            const sources: Array<[string, string[]]> = [
+                [firstWorkspace, ['shared.gfx', 'workspace-first.gfx']],
+                [secondWorkspace, ['shared.gfx', 'workspace-second.gfx']],
+                [modRoot, ['workspace-second.gfx', 'selected.gfx']],
+                [baseRoot, ['selected.gfx', 'base.gfx']],
+            ];
+            mockWorkspaceFolders.push({ uri: createMockUri(firstWorkspace) }, { uri: createMockUri(secondWorkspace) });
+            mockConfigurationModFile = modFile;
+            mockFiles.add(normalizeMockPath(modFile));
+            mockDirectories.add(normalizeMockPath(modRoot));
+            mockReadContents.set(normalizeMockPath(modFile), [
+                `path = "${modRoot.replace(/\\/g, '/')}"`,
+                replaceBase ? 'replace_path = "interface"' : '',
+            ].join('\n'));
+            for (const [root, files] of sources) {
+                const folder = normalizeMockPath(path.join(root, 'interface'));
+                mockDirectories.add(folder);
+                mockDirectoryEntries.set(folder, files.map(file => [file, 1]));
+            }
+
+            const files = await listFilesFromModOrHOI4('interface', { dlc: false });
+
+            assert.deepStrictEqual(files, [
+                'shared.gfx', 'workspace-first.gfx', 'workspace-second.gfx', 'selected.gfx',
+                ...(replaceBase ? [] : ['base.gfx']),
+            ]);
+            assert.strictEqual(
+                mockDirectoryReadCounts.get(normalizeMockPath(path.join(baseRoot, 'interface'))) ?? 0,
+                replaceBase ? 0 : 1,
+            );
+        });
+    }
+
+    it('keeps complete large directory listings without argument-count limits', async () => {
+        const root = path.join('C:', 'large-listing-workspace');
+        const folder = normalizeMockPath(path.join(root, 'interface'));
+        const names = Array.from({ length: 160_000 }, (_, index) => `sprite-${index}.gfx`);
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockDirectories.add(folder);
+        mockDirectoryEntries.set(folder, names.map(name => [name, 1]));
+
+        const files = await listFilesFromModOrHOI4('interface', { hoi4: false, dlc: false });
+
+        assert.deepStrictEqual(files, names);
+    });
+
     it('lists recursive DLC ZIP files without requiring explicit directory entries', () => {
         const entries = [
             { entryName: 'interface/root.gfx', isDirectory: false },

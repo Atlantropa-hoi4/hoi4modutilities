@@ -6,19 +6,23 @@ import { forceError } from '../../src/util/common';
 import { normalizePreviewScale } from '../../src/util/previewscale';
 import { shouldZoomWheel } from '../../src/util/previewwheel';
 import { installZoomControls, isZoomInput } from './zoomcontrols';
+import { ViewportStateStore } from './viewportstate';
 import { BehaviorSubject } from 'rxjs';
 export { arrayToMap } from '../../src/util/common';
 
 export const panning$ = new BehaviorSubject<boolean>(false);
+const stateStore = new ViewportStateStore(() => vscode.getState(), state => vscode.setState(state));
 
 export function setState(obj: Record<string, any>): void {
-    const state = getState();
-    Object.assign(state, obj);
-    vscode.setState(state);
+    stateStore.setState(obj);
 }
 
 export function getState(): Record<string, any> {
-    return vscode.getState() || {};
+    return stateStore.getState();
+}
+
+function setViewportState(obj: Record<string, number>): void {
+    stateStore.setState(obj, document.visibilityState !== 'hidden');
 }
 
 export function previewOption(key: string, fallback: boolean): boolean {
@@ -191,12 +195,13 @@ export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOff
         if (shouldDisableZoom) { return; }
         const oldScale = scale;
         scale = normalizePreviewScale(Math.round((scale + direction * 0.1) * 100) / 100);
+        if (scale === oldScale) { return; }
 
         const oldScrollX = window.scrollX;
         const oldScrollY = window.scrollY;
         
         contentElement.style.transform = `scale(${scale})`;
-        setState({ scale });
+        setViewportState({ scale });
 
         const nextScrollX = (pageX - xOffset) * scale / oldScale + xOffset - (pageX - oldScrollX);
         const nextScrollY = (pageY - yOffset) * scale / oldScale + yOffset - (pageY - oldScrollY);
@@ -311,16 +316,19 @@ if (window.previewedFileUri) {
 window.addEventListener('load', function() {
     // Disable selection
     document.body.style.userSelect = 'none';
+    window.addEventListener('pagehide', () => stateStore.flush());
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            stateStore.flush();
+        }
+    });
 
     // Save scroll position
     (function() {
         scrollToState();
 
         window.addEventListener('scroll', function() {
-            const state = getState();
-            state.xOffset = window.pageXOffset;
-            state.yOffset = window.pageYOffset;
-            vscode.setState(state);
+            setViewportState({ xOffset: window.pageXOffset, yOffset: window.pageYOffset });
         });
     })();
 

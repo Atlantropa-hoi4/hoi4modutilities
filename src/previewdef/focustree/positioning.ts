@@ -18,30 +18,44 @@ export function getFocusPosition(
         return cached;
     }
 
-    if (focusStack.includes(focus)) {
-        return { x: 0, y: 0 };
+    if (focus.relativePositionId === undefined && focusStack.length === 0) {
+        const activeOffset = getActiveFocusOffset(focus, exprs);
+        const position = { x: focus.x + activeOffset.x, y: focus.y + activeOffset.y };
+        positionByFocusId[focus.id] = position;
+        return position;
     }
 
-    let position: NumberPosition = { x: focus.x, y: focus.y };
-    if (focus.relativePositionId !== undefined) {
-        focusStack.push(focus);
-        const relativeFocusPosition = getFocusPosition(
-            focusTree.focuses[focus.relativePositionId],
-            positionByFocusId,
-            focusTree,
-            exprs,
-            focusStack,
-        );
-        focusStack.pop();
-        position.x += relativeFocusPosition.x;
-        position.y += relativeFocusPosition.y;
+    const visited = new Set(focusStack);
+    const unresolved: Focus[] = [];
+    let current: Focus | undefined = focus;
+    let position: NumberPosition = { x: 0, y: 0 };
+    while (current) {
+        const currentPosition = positionByFocusId[current.id];
+        if (currentPosition) {
+            position = currentPosition;
+            break;
+        }
+        if (visited.has(current)) {
+            break;
+        }
+        visited.add(current);
+        unresolved.push(current);
+        current = current.relativePositionId !== undefined
+            ? focusTree.focuses[current.relativePositionId]
+            : undefined;
     }
 
-    const activeOffset = getActiveFocusOffset(focus, exprs);
-    position.x += activeOffset.x;
-    position.y += activeOffset.y;
-
-    positionByFocusId[focus.id] = position;
+    // Resolve from the anchor back to the requested focus without recursive calls.
+    // A missing anchor or a cycle keeps the same zero-origin fallback as before.
+    for (let index = unresolved.length - 1; index >= 0; index -= 1) {
+        const unresolvedFocus = unresolved[index];
+        const activeOffset = getActiveFocusOffset(unresolvedFocus, exprs);
+        position = {
+            x: unresolvedFocus.x + position.x + activeOffset.x,
+            y: unresolvedFocus.y + position.y + activeOffset.y,
+        };
+        positionByFocusId[unresolvedFocus.id] = position;
+    }
     return position;
 }
 

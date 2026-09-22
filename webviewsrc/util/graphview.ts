@@ -47,6 +47,7 @@ export interface BuiltChip<E extends GraphEdgeLike> {
 	edge: E;
 	guarded: boolean;
 	chip?: HTMLDivElement;
+	height?: number;
 }
 
 // One rail down the middle of every gap between two columns. `railLabel` is optional because only
@@ -142,7 +143,7 @@ function renderEdges<E extends GraphEdgeLike>(
 		[];
 	const renderedEdges: RenderedEdge<E>[] = [];
 
-	for (const { edge, guarded, chip } of built) {
+	for (const { edge, guarded, chip, height = 0 } of built) {
 		const from = layout.positions[edge.from];
 		const to = layout.positions[edge.to];
 		const fromSize = sizeById.get(edge.from);
@@ -176,7 +177,6 @@ function renderEdges<E extends GraphEdgeLike>(
 			const gap = layout.rank[edge.from] ?? 0;
 			const centre = (layout.gapX[gap] ?? x1) + (layout.gapWidth[gap] ?? 0) / 2;
 			const t = parameterAtX(x1, x1 + dx, x2 - dx, x2, centre);
-			const height = chip.getBoundingClientRect().height / currentScale();
 			placements.push({
 				gap,
 				x: centre,
@@ -265,12 +265,16 @@ export function renderGraph<N extends GraphNodeLike, E extends GraphEdgeLike>(
 		measured.push({ id: item.node.id, width: rect.width / scale, height: rect.height / scale });
 	}
 	const chipSizes: ChipInput[] = [];
-	for (const { edge, chip } of built) {
+	for (const item of built) {
+		const { edge, chip } = item;
 		if (chip) {
+			// Reuse both dimensions before any positioning or SVG writes can invalidate layout.
+			const rect = chip.getBoundingClientRect();
+			item.height = rect.height / scale;
 			chipSizes.push({
 				from: edge.from,
 				to: edge.to,
-				width: chip.getBoundingClientRect().width / scale,
+				width: rect.width / scale,
 			});
 		}
 	}

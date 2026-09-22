@@ -354,7 +354,12 @@ export async function listFilesFromModOrHOI4(
         recursively: options?.recursively,
     }, async () => {
         const readFunction = options?.recursively ? readDirFilesRecursively : readDirFiles;
-        const result: string[] = [];
+        const result = new Set<string>();
+        const addFiles = (files: readonly string[]) => {
+            for (const file of files) {
+                result.add(file);
+            }
+        };
 
         if (options?.mod !== false) {
             // Find in opened workspace folders
@@ -363,7 +368,7 @@ export async function listFilesFromModOrHOI4(
                     const findPath = vscode.Uri.joinPath(folder.uri, relativePath);
                     if (await isDirectory(findPath)) {
                         try {
-                            result.push(...await readFunction(findPath));
+                            addFiles(await readFunction(findPath));
                         } catch(e) {}
                     }
                 }
@@ -373,7 +378,7 @@ export async function listFilesFromModOrHOI4(
                 const findPath = vscode.Uri.joinPath(modRoot, relativePath);
                 if (await isDirectory(findPath)) {
                     try {
-                        result.push(...await readFunction(findPath));
+                        addFiles(await readFunction(findPath));
                     } catch(e) {}
                 }
             }
@@ -382,7 +387,7 @@ export async function listFilesFromModOrHOI4(
             if (replacePaths) {
                 for (const replacePath of replacePaths) {
                     if (isPathCoveredByReplacePath(relativePath, replacePath)) {
-                        return result.filter((v, i, a) => i === a.indexOf(v));
+                        return [...result];
                     }
                 }
             }
@@ -396,7 +401,7 @@ export async function listFilesFromModOrHOI4(
             if (dlcs !== null && dlcZipCache !== null) {
                 for (const dlc of dlcs) {
                     const dlcZip = await dlcZipCache.get(dlc.toString());
-                    result.push(...listFilesInDlcZipEntries(dlcZip.getEntries(), relativePath, options?.recursively));
+                    addFiles(listFilesInDlcZipEntries(dlcZip.getEntries(), relativePath, options?.recursively));
                 }
             }
 
@@ -406,7 +411,7 @@ export async function listFilesFromModOrHOI4(
                     const findPath = vscode.Uri.joinPath(dlc, relativePath);
                     if (await isDirectory(findPath)) {
                         try {
-                            result.push(...await readFunction(findPath));
+                            addFiles(await readFunction(findPath));
                         } catch(e) {}
                     }
                 }
@@ -418,12 +423,12 @@ export async function listFilesFromModOrHOI4(
             const findPath = vscode.Uri.joinPath(installPath, relativePath);
             if (await isDirectory(findPath)) {
                 try {
-                    result.push(...await readFunction(findPath));
+                    addFiles(await readFunction(findPath));
                 } catch(e) {}
             }
         }
 
-        return result.filter((v, i, a) => i === a.indexOf(v));
+        return [...result];
     }).finally(() => {
         listFilesFromModOrHOI4InFlight.delete(inFlightKey);
     });

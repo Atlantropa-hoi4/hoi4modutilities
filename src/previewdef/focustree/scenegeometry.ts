@@ -42,6 +42,7 @@ export interface FocusSceneGeometry {
     anchorGap: number;
     nodes: Record<string, FocusNodeGeometry>;
     edges: FocusEdgeGeometry[];
+    edgesByNode: ReadonlyMap<string, readonly FocusEdgeGeometry[]>;
 }
 
 export interface FocusSceneGeometryOptions {
@@ -61,17 +62,7 @@ const defaultVisualTop = 10;
 
 export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): FocusSceneGeometry {
     const format = options.format ?? 'up';
-    const rawSlots = Object.fromEntries(options.items.map(item => [
-        item.id,
-        getRawSlot(item.gridX, item.gridY, format, options.slotSize),
-    ]));
-    const rawSlotValues = Object.values(rawSlots);
-    const minSlotX = rawSlotValues.length > 0 ? Math.min(...rawSlotValues.map(slot => slot.x)) : 0;
-    const minSlotY = rawSlotValues.length > 0 ? Math.min(...rawSlotValues.map(slot => slot.y)) : 0;
-    const origin = {
-        x: options.padding.left - Math.min(0, minSlotX),
-        y: options.padding.top - Math.min(0, minSlotY),
-    };
+    const layout = layoutFocusSlots(options, format);
     const visualSize = {
         width: Math.min(options.visualSize?.width ?? defaultVisualWidth, options.slotSize.width),
         height: Math.min(options.visualSize?.height ?? defaultVisualHeight, options.slotSize.height),
@@ -83,13 +74,7 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
     const anchorGap = options.anchorGap ?? 4;
     const nodes: Record<string, FocusNodeGeometry> = {};
     for (const item of options.items) {
-        const rawSlot = rawSlots[item.id];
-        const slot: FocusSceneRect = {
-            x: rawSlot.x + origin.x,
-            y: rawSlot.y + origin.y,
-            width: options.slotSize.width,
-            height: options.slotSize.height,
-        };
+        const slot = layout.slots[item.id];
         const visual: FocusSceneRect = {
             x: slot.x + visualOffset.x,
             y: slot.y + visualOffset.y,
@@ -106,6 +91,7 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
     }
 
     const edges: FocusEdgeGeometry[] = [];
+    const edgesByNode = new Map<string, FocusEdgeGeometry[]>();
     const exclusivePairs = new Set<string>();
     for (const item of options.items) {
         for (let connectionIndex = 0; connectionIndex < item.connections.length; connectionIndex += 1) {
@@ -137,7 +123,7 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
                 ? routeExclusive(source, destination)
                 : routePrerequisite(source, destination, format);
             const stroke = parseStroke(connection);
-            edges.push({
+            const edge: FocusEdgeGeometry = {
                 id: `${kind}:${sourceId}->${targetId}:${connectionIndex}`,
                 sourceId,
                 targetId,
@@ -148,20 +134,83 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
                 dashArray: stroke.dashArray,
                 points,
                 path: pointsToPath(points),
-            });
+            };
+            edges.push(edge);
+            for (const focusId of new Set([sourceId, targetId])) {
+                const adjacent = edgesByNode.get(focusId) ?? [];
+                adjacent.push(edge);
+                edgesByNode.set(focusId, adjacent);
+            }
         }
     }
 
-    const maxSlotX = Object.values(nodes).reduce((max, node) => Math.max(max, node.slot.x + node.slot.width), 0);
-    const maxSlotY = Object.values(nodes).reduce((max, node) => Math.max(max, node.slot.y + node.slot.height), 0);
     return {
-        width: Math.max(options.minimumSize?.width ?? 1, maxSlotX + options.padding.right),
-        height: Math.max(options.minimumSize?.height ?? 1, maxSlotY + options.padding.bottom),
-        origin,
+        width: layout.width,
+        height: layout.height,
+        origin: layout.origin,
         format,
         anchorGap,
         nodes,
         edges,
+        edgesByNode,
+    };
+}
+
+// Position-only edits retain measured card bounds, edge objects, and adjacency indexes.
+export function updateFocusScenePositions(
+    geometry: FocusSceneGeometry,
+    options: FocusSceneGeometryOptions,
+): { movedFocusIds: string[]; changedEdges: FocusEdgeGeometry[] } {
+    const layout = layoutFocusSlots(options, geometry.format);
+    const visuals: Record<string, FocusSceneRect> = {};
+    const exclusiveVisuals: Record<string, FocusSceneRect> = {};
+    for (const [focusId, slot] of Object.entries(layout.slots)) {
+        const node = geometry.nodes[focusId];
+        if (!node) {
+            continue;
+        }
+        const dx = slot.x - node.slot.x;
+        const dy = slot.y - node.slot.y;
+        if (dx === 0 && dy === 0) {
+            continue;
+        }
+        node.slot = slot;
+        visuals[focusId] = { ...node.visual, x: node.visual.x + dx, y: node.visual.y + dy };
+        exclusiveVisuals[focusId] = { ...node.exclusiveVisual, x: node.exclusiveVisual.x + dx, y: node.exclusiveVisual.y + dy };
+    }
+    geometry.origin = layout.origin;
+    geometry.width = layout.width;
+    geometry.height = layout.height;
+    return {
+        movedFocusIds: Object.keys(visuals),
+        changedEdges: updateFocusSceneNodeVisuals(geometry, visuals, exclusiveVisuals),
+    };
+}
+
+function layoutFocusSlots(options: FocusSceneGeometryOptions, format: Format['_name']) {
+    const slots: Record<string, FocusSceneRect> = {};
+    let minX = 0;
+    let minY = 0;
+    for (const item of options.items) {
+        const position = getRawSlot(item.gridX, item.gridY, format, options.slotSize);
+        minX = Math.min(minX, position.x);
+        minY = Math.min(minY, position.y);
+        slots[item.id] = { ...position, ...options.slotSize };
+    }
+    const origin = { x: options.padding.left - minX, y: options.padding.top - minY };
+    let maxX = 0;
+    let maxY = 0;
+    for (const slot of Object.values(slots)) {
+        slot.x += origin.x;
+        slot.y += origin.y;
+        maxX = Math.max(maxX, slot.x + slot.width);
+        maxY = Math.max(maxY, slot.y + slot.height);
+    }
+    return {
+        slots,
+        origin,
+        width: Math.max(options.minimumSize?.width ?? 1, maxX + options.padding.right),
+        height: Math.max(options.minimumSize?.height ?? 1, maxY + options.padding.bottom),
     };
 }
 
@@ -176,8 +225,12 @@ export function updateFocusSceneNodeVisuals(
         if (!node || visual.width <= 0 || visual.height <= 0) {
             continue;
         }
+        const exclusiveVisual = exclusiveVisualByFocusId[focusId] ?? visual;
+        if (rectEquals(node.visual, visual) && rectEquals(node.exclusiveVisual, exclusiveVisual)) {
+            continue;
+        }
         node.visual = { ...visual };
-        node.exclusiveVisual = { ...(exclusiveVisualByFocusId[focusId] ?? visual) };
+        node.exclusiveVisual = { ...exclusiveVisual };
         node.anchors = createAnchors(node.visual, geometry.anchorGap);
         changedFocusIds.add(focusId);
     }
@@ -186,20 +239,30 @@ export function updateFocusSceneNodeVisuals(
         return [];
     }
 
-    const changedEdges: FocusEdgeGeometry[] = [];
-    for (const edge of geometry.edges) {
-        if (!changedFocusIds.has(edge.sourceId) && !changedFocusIds.has(edge.targetId)) {
-            continue;
+    const adjacentEdges = new Set<FocusEdgeGeometry>();
+    for (const focusId of changedFocusIds) {
+        for (const edge of geometry.edgesByNode.get(focusId) ?? []) {
+            adjacentEdges.add(edge);
         }
+    }
+    const changedEdges: FocusEdgeGeometry[] = [];
+    for (const edge of adjacentEdges) {
         const source = geometry.nodes[edge.sourceId];
         const target = geometry.nodes[edge.targetId];
         edge.points = edge.kind === 'exclusive'
             ? routeExclusive(source, target)
             : routePrerequisite(source, target, geometry.format);
-        edge.path = pointsToPath(edge.points);
-        changedEdges.push(edge);
+        const path = pointsToPath(edge.points);
+        if (path !== edge.path) {
+            edge.path = path;
+            changedEdges.push(edge);
+        }
     }
     return changedEdges;
+}
+
+function rectEquals(left: FocusSceneRect, right: FocusSceneRect): boolean {
+    return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
 }
 
 function getRawSlot(

@@ -27,6 +27,44 @@ const parserFixtureSchema = {
 } as const;
 
 describe('parser fixtures', () => {
+    for (const eol of ['\n', '\r\n']) {
+        for (const bom of ['', '\uFEFF']) {
+            const encoding = `${eol === '\n' ? 'LF' : 'CRLF'}, ${bom ? 'BOM' : 'no BOM'}`;
+            it(`preserves error coordinates and context with ${encoding}`, () => {
+                const prefix = 'In file sample.txt:\n';
+                const invalidToken = bom + ['root = {', '    value = 1', '    broken = !', '}'].join(eol);
+                const invalidName = bom + ['root = {', '    = yes', '}'].join(eol);
+                for (const keepTokens of [true, false]) {
+                    assert.throws(() => parseHoi4File(invalidToken, prefix, { keepTokens }), {
+                        message: `${prefix}Invalid token at (3, 13):  !${eol}}(EOF)`,
+                    });
+                    assert.throws(() => parseHoi4File(invalidName, prefix, { keepTokens }), {
+                        message: `${prefix}Expect name to be symbol, string, number or unit number at (1, ${9 + bom.length}): ${eol}    = yes${eol}}(EOF)`,
+                    });
+                    assert.throws(() => parseHoi4File(bom + 'key =', prefix, { keepTokens }), {
+                        message: `${prefix}Expect string, number, symbol, or { at (1, ${6 + bom.length}): (EOF)`,
+                    });
+                }
+            });
+
+            it(`preserves successful parse source ranges with ${encoding}`, () => {
+                const input = bom + ['root = {', '    value = 42', '}'].join(eol);
+                const node = parseHoi4File(input);
+                assert.ok(Array.isArray(node.value));
+                const root = node.value[0];
+                assert.ok(Array.isArray(root.value));
+                const value = root.value[0];
+
+                assert.strictEqual(input.slice(root.nameToken!.start, root.nameToken!.end), 'root');
+                assert.strictEqual(input.slice(value.nameToken!.start, value.nameToken!.end), 'value');
+                assert.strictEqual(input.slice(value.valueStartToken!.start, value.valueEndToken!.end), '42');
+                assert.strictEqual(root.nameToken!.start, bom.length);
+                assert.strictEqual(root.valueEndToken!.end, input.length);
+                assert.strictEqual(value.value, 42);
+            });
+        }
+    }
+
     it('parses modern scoped variable and attachment syntax', () => {
         const node = parseHoi4File(readFixture('parser', 'modern-syntax.txt'));
         const parsed = convertNodeToJson<ParserFixture>(node, parserFixtureSchema);
