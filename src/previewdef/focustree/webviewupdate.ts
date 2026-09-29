@@ -1,4 +1,4 @@
-import { focusTreeProtocolVersion, FocusTreeCatalogView, FocusTreeView } from './viewmodel';
+import { focusTreeProtocolVersion, FocusTreeCatalogView, FocusTreeView, FocusTreeViewPatch } from './viewmodel';
 
 export type FocusTreeContentSlot =
     | 'treeDefinitions'
@@ -17,6 +17,8 @@ export interface FocusTreeContentUpdateMessage {
     sceneMode?: 'replace' | 'merge';
     updateType?: 'structure' | 'assets' | 'patch';
     snapshotVersion: number;
+    /** Snapshot that tree deltas were computed against. */
+    baseSnapshotVersion?: number;
     documentVersion: number;
     focusPositionActiveFile?: string;
     selectedTreeId?: string;
@@ -27,11 +29,15 @@ export interface FocusTreeContentUpdateMessage {
     changedInlayWindowIds?: string[];
     focusTrees?: FocusTreeView[];
     catalog?: FocusTreeCatalogView[];
-    focusTreePatches?: Array<{ treeId: string; tree: FocusTreeView }>;
+    focusTreePatches?: FocusTreeViewPatch[];
     continuousFocusHtml?: string;
-    renderedFocus?: Record<string, string>;
-    renderedFocusPatch?: Record<string, string>;
-    removedRenderedFocusIds?: string[];
+    /** Complete GUI card templates and per-focus template keys. */
+    focusTemplates?: Record<string, string>;
+    focusTemplateKeyById?: Record<string, string>;
+    /** Templates the webview does not have yet, and changed or removed focus template keys. */
+    focusTemplatePatch?: Record<string, string>;
+    focusTemplateKeyPatch?: Record<string, string>;
+    removedFocusTemplateKeyIds?: string[];
     renderedInlayWindows?: Record<string, string>;
     renderedInlayWindowPatch?: Record<string, string>;
     removedRenderedInlayWindowIds?: string[];
@@ -134,8 +140,8 @@ export function getFocusTreeContentUpdateDecision(
 
     const changedCurrentTreeFocusIds = getIntersectingIds(
         Object.keys(nextCurrentTree.focuses),
-        message.changedFocusIds ?? Object.keys(message.renderedFocusPatch ?? {}),
-        message.removedRenderedFocusIds,
+        message.changedFocusIds ?? Object.keys(message.focusTemplateKeyPatch ?? {}),
+        message.removedFocusTemplateKeyIds,
     );
     const changedCurrentTreeInlayIds = getIntersectingIds(
         nextCurrentTree.inlayWindows.map(inlay => inlay.id),

@@ -28,6 +28,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 const { FocusTreePreviewSession } = require('../../src/previewdef/focustree/previewsession') as typeof import('../../src/previewdef/focustree/previewsession');
 const { createFocusTreeRuntimeState } = require('../../src/previewdef/focustree/runtime') as typeof import('../../src/previewdef/focustree/runtime');
 const { UserError } = require('../../src/util/common') as typeof import('../../src/util/common');
+const { focusTreeProtocolVersion } = require('../../src/previewdef/focustree/viewmodel') as typeof import('../../src/previewdef/focustree/viewmodel');
 const localisationIndex = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 const featureFlags = require('../../src/util/featureflags') as typeof import('../../src/util/featureflags');
 const originalIsLocalisationIndexReady = localisationIndex.isLocalisationIndexReady;
@@ -134,7 +135,6 @@ function createSession(overrides?: {
         isInitialFullLoadReady: overrides?.isInitialFullLoadReady,
         snapshotBuilder: {
             renderShell: overrides?.renderShell ?? (documentVersion => `shell:${documentVersion}`),
-            renderDocument: async document => `full:${document.version}`,
             buildBaseState: overrides?.buildBaseState ?? (async (document, assetLoadMode) => (
                 createBaseState(document.version, assetLoadMode === 'deferred')
             )),
@@ -151,7 +151,8 @@ function createSession(overrides?: {
                     snapshotVersion: 1,
                     selectedTreeId: baseState.focusTrees[0]?.id,
                     focusTrees: baseState.focusTrees,
-                    renderedFocus: {},
+                    focusTemplates: {},
+            focusTemplateKeyById: {},
                     renderedInlayWindows: {},
                     focusIconGfxFileByName: {},
                     gridBox: baseState.gridBox,
@@ -302,7 +303,8 @@ describe('focustree preview session', () => {
                     structurallyChangedTreeIds: ['first_tree', 'second_tree'],
                     changedFocusIds: ['FIRST', 'SECOND'],
                     focusTrees: [firstTree, secondTree],
-                    renderedFocus: { FIRST: '<div>first</div>', SECOND: '<div>second</div>' },
+                    focusTemplates: { first: '<div>first</div>', second: '<div>second</div>' },
+                    focusTemplateKeyById: { FIRST: 'first', SECOND: 'second' },
                     renderedInlayWindows: {},
                     gridBox: baseState.gridBox,
                     dynamicStyleCss: '',
@@ -313,7 +315,8 @@ describe('focustree preview session', () => {
                     snapshotVersion: 1,
                     selectedTreeId: 'first_tree',
                     focusTrees: [firstTree, secondTree],
-                    renderedFocus: { FIRST: '<div>first</div>', SECOND: '<div>second</div>' },
+                    focusTemplates: { first: '<div>first</div>', second: '<div>second</div>' },
+                    focusTemplateKeyById: { FIRST: 'first', SECOND: 'second' },
                     renderedInlayWindows: {},
                     focusIconGfxFileByName: {},
                     focusIconStyleSignature: '',
@@ -343,12 +346,14 @@ describe('focustree preview session', () => {
 
         assert.deepStrictEqual(postMessages[0].focusTrees.map((tree: any) => tree.id), ['first_tree']);
         assert.deepStrictEqual(postMessages[0].catalog.map((tree: any) => tree.id), ['first_tree', 'second_tree']);
-        assert.deepStrictEqual(Object.keys(postMessages[0].renderedFocus), ['FIRST']);
+        assert.deepStrictEqual(postMessages[0].focusTemplateKeyById, { FIRST: 'first' });
+        assert.deepStrictEqual(Object.keys(postMessages[0].focusTemplates), ['first']);
 
         await session.handleSceneRequest('second_tree');
         assert.strictEqual(postMessages[1].sceneMode, 'merge');
         assert.deepStrictEqual(postMessages[1].focusTrees.map((tree: any) => tree.id), ['second_tree']);
-        assert.deepStrictEqual(Object.keys(postMessages[1].renderedFocus), ['SECOND']);
+        assert.deepStrictEqual(postMessages[1].focusTemplateKeyById, { SECOND: 'second' });
+        assert.deepStrictEqual(Object.keys(postMessages[1].focusTemplates), ['second']);
         session.dispose();
     });
 
@@ -387,7 +392,7 @@ describe('focustree preview session', () => {
         assert.strictEqual(contentUpdate.perf.assetLoadMode, 'deferred');
         assert.strictEqual(contentUpdate.perf.updateKind, 'full');
         assert.strictEqual(contentUpdate.perf.payloadBytes, 0);
-        assert.strictEqual(contentUpdate.protocolVersion, 3);
+        assert.strictEqual(contentUpdate.protocolVersion, focusTreeProtocolVersion);
         assert.strictEqual(typeof contentUpdate.requestId, 'number');
         assert.strictEqual(contentUpdate.perf.changedSlotCount, contentUpdate.changedSlots.length);
     });
@@ -641,7 +646,8 @@ describe('focustree preview session', () => {
         runtimeState.lastRenderCache = {
             snapshotVersion: 3,
             focusTrees: [],
-            renderedFocus: {},
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             focusIconGfxFileByName: {},
             focusIconStyleSignature: 'hydrated-icons',

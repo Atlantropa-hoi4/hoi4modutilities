@@ -1,36 +1,64 @@
 import { HOIPartial } from "../../hoiformat/schema";
 import { GridBoxType } from "../../hoiformat/gui";
-import { StyleTable } from "../../util/styletable";
 import { isPerfTraceEnabled, recordPerf } from "../../util/perf";
 import {
+    createFocusTreeStyleTable,
     prepareFocusIconStyles,
-    resolveSearchFilterLabels,
+    prepareFocusTreeBaseStateForRender,
+    renderFocusCardTemplates,
+    type FocusCardTemplates,
     type FocusTreeRenderBaseState,
     type FocusTreeRenderPayload,
 } from "./contentbuilder";
-import { Focus, FocusTree, FocusTreeInlay } from "./schema";
-import { renderFocusHtmlTemplate, resolveFocusLocalizationTextByIdIfReady } from "./focusrender";
+import { Focus, FocusTree, FocusTreeInlay, FocusWarning } from "./schema";
 import {
     focusTreeRenderCancellationBatchSize,
     throwIfFocusTreeRenderCancelled,
     yieldToFocusTreeRenderCancellation,
 } from "./rendercancellation";
 import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
-import { FocusTreeView, toFocusTreeView, toFocusTreeViews } from './viewmodel';
+import {
+    FocusRangeView,
+    FocusTreeView,
+    FocusTreeViewDelta,
+    FocusTreeViewPatch,
+    FocusView,
+    toFocusTreeHeaderView,
+    toFocusTreeViews,
+} from './viewmodel';
 import { createEmptyFocusIconAssetResolution } from './focusicongfx';
-import { renderFocusGui } from './presentation';
 
-export interface FocusTreeRenderCache {
+/**
+ * Signatures used to plan incremental updates. Source ranges are excluded everywhere except the
+ * ranges carried by tree deltas, so text inserted above a focus does not re-render it.
+ */
+export interface FocusTreeRenderMetadata {
+    /** Tree-level view fields except warnings. */
+    treeHeaderSignatures: Record<string, string>;
+    /** Warnings without navigation offsets. */
+    treeWarningSignatures: Record<string, string>;
+    treeStructureSignatures: Record<string, string>;
+    /** Per tree: focus view signatures without source ranges. */
+    focusViewSignatures: Record<string, Record<string, string>>;
+    focusRenderSignatures: Record<string, string>;
+    inlayRenderSignatures: Record<string, string>;
+    styleDependencySignature: string;
+}
+
+export interface FocusTreeRenderCache extends FocusTreeRenderMetadata {
     snapshotVersion: number;
     selectedTreeId?: string;
     focusTrees: FocusTreeView[];
     continuousFocusHtml?: string;
-    renderedFocus: Record<string, string>;
+    focusTemplates: Record<string, string>;
+    focusTemplateKeyById: Record<string, string>;
     renderedInlayWindows: Record<string, string>;
     focusIconGfxFileByName: Record<string, string>;
     focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
     dynamicStyleCss: string;
+    /** Rules already present in `dynamicStyleCss`. */
+    dynamicStyleRules: ReadonlyMap<string, string>;
     xGridSize: number;
     yGridSize: number;
     focusPositionDocumentVersion: number;
@@ -39,15 +67,16 @@ export interface FocusTreeRenderCache {
     hasWarningsButton: boolean;
     deferredAssetLoad: boolean;
     localisationIndexReady: boolean;
-    treePatchSignatures: Record<string, string>;
-    treeStructureSignatures: Record<string, string>;
-    focusRenderSignatures: Record<string, string>;
-    inlayRenderSignatures: Record<string, string>;
-    styleDependencySignature: string;
+}
+
+/** Views and signatures computed while planning, reused by a following full snapshot build. */
+export interface FocusTreeRenderPreparation {
+    views: FocusTreeView[];
+    metadata: FocusTreeRenderMetadata;
 }
 
 export type FocusTreeRenderUpdatePlan =
-    | { kind: 'full' }
+    | { kind: 'full'; prepared: FocusTreeRenderPreparation }
     | {
         kind: 'partial';
         update: FocusTreeContentUpdateMessage;
@@ -67,29 +96,32 @@ const fullRenderChangedSlots: FocusTreeContentSlot[] = [
     'styleDeps',
 ];
 
+interface RenderMetadataInputs {
+    xGridSize: number;
+    yGridSize: number;
+    gfxFiles?: readonly string[];
+    focusIconGfxFileByName?: Readonly<Record<string, string>>;
+    focusIconStyleSignature?: string;
+}
+
 export function createFocusTreeRenderCache(
     payload: FocusTreeRenderPayload,
     previousVersion: number = 0,
-    metadata: DerivedRenderStateMetadata = deriveRenderStateMetadata(
-        payload.sourceFocusTrees ?? payload.focusTrees as unknown as FocusTree[],
-        payload.xGridSize,
-        payload.yGridSize,
-        payload.gfxFiles,
-        payload.focusIconGfxFileByName,
-        payload.focusIconStyleSignature,
-    ),
+    metadata?: FocusTreeRenderMetadata,
 ): FocusTreeRenderCache {
     return {
         snapshotVersion: previousVersion + 1,
         selectedTreeId: payload.focusTrees[0]?.id,
         focusTrees: payload.focusTrees,
         continuousFocusHtml: payload.continuousFocusHtml,
-        renderedFocus: payload.renderedFocus,
+        focusTemplates: payload.focusTemplates ?? {},
+        focusTemplateKeyById: payload.focusTemplateKeyById ?? {},
         renderedInlayWindows: payload.renderedInlayWindows,
         focusIconGfxFileByName: payload.focusIconGfxFileByName,
         focusIconStyleSignature: payload.focusIconStyleSignature ?? '',
         gridBox: payload.gridBox,
         dynamicStyleCss: payload.dynamicStyleCss,
+        dynamicStyleRules: payload.dynamicStyleRules ?? new Map(),
         xGridSize: payload.xGridSize,
         yGridSize: payload.yGridSize,
         focusPositionDocumentVersion: payload.focusPositionDocumentVersion,
@@ -98,7 +130,11 @@ export function createFocusTreeRenderCache(
         hasWarningsButton: payload.hasWarningsButton,
         deferredAssetLoad: payload.deferredAssetLoad,
         localisationIndexReady: payload.localisationIndexReady,
-        ...metadata,
+        ...(metadata ?? deriveRenderStateMetadata(
+            payload.sourceFocusTrees ?? payload.focusTrees as unknown as FocusTree[],
+            getPayloadSignatureViews(payload),
+            payload,
+        )),
     };
 }
 
@@ -113,15 +149,13 @@ export async function createFullFocusTreeRenderUpdateWithCancellation(
     payload: FocusTreeRenderPayload,
     previousCache: FocusTreeRenderCache | undefined,
     isCancelled?: () => boolean,
+    preparedMetadata?: FocusTreeRenderMetadata,
 ): Promise<{ update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache }> {
     throwIfFocusTreeRenderCancelled(isCancelled);
-    const metadata = await deriveRenderStateMetadataWithCancellation(
+    const metadata = preparedMetadata ?? await deriveRenderStateMetadataWithCancellation(
         payload.sourceFocusTrees ?? payload.focusTrees as unknown as FocusTree[],
-        payload.xGridSize,
-        payload.yGridSize,
-        payload.gfxFiles,
-        payload.focusIconGfxFileByName,
-        payload.focusIconStyleSignature,
+        getPayloadSignatureViews(payload),
+        payload,
         isCancelled,
     );
     throwIfFocusTreeRenderCancelled(isCancelled);
@@ -131,44 +165,51 @@ export async function createFullFocusTreeRenderUpdateWithCancellation(
 function createFullFocusTreeRenderUpdateWithMetadata(
     payload: FocusTreeRenderPayload,
     previousCache?: FocusTreeRenderCache,
-    metadata?: DerivedRenderStateMetadata,
+    metadata?: FocusTreeRenderMetadata,
 ): { update: FocusTreeContentUpdateMessage; cache: FocusTreeRenderCache } {
     const cache = createFocusTreeRenderCache(payload, previousCache?.snapshotVersion, metadata);
     const isInPlacePresentationUpdate = !!previousCache
         && hasSameTreeStructure(previousCache, cache)
         && hasSameLayout(previousCache, cache);
     const changedFocusIds = payload.focusTrees.flatMap(tree => Object.keys(tree.focuses));
-    const removedRenderedFocusIds = previousCache
-        ? Object.keys(previousCache.renderedFocus).filter(focusId => !(focusId in payload.renderedFocus))
-        : [];
     recordFocusTreePayloadSize('full', payload.deferredAssetLoad, {
         focusTrees: payload.focusTrees,
         continuousFocusHtml: payload.continuousFocusHtml,
-        renderedFocus: payload.renderedFocus,
+        focusTemplates: [payload.focusTemplates, payload.focusTemplateKeyById],
         renderedInlayWindows: payload.renderedInlayWindows,
         dynamicStyleCss: payload.dynamicStyleCss,
-        focusCount: Object.keys(payload.renderedFocus).length,
+        focusCount: Object.keys(payload.focusTemplateKeyById).length,
         inlayCount: Object.keys(payload.renderedInlayWindows).length,
     });
+    if (previousCache && isInPlacePresentationUpdate) {
+        // The webview keeps its scene; only changed tree data and presentation are sent.
+        const focusTreePatches = createFocusTreeViewPatches(previousCache, cache);
+        return {
+            cache,
+            update: {
+                updateType: 'assets',
+                snapshotVersion: cache.snapshotVersion,
+                baseSnapshotVersion: previousCache.snapshotVersion,
+                documentVersion: payload.focusPositionDocumentVersion,
+                focusPositionActiveFile: payload.focusPositionActiveFile,
+                selectedTreeId: cache.selectedTreeId,
+                changedSlots: ['treeDefinitions', 'warnings', 'treeBody', 'inlays', 'styleDeps'],
+                changedTreeIds: focusTreePatches.map(patch => patch.treeId),
+                changedFocusIds,
+                changedInlayWindowIds: Object.keys(payload.renderedInlayWindows),
+                focusTreePatches,
+                continuousFocusHtml: payload.continuousFocusHtml,
+                focusTemplates: payload.focusTemplates,
+                focusTemplateKeyById: payload.focusTemplateKeyById,
+                renderedInlayWindows: payload.renderedInlayWindows,
+                dynamicStyleCss: payload.dynamicStyleCss,
+            },
+        };
+    }
+
     return {
         cache,
-        update: isInPlacePresentationUpdate ? {
-            updateType: 'assets',
-            snapshotVersion: cache.snapshotVersion,
-            documentVersion: payload.focusPositionDocumentVersion,
-            focusPositionActiveFile: payload.focusPositionActiveFile,
-            selectedTreeId: cache.selectedTreeId,
-            changedSlots: ['treeDefinitions', 'warnings', 'treeBody', 'inlays', 'styleDeps'],
-            changedTreeIds: payload.focusTrees.map(tree => tree.id),
-            changedFocusIds,
-            changedInlayWindowIds: Object.keys(payload.renderedInlayWindows),
-            focusTreePatches: payload.focusTrees.map(tree => ({ treeId: tree.id, tree })),
-            continuousFocusHtml: payload.continuousFocusHtml,
-            renderedFocusPatch: payload.renderedFocus,
-            removedRenderedFocusIds: removedRenderedFocusIds.length > 0 ? removedRenderedFocusIds : undefined,
-            renderedInlayWindows: payload.renderedInlayWindows,
-            dynamicStyleCss: payload.dynamicStyleCss,
-        } : {
+        update: {
             updateType: 'structure',
             snapshotVersion: cache.snapshotVersion,
             documentVersion: payload.focusPositionDocumentVersion,
@@ -181,7 +222,8 @@ function createFullFocusTreeRenderUpdateWithMetadata(
             changedInlayWindowIds: Object.keys(payload.renderedInlayWindows),
             focusTrees: payload.focusTrees,
             continuousFocusHtml: payload.continuousFocusHtml,
-            renderedFocus: payload.renderedFocus,
+            focusTemplates: payload.focusTemplates,
+            focusTemplateKeyById: payload.focusTemplateKeyById,
             renderedInlayWindows: payload.renderedInlayWindows,
             gridBox: payload.gridBox,
             dynamicStyleCss: payload.dynamicStyleCss,
@@ -196,51 +238,47 @@ export async function createFocusTreeRenderUpdate(
     nextBaseState: FocusTreeRenderBaseState,
     isCancelled?: () => boolean,
 ): Promise<FocusTreeRenderUpdatePlan> {
-    throwIfFocusTreeRenderCancelled(isCancelled);
-    resolveSearchFilterLabels(nextBaseState.focusTrees);
+    const focusDisplayNameById = await prepareFocusTreeBaseStateForRender(nextBaseState, isCancelled);
+    const nextViews = toFocusTreeViews(nextBaseState.focusTrees, focusDisplayNameById);
     const nextMetadata = await deriveRenderStateMetadataWithCancellation(
         nextBaseState.focusTrees,
-        nextBaseState.xGridSize,
-        nextBaseState.yGridSize,
-        nextBaseState.gfxFiles,
-        nextBaseState.focusIconGfxFileByName,
-        nextBaseState.focusIconStyleSignature,
+        nextViews,
+        nextBaseState,
         isCancelled,
     );
 
-    if (!previous || shouldUseFullRender(previous, nextBaseState, nextMetadata)) {
+    if (!previous || shouldUseFullRender(previous, nextBaseState)) {
         throwIfFocusTreeRenderCancelled(isCancelled);
-        return { kind: 'full' };
+        return { kind: 'full', prepared: { views: nextViews, metadata: nextMetadata } };
     }
-
-    const focusDisplayNameById = nextBaseState.focusDisplayNameById
-        ?? await resolveFocusLocalizationTextByIdIfReady(nextBaseState.allFocuses, undefined, isCancelled);
-    nextBaseState.focusDisplayNameById = focusDisplayNameById;
-    const focusTreePatches = nextBaseState.focusTrees
-        .filter(tree => previous.treePatchSignatures[tree.id] !== nextMetadata.treePatchSignatures[tree.id])
-        .map(tree => ({ treeId: tree.id, tree: toFocusTreeView(tree, focusDisplayNameById) }));
-    const changedTreeIds = focusTreePatches.map(patch => patch.treeId);
-    const structurallyChangedTreeIds = changedTreeIds
-        .filter(treeId => previous.treeStructureSignatures[treeId] !== nextMetadata.treeStructureSignatures[treeId]);
 
     const focusSignatureDiff = diffSignatureMap(previous.focusRenderSignatures, nextMetadata.focusRenderSignatures);
     const inlaySignatureDiff = diffSignatureMap(previous.inlayRenderSignatures, nextMetadata.inlayRenderSignatures);
     throwIfFocusTreeRenderCancelled(isCancelled);
     if (inlaySignatureDiff.changedKeys.length > 0 || inlaySignatureDiff.removedKeys.length > 0) {
-        return { kind: 'full' };
+        return { kind: 'full', prepared: { views: nextViews, metadata: nextMetadata } };
     }
 
     const styleDependencyChanged = previous.styleDependencySignature !== nextMetadata.styleDependencySignature;
     if (styleDependencyChanged && focusSignatureDiff.changedKeys.length === 0) {
-        return { kind: 'full' };
+        return { kind: 'full', prepared: { views: nextViews, metadata: nextMetadata } };
     }
+
+    const nextFocusTrees = nextViews;
+    const focusTreePatches = createFocusTreeViewPatches(previous, { focusTrees: nextFocusTrees, ...nextMetadata });
+    const changedTreeIds = focusTreePatches.map(patch => patch.treeId);
+    const structurallyChangedTreeIds = changedTreeIds
+        .filter(treeId => previous.treeStructureSignatures[treeId] !== nextMetadata.treeStructureSignatures[treeId]);
     const presentationPatch = await renderChangedFocusPresentation(
         nextBaseState,
         focusSignatureDiff.changedKeys,
         styleDependencyChanged,
+        previous.dynamicStyleRules,
         isCancelled,
     );
-    const renderedFocusPatch = presentationPatch.renderedFocus;
+    const focusTemplatePatch = Object.fromEntries(Object.entries(presentationPatch.templates)
+        .filter(([key]) => !(key in previous.focusTemplates)));
+    const focusTemplateKeyPatch = presentationPatch.keyById;
 
     const changedSlots = new Set<FocusTreeContentSlot>();
     if (changedTreeIds.length > 0) {
@@ -257,14 +295,18 @@ export async function createFocusTreeRenderUpdate(
     const cache: FocusTreeRenderCache = {
         snapshotVersion: previous.snapshotVersion + 1,
         selectedTreeId: nextBaseState.focusTrees[0]?.id,
-        focusTrees: toFocusTreeViews(nextBaseState.focusTrees, focusDisplayNameById),
-        renderedFocus: mergeStringMap(previous.renderedFocus, renderedFocusPatch, focusSignatureDiff.removedKeys),
+        focusTrees: nextFocusTrees,
+        focusTemplates: { ...previous.focusTemplates, ...focusTemplatePatch },
+        focusTemplateKeyById: mergeStringMap(previous.focusTemplateKeyById, focusTemplateKeyPatch, focusSignatureDiff.removedKeys),
         continuousFocusHtml: previous.continuousFocusHtml,
         renderedInlayWindows: previous.renderedInlayWindows,
         focusIconGfxFileByName: nextBaseState.focusIconGfxFileByName,
         focusIconStyleSignature: nextBaseState.focusIconStyleSignature ?? '',
         gridBox: nextBaseState.gridBox,
-        dynamicStyleCss: previous.dynamicStyleCss + presentationPatch.dynamicStyleCssPatch,
+        dynamicStyleCss: presentationPatch.dynamicStyleCssPatch
+            ? `${previous.dynamicStyleCss}\n${presentationPatch.dynamicStyleCssPatch}`
+            : previous.dynamicStyleCss,
+        dynamicStyleRules: presentationPatch.dynamicStyleRules,
         xGridSize: nextBaseState.xGridSize,
         yGridSize: nextBaseState.yGridSize,
         focusPositionDocumentVersion: nextBaseState.focusPositionDocumentVersion,
@@ -276,8 +318,8 @@ export async function createFocusTreeRenderUpdate(
         ...nextMetadata,
     };
     recordFocusTreePayloadSize('partial', nextBaseState.deferredAssetLoad, {
-        focusTrees: focusTreePatches.map(patch => patch.tree),
-        renderedFocus: renderedFocusPatch,
+        focusTrees: focusTreePatches,
+        focusTemplates: [focusTemplatePatch, focusTemplateKeyPatch],
         renderedInlayWindows: {},
         dynamicStyleCss: presentationPatch.dynamicStyleCssPatch,
         focusCount: focusSignatureDiff.changedKeys.length,
@@ -290,6 +332,7 @@ export async function createFocusTreeRenderUpdate(
         update: {
             updateType: 'patch',
             snapshotVersion: cache.snapshotVersion,
+            baseSnapshotVersion: previous.snapshotVersion,
             documentVersion: nextBaseState.focusPositionDocumentVersion,
             focusPositionActiveFile: nextBaseState.focusPositionActiveFile,
             selectedTreeId: cache.selectedTreeId,
@@ -297,16 +340,106 @@ export async function createFocusTreeRenderUpdate(
             changedTreeIds: changedTreeIds.length > 0 ? changedTreeIds : undefined,
             structurallyChangedTreeIds: structurallyChangedTreeIds.length > 0 ? structurallyChangedTreeIds : undefined,
             changedFocusIds: focusSignatureDiff.changedKeys.length > 0 ? focusSignatureDiff.changedKeys : undefined,
-        focusTreePatches: focusTreePatches.length > 0 ? focusTreePatches : undefined,
-        renderedFocusPatch: Object.keys(renderedFocusPatch).length > 0 ? renderedFocusPatch : undefined,
-        removedRenderedFocusIds: focusSignatureDiff.removedKeys.length > 0 ? focusSignatureDiff.removedKeys : undefined,
-        dynamicStyleCssPatch: presentationPatch.dynamicStyleCssPatch || undefined,
+            focusTreePatches: focusTreePatches.length > 0 ? focusTreePatches : undefined,
+            focusTemplatePatch: Object.keys(focusTemplatePatch).length > 0 ? focusTemplatePatch : undefined,
+            focusTemplateKeyPatch: Object.keys(focusTemplateKeyPatch).length > 0 ? focusTemplateKeyPatch : undefined,
+            removedFocusTemplateKeyIds: focusSignatureDiff.removedKeys.length > 0 ? focusSignatureDiff.removedKeys : undefined,
+            dynamicStyleCssPatch: presentationPatch.dynamicStyleCssPatch || undefined,
         },
         cache,
         changedTreeCount: changedTreeIds.length,
         changedFocusCount: focusSignatureDiff.changedKeys.length + focusSignatureDiff.removedKeys.length,
         changedInlayCount: 0,
     };
+}
+
+/**
+ * Describes how each tree view changed. Trees with the same focus ids in the same order receive
+ * deltas; added, removed, or reordered focuses replace the whole tree view.
+ */
+type FocusTreeViewPatchSource = Pick<FocusTreeRenderCache,
+    'focusTrees' | 'treeHeaderSignatures' | 'treeWarningSignatures' | 'focusViewSignatures'>;
+
+function createFocusTreeViewPatches(
+    previous: FocusTreeViewPatchSource,
+    next: FocusTreeViewPatchSource,
+): FocusTreeViewPatch[] {
+    const previousTreeById = new Map(previous.focusTrees.map(tree => [tree.id, tree]));
+    const patches: FocusTreeViewPatch[] = [];
+    for (const nextTree of next.focusTrees) {
+        const previousTree = previousTreeById.get(nextTree.id);
+        const previousFocusSignatures = previous.focusViewSignatures[nextTree.id];
+        const nextFocusSignatures = next.focusViewSignatures[nextTree.id];
+        if (!previousTree || !previousFocusSignatures || !nextFocusSignatures
+            || !haveSameKeyOrder(previousTree.focuses, nextTree.focuses)) {
+            patches.push({ treeId: nextTree.id, tree: nextTree });
+            continue;
+        }
+
+        const delta: FocusTreeViewDelta = {};
+        if (previous.treeHeaderSignatures[nextTree.id] !== next.treeHeaderSignatures[nextTree.id]) {
+            const { warnings: _warnings, ...header } = toFocusTreeHeaderView(nextTree);
+            delta.header = header;
+        }
+        if (previous.treeWarningSignatures[nextTree.id] !== next.treeWarningSignatures[nextTree.id]) {
+            delta.warnings = nextTree.warnings;
+        } else if (haveWarningRangesChanged(previousTree.warnings, nextTree.warnings)) {
+            delta.warningRanges = nextTree.warnings.map(warning =>
+                (warning.navigations ?? []).map(navigation => [navigation.start, navigation.end] as [number, number]));
+        }
+        for (const [focusId, focus] of Object.entries(nextTree.focuses)) {
+            if (previousFocusSignatures[focusId] !== nextFocusSignatures[focusId]) {
+                (delta.focuses ??= {})[focusId] = focus;
+                continue;
+            }
+            const previousFocus = previousTree.focuses[focusId];
+            if (previousFocus.start !== focus.start || previousFocus.end !== focus.end) {
+                (delta.ranges ??= {})[focusId] = toFocusRangeView(focus);
+            }
+        }
+        if (delta.header || delta.warnings || delta.warningRanges || delta.focuses || delta.ranges) {
+            patches.push({ treeId: nextTree.id, delta });
+        }
+    }
+    return patches;
+}
+
+function haveWarningRangesChanged(previous: readonly FocusWarning[], next: readonly FocusWarning[]): boolean {
+    if (previous.length !== next.length) {
+        return true;
+    }
+    for (let index = 0; index < next.length; index++) {
+        const previousNavigations = previous[index].navigations ?? [];
+        const nextNavigations = next[index].navigations ?? [];
+        if (previousNavigations.length !== nextNavigations.length) {
+            return true;
+        }
+        for (let navigationIndex = 0; navigationIndex < nextNavigations.length; navigationIndex++) {
+            if (previousNavigations[navigationIndex].start !== nextNavigations[navigationIndex].start
+                || previousNavigations[navigationIndex].end !== nextNavigations[navigationIndex].end) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function toFocusRangeView(focus: FocusView): FocusRangeView {
+    return [focus.start ?? null, focus.end ?? null];
+}
+
+function haveSameKeyOrder(left: Readonly<Record<string, unknown>>, right: Readonly<Record<string, unknown>>): boolean {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) {
+        return false;
+    }
+    for (let index = 0; index < leftKeys.length; index++) {
+        if (leftKeys[index] !== rightKeys[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function hasSameTreeStructure(previous: FocusTreeRenderCache, next: FocusTreeRenderCache): boolean {
@@ -330,7 +463,7 @@ function recordFocusTreePayloadSize(
     deferredAssetLoad: boolean,
     payload: {
         focusTrees: unknown;
-        renderedFocus: unknown;
+        focusTemplates: unknown;
         continuousFocusHtml?: string;
         renderedInlayWindows: unknown;
         dynamicStyleCss: string;
@@ -345,7 +478,7 @@ function recordFocusTreePayloadSize(
         kind,
         deferredAssetLoad,
         focusTreeBytes: approximateJsonByteLength(payload.focusTrees),
-        renderedFocusBytes: approximateJsonByteLength(payload.renderedFocus),
+        focusTemplateBytes: approximateJsonByteLength(payload.focusTemplates),
         renderedInlayBytes: approximateJsonByteLength(payload.renderedInlayWindows),
         dynamicStyleBytes: Buffer.byteLength(payload.dynamicStyleCss, 'utf8'),
         focusCount: payload.focusCount,
@@ -364,7 +497,6 @@ function approximateJsonByteLength(value: unknown): number {
 function shouldUseFullRender(
     previous: FocusTreeRenderCache,
     nextBaseState: FocusTreeRenderBaseState,
-    nextMetadata: DerivedRenderStateMetadata,
 ): boolean {
     if (previous.focusTrees.length !== nextBaseState.focusTrees.length
         || previous.hasFocusSelector !== nextBaseState.hasFocusSelector
@@ -387,275 +519,157 @@ function shouldUseFullRender(
     return false;
 }
 
-interface DerivedRenderStateMetadata {
-    treePatchSignatures: Record<string, string>;
-    treeStructureSignatures: Record<string, string>;
-    focusRenderSignatures: Record<string, string>;
-    inlayRenderSignatures: Record<string, string>;
-    styleDependencySignature: string;
+/** Payload views; payloads built without source trees carry source-shaped trees instead. */
+function getPayloadSignatureViews(payload: FocusTreeRenderPayload): FocusTreeView[] {
+    return payload.sourceFocusTrees
+        ? payload.focusTrees
+        : toFocusTreeViews(payload.focusTrees as unknown as FocusTree[]);
 }
 
-function deriveRenderStateMetadata(
-    focusTrees: FocusTree[],
-    xGridSize: number,
-    yGridSize: number,
-    gfxFiles: readonly string[] = [],
-    focusIconGfxFileByName: Readonly<Record<string, string>> = {},
-    focusIconStyleSignature: string = '',
-): DerivedRenderStateMetadata {
-    const treePatchSignatures: Record<string, string> = {};
-    const treeStructureSignatures: Record<string, string> = {};
-    const focusRenderSignatures: Record<string, string> = {};
-    const inlayRenderSignatures: Record<string, string> = {};
-    const styleDependencyInput: unknown[] = [
-        xGridSize,
-        yGridSize,
-        [...gfxFiles].sort(),
-        Object.entries(focusIconGfxFileByName).sort(([left], [right]) => left.localeCompare(right)),
-        focusIconStyleSignature,
-    ];
+/** Accumulates every signature in one pass over trees, focuses, and inlays. */
+class RenderMetadataBuilder {
+    public readonly metadata: FocusTreeRenderMetadata = {
+        treeHeaderSignatures: {},
+        treeWarningSignatures: {},
+        treeStructureSignatures: {},
+        focusViewSignatures: {},
+        focusRenderSignatures: {},
+        inlayRenderSignatures: {},
+        styleDependencySignature: '',
+    };
+    private readonly styleDependencyParts: string[];
+    private structureParts: string[] = [];
 
-    for (const tree of focusTrees) {
-        treePatchSignatures[tree.id] = JSON.stringify(toTreePatchComparable(tree));
-        treeStructureSignatures[tree.id] = JSON.stringify(toTreeStructureComparable(tree));
-
-        const sortedFocuses = Object.values(tree.focuses).sort((left, right) => left.id.localeCompare(right.id));
-        for (const focus of sortedFocuses) {
-            focusRenderSignatures[focus.id] = JSON.stringify(toFocusRenderComparable(focus));
-            styleDependencyInput.push([
-                'focus',
-                focus.id,
-                focus.icon.map(icon => [icon.icon, icon.condition]),
-                focus.overlay,
-            ]);
-        }
-
-        for (const inlay of tree.inlayWindows) {
-            inlayRenderSignatures[inlay.id] = JSON.stringify(toInlayRenderComparable(inlay));
-            styleDependencyInput.push([
-                'inlay',
-                inlay.id,
-                inlay.scriptedImages.map(slot => slot.gfxOptions.map(option => [option.gfxFile, option.gfxName, option.condition])),
-            ]);
-        }
+    constructor(inputs: RenderMetadataInputs) {
+        this.styleDependencyParts = [JSON.stringify([
+            inputs.xGridSize,
+            inputs.yGridSize,
+            [...inputs.gfxFiles ?? []].sort(),
+            Object.entries(inputs.focusIconGfxFileByName ?? {}).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
+            inputs.focusIconStyleSignature ?? '',
+        ])];
     }
 
-    return {
-        treePatchSignatures,
-        treeStructureSignatures,
-        focusRenderSignatures,
-        inlayRenderSignatures,
-        styleDependencySignature: JSON.stringify(styleDependencyInput),
-    };
-}
-
-async function deriveRenderStateMetadataWithCancellation(
-    focusTrees: FocusTree[],
-    xGridSize: number,
-    yGridSize: number,
-    gfxFiles: readonly string[] = [],
-    focusIconGfxFileByName: Readonly<Record<string, string>> = {},
-    focusIconStyleSignature: string = '',
-    isCancelled?: () => boolean,
-): Promise<DerivedRenderStateMetadata> {
-    const treePatchSignatures: Record<string, string> = {};
-    const treeStructureSignatures: Record<string, string> = {};
-    const focusRenderSignatures: Record<string, string> = {};
-    const inlayRenderSignatures: Record<string, string> = {};
-    const styleDependencyInput: unknown[] = [
-        xGridSize,
-        yGridSize,
-        [...gfxFiles].sort(),
-        Object.entries(focusIconGfxFileByName).sort(([left], [right]) => left.localeCompare(right)),
-        focusIconStyleSignature,
-    ];
-    let processedItemCount = 0;
-
-    throwIfFocusTreeRenderCancelled(isCancelled);
-    for (const tree of focusTrees) {
-        const treeFocusCount = Object.keys(tree.focuses).length;
-        if (treeFocusCount >= focusTreeRenderCancellationBatchSize) {
-            await yieldToFocusTreeRenderCancellation(isCancelled);
-        }
-        treePatchSignatures[tree.id] = JSON.stringify(toTreePatchComparable(tree));
-        if (treeFocusCount >= focusTreeRenderCancellationBatchSize) {
-            await yieldToFocusTreeRenderCancellation(isCancelled);
-        }
-        treeStructureSignatures[tree.id] = JSON.stringify(toTreeStructureComparable(tree));
-        throwIfFocusTreeRenderCancelled(isCancelled);
-
-        const sortedFocuses = Object.values(tree.focuses).sort((left, right) => left.id.localeCompare(right.id));
-        for (const focus of sortedFocuses) {
-            if (processedItemCount > 0 && processedItemCount % focusTreeRenderCancellationBatchSize === 0) {
-                await yieldToFocusTreeRenderCancellation(isCancelled);
-            }
-            processedItemCount += 1;
-
-            focusRenderSignatures[focus.id] = JSON.stringify(toFocusRenderComparable(focus));
-            styleDependencyInput.push([
-                'focus',
-                focus.id,
-                focus.icon.map(icon => [icon.icon, icon.condition]),
-                focus.overlay,
-            ]);
-        }
-
-        for (const inlay of tree.inlayWindows) {
-            if (processedItemCount > 0 && processedItemCount % focusTreeRenderCancellationBatchSize === 0) {
-                await yieldToFocusTreeRenderCancellation(isCancelled);
-            }
-            processedItemCount += 1;
-
-            inlayRenderSignatures[inlay.id] = JSON.stringify(toInlayRenderComparable(inlay));
-            styleDependencyInput.push([
-                'inlay',
-                inlay.id,
-                inlay.scriptedImages.map(slot => slot.gfxOptions.map(option => [option.gfxFile, option.gfxName, option.condition])),
-            ]);
-        }
+    public beginTree(tree: FocusTree, view: FocusTreeView | undefined): void {
+        const header = view ?? toFocusTreeViews([tree])[0];
+        const { warnings, ...headerWithoutWarnings } = toFocusTreeHeaderView(header);
+        this.metadata.treeHeaderSignatures[tree.id] = JSON.stringify(headerWithoutWarnings);
+        this.metadata.treeWarningSignatures[tree.id] = JSON.stringify(warnings.map(warning => ({
+            ...warning,
+            navigations: warning.navigations?.map(navigation => navigation.file),
+        })));
+        this.metadata.focusViewSignatures[tree.id] = {};
+        this.structureParts = [JSON.stringify([
+            header.id,
+            header.kind,
+            header.allowBranchOptions,
+            header.conditionExprs,
+            header.isSharedFocues,
+            header.continuousFocusPositionX,
+            header.continuousFocusPositionY,
+            header.createTemplate,
+            header.continuousLayout,
+        ])];
     }
 
-    throwIfFocusTreeRenderCancelled(isCancelled);
-    const styleDependencySignature = JSON.stringify(styleDependencyInput);
-    throwIfFocusTreeRenderCancelled(isCancelled);
-    return {
-        treePatchSignatures,
-        treeStructureSignatures,
-        focusRenderSignatures,
-        inlayRenderSignatures,
-        styleDependencySignature,
-    };
-}
-
-function toTreePatchComparable(focusTree: FocusTree) {
-    const focusEntries = Object.values(focusTree.focuses)
-        .sort((left, right) => left.id.localeCompare(right.id))
-        .map(focus => [
-            focus.id,
-            focus.layoutEditKey,
-            focus.x,
-            focus.y,
-            focus.icon,
-            focus.overlay,
-            focus.available,
-            focus.availableIfCapitulated,
-            focus.hasAiWillDo,
-            focus.hasCompletionReward,
-            focus.prerequisite,
-            focus.prerequisiteGroupCount,
-            focus.prerequisiteFocusCount,
-            focus.exclusive,
-            focus.exclusiveCount,
-            focus.hasAllowBranch,
-            focus.inAllowBranch,
-            focus.allowBranch,
-            focus.relativePositionId,
-            focus.offset,
-            focus.token?.start,
-            focus.token?.end,
+    public addFocus(treeId: string, focus: Focus, view: FocusView | undefined): void {
+        const iconSignature = JSON.stringify([focus.icon, focus.overlay]);
+        this.styleDependencyParts.push(`${focus.id}\u0002${iconSignature}`);
+        this.metadata.focusRenderSignatures[focus.id] = `${iconSignature}\u0001${JSON.stringify([
             focus.file,
             focus.isInCurrentFile,
             focus.text,
             focus.textIcon,
             focus.layout?.editable,
             focus.layout?.sourceFile,
-            focus.layout?.basePosition,
-            focus.layout?.relativePositionId,
-            focus.layout?.offsets,
-            focus.lintWarningCount,
-            focus.lintInfoCount,
-            focus.lintMessages,
-        ]);
+            view?.displayName,
+        ])}`;
+        this.structureParts.push(JSON.stringify([
+            focus.id,
+            focus.x,
+            focus.y,
+            focus.prerequisite,
+            focus.exclusive,
+            focus.inAllowBranch,
+            focus.allowBranch,
+            focus.relativePositionId,
+            focus.offset,
+        ]));
+        this.metadata.focusViewSignatures[treeId][focus.id] = view ? getFocusViewSignature(view) : '';
+    }
 
-    const inlayEntries = focusTree.inlayWindows.map(inlay => ({
-        id: inlay.id,
-        file: inlay.file,
-        tokenStart: inlay.token?.start,
-        tokenEnd: inlay.token?.end,
-        windowName: inlay.windowName,
-        guiFile: inlay.guiFile,
-        guiWindow: inlay.guiWindow,
-        internal: inlay.internal,
-        visible: inlay.visible,
-        position: inlay.position,
-        conditionExprs: inlay.conditionExprs,
-        scriptedImages: inlay.scriptedImages.map(slot => ({
-            id: slot.id,
-            file: slot.file,
-            tokenStart: slot.token?.start,
-            tokenEnd: slot.token?.end,
-            gfxOptions: slot.gfxOptions.map(option => ({
-                gfxName: option.gfxName,
-                condition: option.condition,
-                file: option.file,
-                tokenStart: option.token?.start,
-                tokenEnd: option.token?.end,
-                gfxFile: option.gfxFile,
-            })),
-        })),
-        scriptedButtons: inlay.scriptedButtons,
-    }));
+    public endTree(treeId: string): void {
+        this.metadata.treeStructureSignatures[treeId] = this.structureParts.join('\u0001');
+        this.structureParts = [];
+    }
 
-    return {
-        id: focusTree.id,
-        kind: focusTree.kind,
-        allowBranchOptions: focusTree.allowBranchOptions,
-        conditionExprs: focusTree.conditionExprs,
-        isSharedFocues: focusTree.isSharedFocues,
-        continuousFocusPositionX: focusTree.continuousFocusPositionX,
-        continuousFocusPositionY: focusTree.continuousFocusPositionY,
-        createTemplate: focusTree.createTemplate,
-        continuousLayout: focusTree.continuousLayout,
-        inlayWindowRefs: focusTree.inlayWindowRefs,
-        inlayWindows: inlayEntries,
-        warnings: focusTree.warnings,
-        searchFilters: focusTree.searchFilters,
-        searchFilterLabels: focusTree.searchFilterLabels,
-        focuses: focusEntries,
-    };
+    public addInlay(inlay: FocusTreeInlay): void {
+        this.metadata.inlayRenderSignatures[inlay.id] = JSON.stringify(toInlayRenderComparable(inlay));
+        this.styleDependencyParts.push(`${inlay.id}\u0003${JSON.stringify(
+            inlay.scriptedImages.map(slot => slot.gfxOptions.map(option => [option.gfxFile, option.gfxName, option.condition])),
+        )}`);
+    }
+
+    public finish(): FocusTreeRenderMetadata {
+        this.metadata.styleDependencySignature = this.styleDependencyParts.join('\u0001');
+        return this.metadata;
+    }
 }
 
-function toTreeStructureComparable(focusTree: FocusTree) {
-    return {
-        id: focusTree.id,
-        kind: focusTree.kind,
-        allowBranchOptions: focusTree.allowBranchOptions,
-        conditionExprs: focusTree.conditionExprs,
-        isSharedFocues: focusTree.isSharedFocues,
-        continuousFocusPositionX: focusTree.continuousFocusPositionX,
-        continuousFocusPositionY: focusTree.continuousFocusPositionY,
-        createTemplate: focusTree.createTemplate,
-        continuousLayout: focusTree.continuousLayout,
-        focuses: Object.values(focusTree.focuses)
-            .sort((left, right) => left.id.localeCompare(right.id))
-            .map(focus => ({
-                id: focus.id,
-                x: focus.x,
-                y: focus.y,
-                prerequisite: focus.prerequisite,
-                exclusive: focus.exclusive,
-                inAllowBranch: focus.inAllowBranch,
-                allowBranch: focus.allowBranch,
-                relativePositionId: focus.relativePositionId,
-                offset: focus.offset,
-            })),
-    };
+function deriveRenderStateMetadata(
+    focusTrees: readonly FocusTree[],
+    views: readonly FocusTreeView[],
+    inputs: RenderMetadataInputs,
+): FocusTreeRenderMetadata {
+    const builder = new RenderMetadataBuilder(inputs);
+    focusTrees.forEach((tree, treeIndex) => {
+        const view = views[treeIndex];
+        builder.beginTree(tree, view);
+        for (const focus of Object.values(tree.focuses)) {
+            builder.addFocus(tree.id, focus, view?.focuses[focus.id]);
+        }
+        builder.endTree(tree.id);
+        tree.inlayWindows.forEach(inlay => builder.addInlay(inlay));
+    });
+    return builder.finish();
 }
 
-function toFocusRenderComparable(focus: Focus) {
-    return {
-        id: focus.id,
-        tokenStart: focus.token?.start,
-        tokenEnd: focus.token?.end,
-        file: focus.file,
-        isInCurrentFile: focus.isInCurrentFile,
-        text: focus.text,
-        textIcon: focus.textIcon,
-        icon: focus.icon,
-        overlay: focus.overlay,
-        layoutEditable: focus.layout?.editable,
-        layoutSourceFile: focus.layout?.sourceFile,
+async function deriveRenderStateMetadataWithCancellation(
+    focusTrees: readonly FocusTree[],
+    views: readonly FocusTreeView[],
+    inputs: RenderMetadataInputs,
+    isCancelled?: () => boolean,
+): Promise<FocusTreeRenderMetadata> {
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    const builder = new RenderMetadataBuilder(inputs);
+    let processedItemCount = 0;
+    const checkpoint = async () => {
+        if (processedItemCount > 0 && processedItemCount % focusTreeRenderCancellationBatchSize === 0) {
+            await yieldToFocusTreeRenderCancellation(isCancelled);
+        }
+        processedItemCount += 1;
     };
+    for (let treeIndex = 0; treeIndex < focusTrees.length; treeIndex++) {
+        const tree = focusTrees[treeIndex];
+        const view = views[treeIndex];
+        builder.beginTree(tree, view);
+        for (const focus of Object.values(tree.focuses)) {
+            await checkpoint();
+            builder.addFocus(tree.id, focus, view?.focuses[focus.id]);
+        }
+        builder.endTree(tree.id);
+        for (const inlay of tree.inlayWindows) {
+            await checkpoint();
+            builder.addInlay(inlay);
+        }
+    }
+    throwIfFocusTreeRenderCancelled(isCancelled);
+    return builder.finish();
+}
+
+function getFocusViewSignature(view: FocusView): string {
+    const { start: _start, end: _end, ...rest } = view;
+    return JSON.stringify(rest);
 }
 
 function toInlayRenderComparable(inlay: FocusTreeInlay) {
@@ -726,18 +740,16 @@ async function renderChangedFocusPresentation(
     baseState: FocusTreeRenderBaseState,
     focusIds: readonly string[],
     includeAssetStyles: boolean,
+    existingStyleRules: ReadonlyMap<string, string>,
     isCancelled?: () => boolean,
-): Promise<{ renderedFocus: Record<string, string>; dynamicStyleCssPatch: string }> {
-    const styleTable = new StyleTable();
-    const renderedFocus: Record<string, string> = {};
+): Promise<FocusCardTemplates & {
+    dynamicStyleCssPatch: string;
+    dynamicStyleRules: ReadonlyMap<string, string>;
+}> {
+    const styleTable = createFocusTreeStyleTable();
     const focuses = focusIds
         .map(focusId => baseState.focusById[focusId])
         .filter((focus): focus is Focus => !!focus);
-    const focusLocalizationTextById = await resolveFocusLocalizationTextByIdIfReady(
-        focuses,
-        undefined,
-        isCancelled,
-    );
     if (includeAssetStyles && focuses.length > 0) {
         await prepareFocusIconStyles(
             focuses,
@@ -749,36 +761,19 @@ async function renderChangedFocusPresentation(
             !!baseState.presentation?.item,
         );
     }
-    for (let index = 0; index < focuses.length; index += 1) {
-        if (index > 0 && index % focusTreeRenderCancellationBatchSize === 0) {
-            await yieldToFocusTreeRenderCancellation(isCancelled);
-        }
-
-        const focus = focuses[index];
-        if (baseState.presentation?.item) {
-            renderedFocus[focus.id] = renderFocusHtmlTemplate(
-                focus,
-                styleTable,
-                baseState.focusPositionActiveFile,
-                baseState.xGridSize,
-                baseState.yGridSize,
-                focusLocalizationTextById[focus.id],
-                await renderFocusGui(
-                    focus,
-                    baseState.presentation,
-                    styleTable,
-                    baseState.gfxFiles,
-                    baseState.xGridSize,
-                    baseState.yGridSize,
-                    focusLocalizationTextById[focus.id],
-                ),
-            ).replace(/\s\s+/g, ' ');
-        }
-    }
+    const cardTemplates = await renderFocusCardTemplates(baseState, focuses, styleTable, isCancelled);
 
     throwIfFocusTreeRenderCancelled(isCancelled);
+    // Content-addressed class names let patches reuse rules the webview already has.
+    const newRules = styleTable.rules().filter(([key, content]) => existingStyleRules.get(key) !== content);
+    if (newRules.length === 0) {
+        return { ...cardTemplates, dynamicStyleCssPatch: '', dynamicStyleRules: existingStyleRules };
+    }
+    const dynamicStyleRules = new Map(existingStyleRules);
+    newRules.forEach(([key, content]) => dynamicStyleRules.set(key, content));
     return {
-        renderedFocus,
-        dynamicStyleCssPatch: styleTable.toStyleContent().trim(),
+        ...cardTemplates,
+        dynamicStyleCssPatch: styleTable.toStyleContent(existingStyleRules).trim(),
+        dynamicStyleRules,
     };
 }

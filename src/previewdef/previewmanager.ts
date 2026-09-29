@@ -279,7 +279,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         this.documentUpdateScheduler.schedule(key, previewItem.getDocumentChangeDebounceMs(), async () => {
             if (!previewItem.isDisposed) {
                 await measureAsync('preview.refresh', { source: 'document', preview: previewItem.constructor.name }, () =>
-                    previewItem.onDocumentChange(document));
+                    previewItem.onDocumentChange(document, { source: 'document' }));
             }
         });
     }

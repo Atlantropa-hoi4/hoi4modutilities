@@ -242,4 +242,26 @@ describe('focustree loader', () => {
             entry.label === 'focustree.sourceSnapshot' && entry.tags.file === mainFocusFile);
         assert.strictEqual(sourceSnapshotBuilds.length, 1);
     });
+    it('reuses icon GFX resolution across document versions until assets are invalidated', async () => {
+        const rootLoader = new FocusTreeLoader(mainFocusFile);
+        const loadVersion = async (version: string, content: string) => {
+            const loader = rootLoader.createSnapshotLoader(async () => content, 'full', version);
+            const result = (await loader.load(new LoaderSession(true))).result;
+            rootLoader.adoptDependencyLoadersFrom(loader);
+            return result;
+        };
+        const content = fileContents[mainFocusFile];
+
+        const first = await loadVersion('1', content);
+        const callsAfterFirstLoad = focusIconResolutionCalls.length;
+        const edited = await loadVersion('2', `# edited\n${content}`);
+
+        assert.ok(callsAfterFirstLoad >= 1);
+        assert.strictEqual(focusIconResolutionCalls.length, callsAfterFirstLoad);
+        assert.deepStrictEqual(edited.focusIconGfxFileByName, first.focusIconGfxFileByName);
+
+        rootLoader.clearIconAssetResolution();
+        await loadVersion('3', `# edited again\n${content}`);
+        assert.strictEqual(focusIconResolutionCalls.length, callsAfterFirstLoad + 1);
+    });
 });

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { FocusTreeAssetStyleBatchHandler, FocusTreeRenderBaseState } from './contentbuilder';
+import type { FocusTreeRenderPreparation } from './renderpayloadpatch';
 import { getDocumentByUri } from '../../util/vsccommon';
 import { FocusConditionPresetsByTree } from './conditionpresets';
 import { FocusTreeAssetLoadMode, FocusTreeLoader } from './loader';
@@ -56,13 +57,13 @@ export interface FocusTreeSnapshotBuilderLike {
     invalidate?(invalidation: FocusTreeInvalidation): void;
     setPriorityAssetKeys?(assetKeys: readonly string[]): void;
     renderShell(documentVersion: number): string;
-    renderDocument(document: vscode.TextDocument): Promise<string>;
     buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean): Promise<FocusTreeRenderBaseState>;
     createFullSnapshot(
         baseState: FocusTreeRenderBaseState,
         previousCache: FocusTreePreviewSession['runtimeState']['lastRenderCache'],
         isCancelled?: () => boolean,
         onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
+        prepared?: FocusTreeRenderPreparation,
     ): Promise<FocusTreeSnapshot>;
 }
 
@@ -256,7 +257,7 @@ export class FocusTreePreviewSession {
             changedInlayWindowIds: [...inlayIds],
             focusTrees: [tree],
             continuousFocusHtml: cache.continuousFocusHtml,
-            renderedFocus: pickStringEntries(cache.renderedFocus, focusIds),
+            ...pickFocusTemplates(cache.focusTemplates, cache.focusTemplateKeyById, focusIds),
             renderedInlayWindows: pickStringEntries(cache.renderedInlayWindows, inlayIds),
             gridBox: cache.gridBox,
             dynamicStyleCss: cache.dynamicStyleCss,
@@ -503,6 +504,7 @@ export class FocusTreePreviewSession {
                 this.runtimeState.lastRenderCache,
                 isCancelled,
                 onAssetStyleBatch,
+                patchPlan.prepared,
             );
             snapshotBuildDurationMs = Date.now() - snapshotBuildStart;
             recordPerf('focustree.snapshotBuild', snapshotBuildDurationMs, { source: options.source, mode: assetLoadMode });
@@ -569,8 +571,12 @@ export class FocusTreePreviewSession {
                 updateMessage.structurallyChangedTreeIds = [selectedTree.id];
                 updateMessage.changedFocusIds = updateMessage.changedFocusIds?.filter(id => focusIds.has(id));
                 updateMessage.changedInlayWindowIds = updateMessage.changedInlayWindowIds?.filter(id => inlayIds.has(id));
-                if (updateMessage.renderedFocus) {
-                    updateMessage.renderedFocus = pickStringEntries(updateMessage.renderedFocus, focusIds);
+                if (updateMessage.focusTemplates && updateMessage.focusTemplateKeyById) {
+                    Object.assign(updateMessage, pickFocusTemplates(
+                        updateMessage.focusTemplates,
+                        updateMessage.focusTemplateKeyById,
+                        focusIds,
+                    ));
                 }
                 if (updateMessage.renderedInlayWindows) {
                     updateMessage.renderedInlayWindows = pickStringEntries(updateMessage.renderedInlayWindows, inlayIds);
@@ -851,4 +857,17 @@ function getApproximateJsonByteLength(value: unknown): number {
 
 function pickStringEntries(source: Readonly<Record<string, string>>, keys: ReadonlySet<string>): Record<string, string> {
     return Object.fromEntries(Object.entries(source).filter(([key]) => keys.has(key)));
+}
+
+/** Template keys of the given focuses and only the templates they use. */
+function pickFocusTemplates(
+    templates: Readonly<Record<string, string>>,
+    keyById: Readonly<Record<string, string>>,
+    focusIds: ReadonlySet<string>,
+): { focusTemplates: Record<string, string>; focusTemplateKeyById: Record<string, string> } {
+    const focusTemplateKeyById = pickStringEntries(keyById, focusIds);
+    return {
+        focusTemplates: pickStringEntries(templates, new Set(Object.values(focusTemplateKeyById))),
+        focusTemplateKeyById,
+    };
 }

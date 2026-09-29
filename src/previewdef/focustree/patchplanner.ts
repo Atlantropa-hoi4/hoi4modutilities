@@ -10,7 +10,7 @@ export class FocusTreePatchPlanner {
     ): Promise<FocusTreePatchPlan> {
         const updatePlan = await createFocusTreeRenderUpdate(previousCache, baseState, isCancelled);
         if (updatePlan.kind === 'full') {
-            return { kind: 'full' };
+            return { kind: 'full', prepared: updatePlan.prepared };
         }
 
         return {

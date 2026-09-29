@@ -140,7 +140,8 @@ describe('imported preview features', () => {
         await isolated({ ...shared, imagecache: { getSpriteByGfxName: async (name: string) => { sprites.push(name); return undefined; } },
             featureflags: { isLocalisationIndexEnabled: () => false } }, async () => {
             const { parseFocusTitleStyles, findFocusWindow, renderFocusGui, renderContinuousFocusGui } = require('../../src/previewdef/focustree/presentation') as typeof import('../../src/previewdef/focustree/presentation');
-            const { renderFocusHtmlTemplate } = require('../../src/previewdef/focustree/focusrender') as typeof import('../../src/previewdef/focustree/focusrender');
+            const { renderFocusCardTemplate } = require('../../src/previewdef/focustree/focusrender') as typeof import('../../src/previewdef/focustree/focusrender');
+            const { fillFocusCardTemplate } = require('../../src/previewdef/focustree/cardtemplate') as typeof import('../../src/previewdef/focustree/cardtemplate');
             const gui = convertNodeToJson<GuiFile>(parseHoi4File(`guiTypes = {
                 containerWindowType = { name = national_focus_item size = { width = 100 height = 120 }
                     iconType = { name = bg spriteType = old }
@@ -156,11 +157,22 @@ describe('imported preview features', () => {
                 layout: { editable: true, sourceFile: 'main.txt' }, token: { start: 1, end: 100 } } as any;
             const styles = new StyleTable();
             const body = await renderFocusGui(focus, presentation, styles, [], 96, 130, '<translated>');
-            const html = renderFocusHtmlTemplate(focus, styles, 'main.txt', 96, 130, '<translated>', body);
+            const template = renderFocusCardTemplate(styles, 96, body!);
+            const html = fillFocusCardTemplate(template, {
+                id: focus.id,
+                displayName: '<translated>',
+                file: 'main.txt',
+                activeFile: 'main.txt',
+                editable: true,
+                sourceFile: 'main.txt',
+                position: { x: 1, y: 2 },
+                iconClass: 'st-focus-icon-test',
+            });
             assert.ok(sprites.includes('GFX_special'));
+            assert.match(template, /\{\{iconClass\}\}/);
             assert.match(html, /data-focus-editable="true"/);
             assert.match(html, /focus-checkbox/);
-            assert.match(html, /\{\{iconClass\}\}/);
+            assert.match(html, /st-focus-icon-test/);
             assert.match(html, /&lt;translated&gt;/);
             assert.doesNotMatch(html, /<translated>/);
             assert.ok(await renderContinuousFocusGui(presentation, styles, []));

@@ -261,4 +261,29 @@ describe('focus retained scene geometry', () => {
             assert.deepStrictEqual(updateFocusScenePositions(geometry, options), { movedFocusIds: [], changedEdges: [] });
         });
     }
+    it('keeps measured bounds of retained cards when a scene is rebuilt', () => {
+        const options = {
+            items: createItems(),
+            slotSize: { width: 100, height: 120 },
+            format: 'up' as const,
+            padding: { left: 20, top: 30, right: 20, bottom: 30 },
+            anchorGap: 4,
+        };
+        const previous = buildFocusSceneGeometry(options);
+        const measured = { ...previous.nodes.child.slot, x: previous.nodes.child.slot.x + 3, width: 50, height: 60 };
+        updateFocusSceneNodeVisuals(previous, { child: measured });
+        const moved = {
+            ...options,
+            items: options.items.map(item => item.id === 'child' ? { ...item, gridX: 4 } : item),
+        };
+
+        const retained = buildFocusSceneGeometry(moved, { geometry: previous, focusIds: new Set(['child']) });
+        const fresh = buildFocusSceneGeometry(moved);
+        const dx = retained.nodes.child.slot.x - previous.nodes.child.slot.x;
+
+        assert.strictEqual(dx, 200);
+        assert.deepStrictEqual(retained.nodes.child.visual, { ...measured, x: measured.x + dx });
+        assert.deepStrictEqual(retained.nodes.parent.visual, fresh.nodes.parent.visual);
+        assert.notStrictEqual(retained.edges[0].path, fresh.edges[0].path);
+    });
 });

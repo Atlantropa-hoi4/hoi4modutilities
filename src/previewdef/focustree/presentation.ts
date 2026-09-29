@@ -3,7 +3,6 @@ import { Node, parseHoi4File } from '../../hoiformat/hoiparser';
 import { convertNodeToJson, HOIPartial } from '../../hoiformat/schema';
 import { ContentLoader, LoadResultOD } from '../../util/loader/loader';
 import { StyleTable } from '../../util/styletable';
-import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
 import { calculateBBox, ParentInfo } from '../../util/hoi4gui/common';
 import { renderContainerWindow, RenderContainerWindowOptions } from '../../util/hoi4gui/containerwindow';
 import { renderIcon } from '../../util/hoi4gui/icon';
@@ -11,6 +10,7 @@ import { renderButton } from '../../util/hoi4gui/button';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
 import { getSpriteByGfxName } from '../../util/image/imagecache';
 import type { Focus } from './schema';
+import { focusCardPlaceholders, renderFocusGuiLabel } from './cardtemplate';
 
 export interface FocusTitleStyle { name?: string; default?: boolean; unavailable?: string }
 export interface FocusPresentation {
@@ -51,9 +51,59 @@ const runtimeFocusControls = new Set([
 export async function renderFocusGui(focus: Focus, presentation: FocusPresentation | undefined, styleTable: StyleTable,
     gfxFiles: string[], xGridSize: number, yGridSize: number, localizedText?: string): Promise<string | undefined> {
     if (!presentation?.item) { return undefined; }
-    const item = presentation.item;
+    const template = await renderFocusGuiTemplate(presentation.item, resolveFocusGuiBackground(presentation, focus),
+        focus.overlay, styleTable, gfxFiles, xGridSize, yGridSize);
+    return applyFocusGuiLabel(template, focus, localizedText);
+}
+
+/**
+ * Renders each GUI variant (title background and overlay) once per style table. Focus cards of
+ * one variant differ only in their label, so a large tree needs a handful of GUI renders.
+ */
+export class FocusGuiRenderer {
+    private readonly templates = new Map<string, Promise<string>>();
+
+    constructor(
+        private readonly presentation: FocusPresentation | undefined,
+        private readonly styleTable: StyleTable,
+        private readonly gfxFiles: string[],
+        private readonly xGridSize: number,
+        private readonly yGridSize: number,
+    ) {}
+
+    /** GUI markup of the focus's variant, with the label left as a placeholder. */
+    public renderTemplate(focus: Pick<Focus, 'textIcon' | 'overlay'>): Promise<string> | undefined {
+        const item = this.presentation?.item;
+        if (!item) { return undefined; }
+        const background = resolveFocusGuiBackground(this.presentation!, focus);
+        const key = `${background}\u0000${focus.overlay ?? ''}`;
+        let template = this.templates.get(key);
+        if (!template) {
+            template = renderFocusGuiTemplate(item, background, focus.overlay, this.styleTable, this.gfxFiles,
+                this.xGridSize, this.yGridSize);
+            this.templates.set(key, template);
+        }
+        return template;
+    }
+
+    public async render(focus: Focus, localizedText?: string): Promise<string | undefined> {
+        const template = this.renderTemplate(focus);
+        return template && applyFocusGuiLabel(await template, focus, localizedText);
+    }
+}
+
+function resolveFocusGuiBackground(presentation: FocusPresentation, focus: Pick<Focus, 'textIcon'>): string {
     const titleStyle = presentation.styles.find(style => focus.textIcon ? style.name === focus.textIcon : style.default);
-    const background = titleStyle?.unavailable ?? 'GFX_focus_unavailable';
+    return titleStyle?.unavailable ?? 'GFX_focus_unavailable';
+}
+
+function applyFocusGuiLabel(template: string, focus: Pick<Focus, 'id'>, localizedText: string | undefined): string {
+    const label = renderFocusGuiLabel(focus.id, localizedText ?? focus.id);
+    return template.replace(focusCardPlaceholders.label, () => label);
+}
+
+async function renderFocusGuiTemplate(item: HOIPartial<ContainerWindowType>, background: string, overlay: string | undefined,
+    styleTable: StyleTable, gfxFiles: string[], xGridSize: number, yGridSize: number): Promise<string> {
     const [,, width, height] = calculateBBox(item, screen);
     const common = { styleTable, getSprite: (name: string) => getSpriteByGfxName(name, gfxFiles) };
     const focusNameClass = styleTable.style('focus-gui-name', () =>
@@ -71,18 +121,16 @@ export async function renderFocusGui(focus: Focus, presentation: FocusPresentati
             return `<div class="{{iconClass}} focus-gui-symbol ${css}"></div>`;
         }
         if ((type === 'icon' || type === 'button') && (child.name === 'bg' || child.name === 'overlay')) {
-            const sprite = child.name === 'bg' ? background : focus.overlay;
+            const sprite = child.name === 'bg' ? background : overlay;
             const classNames = child.name === 'bg' ? 'focus-frame-gfx' : 'focus-decoration-gfx';
             return sprite ? renderIcon({ ...child as HOIPartial<IconType>, spritetype: sprite, quadtexturesprite: sprite,
                 frame: child.name === 'bg' ? 0 : (child as HOIPartial<IconType>).frame }, parent, { ...common, classNames }) : '';
         }
         if (type === 'instanttextbox' && child.name === 'name') {
-            const displayName = localizedText ?? focus.id;
-            const text = `<span data-preview-label-id="${htmlAttributeEscape(focus.id)}" data-preview-label-name="${htmlAttributeEscape(displayName)}" data-preview-label-css-toggle="true"><span class="preview-label-id-text">${htmlTextEscape(focus.id)}</span><span class="preview-label-name-text">${htmlTextEscape(displayName)}</span></span>`;
             // Clausewitz does not use DOM source order for every GUI layer. Some focus GUI files
             // declare the title before the background, which would otherwise paint the frame over
             // the text in the webview and leave only a few glyph fragments visible.
-            return renderInstantTextBox({ ...child as HOIPartial<InstantTextBoxType>, text }, parent,
+            return renderInstantTextBox({ ...child as HOIPartial<InstantTextBoxType>, text: focusCardPlaceholders.label }, parent,
                 { ...common, classNames: focusNameClass, localise: false, rawText: true });
         }
         if (type === 'icon') {

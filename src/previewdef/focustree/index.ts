@@ -109,9 +109,12 @@ export class FocusTreePreview extends PreviewBase {
         document: vscode.TextDocument,
         options?: PreviewDocumentChangeOptions,
     ): Promise<void> {
+        // Edits of the previewed file only change its own structure; reloads refresh everything.
         const invalidation = options?.source === 'dependency'
             ? classifyFocusTreeInvalidation(options.changedDependencies ?? []) || FocusTreeInvalidation.All
-            : FocusTreeInvalidation.All;
+            : options?.source === 'document'
+                ? FocusTreeInvalidation.Structure
+                : FocusTreeInvalidation.All;
         await this.session.refreshDocument(document, {
             source: options?.source ?? 'document',
             invalidation,

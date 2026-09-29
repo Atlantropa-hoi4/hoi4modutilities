@@ -85,6 +85,38 @@ describe('focus GUI presentation', () => {
         });
     });
 
+    it('renders each GUI variant once and fills in per-focus labels', async () => {
+        await withPresentation(async (api, sprites) => {
+            const gui = convertNodeToJson<GuiFile>(parseHoi4File(`guiTypes = {
+                containerWindowType = { name = national_focus_item size = { width = 165 height = 128 }
+                    iconType = { name = bg position = { x = 5 y = 40 } spriteType = GFX_focus_unavailable }
+                    iconType = { name = symbol position = { x = 5 y = -44 } centerposition = yes spriteType = GFX_goal_unknown }
+                    iconType = { name = overlay }
+                    instantTextBoxType = { name = name maxWidth = 147 maxHeight = 20 }
+                }
+            }`), guiFileSchema);
+            const item = api.findFocusWindow(gui.guitypes.flatMap(value => value.containerwindowtype), 'national_focus_item');
+            const presentation = { item, styles: [{ name: 'special', unavailable: 'GFX_special' }] };
+            const styles = new StyleTable({ contentAddressedOneTimeStyles: true });
+            const renderer = new api.FocusGuiRenderer(presentation, styles, [], 96, 130);
+            const plain = { id: 'FOCUS_A' } as any;
+            const sameVariant = { id: 'FOCUS_<B>' } as any;
+            const overlaid = { id: 'FOCUS_C', overlay: 'GFX_overlay' } as any;
+
+            const first = await renderer.render(plain, 'First & name');
+            const second = await renderer.render(sameVariant);
+            const renderedSprites = [...sprites].sort();
+            const third = await renderer.render(overlaid);
+
+            assert.deepStrictEqual(renderedSprites, ['GFX_focus_unavailable']);
+            assert.deepStrictEqual(sprites.sort(), ['GFX_focus_unavailable', 'GFX_focus_unavailable', 'GFX_overlay']);
+            assert.match(first!, /data-preview-label-name="First &amp; name"/);
+            assert.match(second!, /data-preview-label-id="FOCUS_&lt;B&gt;"/);
+            assert.match(third!, /FOCUS_C/);
+            assert.strictEqual(first, await api.renderFocusGui(plain, presentation, new StyleTable({ contentAddressedOneTimeStyles: true }), [], 96, 130, 'First & name'));
+        });
+    });
+
     it('keeps focus names above title backgrounds regardless of GUI declaration order', async () => {
         await withPresentation(async api => {
             const gui = convertNodeToJson<GuiFile>(parseHoi4File(`guiTypes = {

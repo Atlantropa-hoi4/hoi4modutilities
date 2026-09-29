@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import {
     buildFocusTreeRenderBaseState,
     FocusTreeRenderBaseState,
-    renderFocusTreeFile,
     renderFocusTreeShellHtml,
 } from "./contentbuilder";
 import { FocusConditionPresetsByTree } from "./conditionpresets";
@@ -40,23 +39,6 @@ export class FocusTreeLoaderAdapter {
         conditionPresetsByTree: FocusConditionPresetsByTree,
     ): string {
         return renderFocusTreeShellHtml(uri, webview, documentVersion, conditionPresetsByTree);
-    }
-
-    public async renderDocument(
-        document: vscode.TextDocument,
-        webview: vscode.Webview,
-        conditionPresetsByTree: FocusConditionPresetsByTree,
-    ): Promise<string> {
-        const loader = this.createSnapshotLoader(document.getText(), 'full', document.version);
-        const content = await renderFocusTreeFile(
-            loader,
-            document.uri,
-            webview,
-            document.version,
-            conditionPresetsByTree,
-        );
-        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-        return content;
     }
 
     public async buildBaseState(
@@ -110,6 +92,11 @@ export class FocusTreeLoaderAdapter {
     }
 
     public invalidate(invalidation: FocusTreeInvalidation): void {
+        if ((invalidation & (FocusTreeInvalidation.Layout
+            | FocusTreeInvalidation.Presentation
+            | FocusTreeInvalidation.Assets)) !== 0) {
+            this.focusTreeLoader.clearIconAssetResolution();
+        }
         if (!this.sessionSnapshot) {
             return;
         }
@@ -147,5 +134,6 @@ export class FocusTreeLoaderAdapter {
     public dispose(): void {
         this.sessionSnapshot = undefined;
         this.focusTreeLoader.clearSourceSnapshot();
+        this.focusTreeLoader.clearIconAssetResolution();
     }
 }

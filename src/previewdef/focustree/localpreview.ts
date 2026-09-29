@@ -1,5 +1,3 @@
-import { StyleTable } from "../../util/styletable";
-import { renderFocusHtmlTemplate } from "./focusrender";
 import { Focus } from './schema';
 import { FocusTreeView } from './viewmodel';
 
@@ -54,50 +52,6 @@ export function createPlaceholderFocus(
         lintInfoCount: 0,
         searchFilters: [],
     };
-}
-
-export function isPendingPlaceholderFocus(focus: Pick<Focus, 'layoutEditKey'> | undefined): boolean {
-    return !!focus?.layoutEditKey && focus.layoutEditKey.startsWith('pending:');
-}
-
-export function renderPendingPlaceholderFocusTemplate(
-    focus: Pick<Focus, 'id' | 'file' | 'layoutEditKey'>,
-): string {
-    const placeholderFocus: Focus = {
-        ...focus,
-        x: 0,
-        y: 0,
-        icon: [{ icon: undefined, condition: emptyCondition }],
-        available: undefined,
-        availableIfCapitulated: false,
-        hasAiWillDo: false,
-        hasCompletionReward: false,
-        prerequisite: [],
-        prerequisiteGroupCount: 0,
-        prerequisiteFocusCount: 0,
-        exclusive: [],
-        exclusiveCount: 0,
-        hasAllowBranch: false,
-        inAllowBranch: [],
-        allowBranch: undefined,
-        relativePositionId: undefined,
-        offset: [],
-        token: undefined,
-        isInCurrentFile: true,
-        layout: {
-            editKey: focus.layoutEditKey,
-            focusId: focus.id,
-            editable: true,
-            sourceFile: focus.file,
-            basePosition: { x: 0, y: 0 },
-            relativePositionId: undefined,
-            offsets: [],
-        },
-        lintWarningCount: 0,
-        lintInfoCount: 0,
-        searchFilters: [],
-    };
-    return renderFocusHtmlTemplate(placeholderFocus, new StyleTable(), focus.file, 96, 130);
 }
 
 export function applyLocalFocusDeletion(

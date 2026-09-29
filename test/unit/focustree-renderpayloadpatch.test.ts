@@ -4,6 +4,7 @@ import {
     createFocusTreeRenderCache,
     createFocusTreeRenderUpdate,
 } from '../../src/previewdef/focustree/renderpayloadpatch';
+import { toFocusTreeViews } from '../../src/previewdef/focustree/viewmodel';
 import { getPerfSnapshot, resetPerfMetrics } from '../../src/util/perf';
 
 describe('focus tree render payload patching', () => {
@@ -50,7 +51,8 @@ describe('focus tree render payload patching', () => {
         const focusTree = createTree('tree_a', 'FOCUS_A');
         const previous = createFocusTreeRenderCache({
             focusTrees: [focusTree],
-            renderedFocus: { FOCUS_A: '<div>FOCUS_A</div>' },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -95,10 +97,8 @@ describe('focus tree render payload patching', () => {
                 createTree('tree_a', 'FOCUS_A'),
                 createTree('tree_b', 'FOCUS_B'),
             ],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-                FOCUS_B: '<div>B old</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -108,7 +108,7 @@ describe('focus tree render payload patching', () => {
             focusPositionActiveFile: 'common/national_focus/test.txt',
             conditionPresetsByTree: {},
             hasFocusSelector: true,
-            hasWarningsButton: false,
+            hasWarningsButton: true,
             styleNonce: 'nonce',
             focusToolbarHeight: 68,
         } as any);
@@ -164,11 +164,14 @@ describe('focus tree render payload patching', () => {
         assert.deepStrictEqual(result.update.focusTreePatches?.map(patch => patch.treeId), ['tree_b']);
         assert.deepStrictEqual(result.update.changedTreeIds, ['tree_b']);
         assert.strictEqual(result.update.structurallyChangedTreeIds, undefined);
-        assert.strictEqual(result.update.renderedFocusPatch, undefined);
+        assert.strictEqual(result.update.focusTemplateKeyPatch, undefined);
+        assert.strictEqual(result.update.focusTreePatches?.[0].tree, undefined);
         assert.strictEqual(
-            result.update.focusTreePatches?.[0].tree.focuses.FOCUS_B.file,
+            result.update.focusTreePatches?.[0].delta?.focuses?.FOCUS_B.file,
             'common/national_focus/other.txt',
         );
+        assert.deepStrictEqual(result.update.focusTreePatches?.[0].delta?.warnings, [{ code: 'changed' }]);
+        assert.strictEqual(result.update.baseSnapshotVersion, previous.snapshotVersion);
         assert.strictEqual(result.update.documentVersion, 4);
         assert.strictEqual(result.update.focusPositionActiveFile, 'common/national_focus/test.txt');
         assert.deepStrictEqual(result.update.changedSlots, ['treeDefinitions', 'selector', 'warnings', 'treeBody']);
@@ -178,9 +181,8 @@ describe('focus tree render payload patching', () => {
     it('marks structural tree changes so the webview can rebuild only the affected selection', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -235,7 +237,8 @@ describe('focus tree render payload patching', () => {
     it('falls back to a full snapshot when tree order changes', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A'), createTree('tree_b', 'FOCUS_B')],
-            renderedFocus: {},
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -275,9 +278,8 @@ describe('focus tree render payload patching', () => {
     it('falls back to a full snapshot when icon asset dependencies change', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -321,7 +323,8 @@ describe('focus tree render payload patching', () => {
         const previousTree = createTree('tree_a', 'FOCUS_A');
         const previous = createFocusTreeRenderCache({
             focusTrees: [previousTree],
-            renderedFocus: { FOCUS_A: '<div>A</div>' },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -377,9 +380,8 @@ describe('focus tree render payload patching', () => {
         try {
             createFullFocusTreeRenderUpdate({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gfxFiles: [],
             focusIconGfxFileByName: {},
@@ -404,7 +406,7 @@ describe('focus tree render payload patching', () => {
             assert.strictEqual(payloadMetric.tags.kind, 'full');
             assert.strictEqual(payloadMetric.tags.deferredAssetLoad, true);
             assert.ok((payloadMetric.tags.focusTreeBytes as number) > 0);
-            assert.ok((payloadMetric.tags.renderedFocusBytes as number) > 0);
+            assert.ok((payloadMetric.tags.focusTemplateBytes as number) > 0);
             assert.ok((payloadMetric.tags.dynamicStyleBytes as number) > 0);
         } finally {
             if (previousTraceValue === undefined) {
@@ -420,7 +422,8 @@ describe('focus tree render payload patching', () => {
         const deferredPayload = {
             focusTrees: [sourceTree],
             sourceFocusTrees: [sourceTree],
-            renderedFocus: {},
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gfxFiles: [],
             focusIconGfxFileByName: {},
@@ -443,7 +446,8 @@ describe('focus tree render payload patching', () => {
         const deferred = createFullFocusTreeRenderUpdate(deferredPayload);
         const hydrated = createFullFocusTreeRenderUpdate({
             ...deferredPayload,
-            renderedFocus: { FOCUS_A: '<div>A</div>' },
+            focusTemplates: { card: '<div>A</div>' },
+            focusTemplateKeyById: { FOCUS_A: 'card' },
             dynamicStyleCss: '.hydrated {}',
             focusIconStyleSignature: 'hydrated',
             deferredAssetLoad: false,
@@ -452,16 +456,16 @@ describe('focus tree render payload patching', () => {
 
         assert.strictEqual(hydrated.update.updateType, 'assets');
         assert.strictEqual(hydrated.update.focusTrees, undefined);
-        assert.deepStrictEqual(hydrated.update.renderedFocusPatch, { FOCUS_A: '<div>A</div>' });
+        assert.deepStrictEqual(hydrated.update.focusTemplates, { card: '<div>A</div>' });
+        assert.deepStrictEqual(hydrated.update.focusTemplateKeyById, { FOCUS_A: 'card' });
         assert.strictEqual(hydrated.update.structurallyChangedTreeIds, undefined);
     });
 
     it('falls back to a full snapshot when icon texture expiry changes', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -509,9 +513,8 @@ describe('focus tree render payload patching', () => {
     it('falls back to a full snapshot when a focus icon resolves to a different gfx file', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
-            renderedFocus: {
-                FOCUS_A: '<div>A</div>',
-            },
+            focusTemplates: {},
+            focusTemplateKeyById: {},
             renderedInlayWindows: {},
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.a {}',
@@ -552,6 +555,186 @@ describe('focus tree render payload patching', () => {
         } as any);
 
         assert.strictEqual(result.kind, 'full');
+    });
+
+    const createRangedTree = (offset: number, options: { warningOffset?: number; extraFocus?: boolean } = {}) => {
+        const tree = createTree('tree_a', 'FOCUS_A') as any;
+        const focusA = { ...tree.focuses.FOCUS_A, token: { start: 10 + offset, end: 17 + offset } };
+        const focusB = {
+            ...tree.focuses.FOCUS_A,
+            id: 'FOCUS_B',
+            layoutEditKey: `focus:test:${40 + offset}`,
+            icon: [{ icon: 'GFX_FOCUS_B', condition: { _type: 'and', items: [] } }],
+            prerequisite: [['FOCUS_A']],
+            token: { start: 40 + offset, end: 47 + offset },
+        };
+        tree.focuses = options.extraFocus
+            ? { FOCUS_A: focusA, FOCUS_B: focusB, FOCUS_C: { ...focusB, id: 'FOCUS_C', token: { start: 90, end: 97 } } }
+            : { FOCUS_A: focusA, FOCUS_B: focusB };
+        tree.createTemplate = {
+            editKey: 'tree-edit',
+            editable: true,
+            kind: 'focus',
+            sourceFile: 'common/national_focus/test.txt',
+            sourceRange: { start: offset, end: 200 + offset },
+        };
+        const warningOffset = options.warningOffset ?? offset;
+        tree.warnings = [{
+            code: 'lint',
+            kind: 'lint',
+            severity: 'warning',
+            source: 'FOCUS_B',
+            text: 'warning',
+            navigations: [{ file: 'common/national_focus/test.txt', start: 40 + warningOffset, end: 47 + warningOffset }],
+        }];
+        return tree;
+    };
+
+    const createBaseState = (tree: any, documentVersion: number) => ({
+        focusTrees: [tree],
+        focusById: tree.focuses,
+        allFocuses: Object.values(tree.focuses),
+        allInlays: [],
+        gfxFiles: [],
+        focusIconGfxFileByName: {},
+        gridBox: { position: { x: 0, y: 0 } },
+        xGridSize: 96,
+        yGridSize: 130,
+        focusPositionDocumentVersion: documentVersion,
+        focusPositionActiveFile: 'common/national_focus/test.txt',
+        conditionPresetsByTree: {},
+        hasFocusSelector: false,
+        hasWarningsButton: true,
+        loadDurationMs: 1,
+        deferredAssetLoad: false,
+        localisationIndexReady: false,
+    }) as any;
+
+    const createRangedCache = (tree: any) => createFocusTreeRenderCache({
+        sourceFocusTrees: [tree],
+        focusTrees: toFocusTreeViews([tree]),
+        focusTemplates: {},
+            focusTemplateKeyById: {},
+        renderedInlayWindows: {},
+        gridBox: { position: { x: 0, y: 0 } },
+        dynamicStyleCss: '',
+        gfxFiles: [],
+        focusIconGfxFileByName: {},
+        xGridSize: 96,
+        yGridSize: 130,
+        focusPositionDocumentVersion: 1,
+        focusPositionActiveFile: 'common/national_focus/test.txt',
+        conditionPresetsByTree: {},
+        hasFocusSelector: false,
+        hasWarningsButton: true,
+        deferredAssetLoad: false,
+        localisationIndexReady: false,
+        styleNonce: 'nonce',
+        focusToolbarHeight: 68,
+    } as any);
+
+    it('sends only moved source ranges when text above the focuses changes', async () => {
+        const previous = createRangedCache(createRangedTree(0));
+        const result = await createFocusTreeRenderUpdate(previous, createBaseState(createRangedTree(3), 2));
+
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+        const patch = result.update.focusTreePatches?.[0];
+        assert.strictEqual(patch?.tree, undefined);
+        assert.deepStrictEqual(patch?.delta, {
+            warningRanges: [[[43, 50]]],
+            ranges: { FOCUS_A: [13, 20], FOCUS_B: [43, 50] },
+        });
+        assert.strictEqual(result.update.changedFocusIds, undefined);
+        assert.strictEqual(result.update.focusTemplateKeyPatch, undefined);
+        assert.strictEqual(result.update.structurallyChangedTreeIds, undefined);
+        assert.strictEqual(result.update.baseSnapshotVersion, previous.snapshotVersion);
+        assert.strictEqual(result.cache.focusTrees[0].createTemplate?.sourceRange, undefined);
+    });
+
+    it('resends warnings only when their content changes', async () => {
+        const previous = createRangedCache(createRangedTree(0));
+        const changedTree = createRangedTree(0);
+        changedTree.warnings = [{ ...changedTree.warnings[0], text: 'another warning' }];
+        const result = await createFocusTreeRenderUpdate(previous, createBaseState(changedTree, 2));
+
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+        assert.deepStrictEqual(Object.keys(result.update.focusTreePatches?.[0].delta ?? {}), ['warnings']);
+        assert.strictEqual(result.update.focusTreePatches?.[0].delta?.warnings?.[0].text, 'another warning');
+    });
+
+    it('replaces the whole tree view when focuses are added', async () => {
+        const previous = createRangedCache(createRangedTree(0));
+        const result = await createFocusTreeRenderUpdate(previous, createBaseState(createRangedTree(0, { extraFocus: true }), 2));
+
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+        assert.deepStrictEqual(Object.keys(result.update.focusTreePatches?.[0].tree?.focuses ?? {}), ['FOCUS_A', 'FOCUS_B', 'FOCUS_C']);
+        assert.strictEqual(result.update.focusTreePatches?.[0].delta, undefined);
+        assert.deepStrictEqual(result.update.structurallyChangedTreeIds, ['tree_a']);
+    });
+
+    it('returns prepared views and signatures with full-render plans', async () => {
+        const plan = await createFocusTreeRenderUpdate(undefined, createBaseState(createRangedTree(0), 1));
+
+        assert.strictEqual(plan.kind, 'full');
+        if (plan.kind !== 'full') {
+            return;
+        }
+        assert.deepStrictEqual(plan.prepared.views.map(view => Object.keys(view.focuses)), [['FOCUS_A', 'FOCUS_B']]);
+        assert.deepStrictEqual(Object.keys(plan.prepared.metadata.focusViewSignatures.tree_a), ['FOCUS_A', 'FOCUS_B']);
+    });
+
+    it('appends only style rules that the webview does not already have', async () => {
+        const initialTree = createTree('tree_a', 'FOCUS_A');
+        const previous = createFocusTreeRenderCache({
+            focusTrees: [initialTree],
+            focusTemplates: {},
+            focusTemplateKeyById: {},
+            renderedInlayWindows: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: '',
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: false,
+            localisationIndexReady: false,
+            styleNonce: 'nonce',
+            focusToolbarHeight: 68,
+        } as any);
+        const withOverlay = (overlay: string) => {
+            const focus = { ...initialTree.focuses.FOCUS_A, overlay };
+            const tree = { ...initialTree, focuses: { FOCUS_A: focus } };
+            return { ...createBaseState(tree, 2), hasWarningsButton: false };
+        };
+
+        const first = await createFocusTreeRenderUpdate(previous, withOverlay('GFX_overlay_a'));
+        assert.strictEqual(first.kind, 'partial');
+        if (first.kind !== 'partial') {
+            return;
+        }
+        assert.match(first.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
+        assert.match(first.update.dynamicStyleCssPatch ?? '', /st-focus-overlay-GFX_overlay_a/);
+
+        const second = await createFocusTreeRenderUpdate(first.cache, withOverlay('GFX_overlay_b'));
+        assert.strictEqual(second.kind, 'partial');
+        if (second.kind !== 'partial') {
+            return;
+        }
+        assert.doesNotMatch(second.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
+        assert.match(second.update.dynamicStyleCssPatch ?? '', /st-focus-overlay-GFX_overlay_b/);
+        assert.strictEqual(second.cache.dynamicStyleRules.has('st-focus-overlay-GFX_overlay_a'), true);
     });
 
     it('stops large signature planning at a cooperative cancellation checkpoint', async () => {

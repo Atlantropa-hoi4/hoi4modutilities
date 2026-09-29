@@ -3,6 +3,8 @@
 Measured on Windows with Node.js v24.14.0 on 2026-09-22 against commit
 `c2afd9eb3c2c0b850d772dc0631a0d503208d19d`. The working tree contains the changes below.
 No dependency versions, public commands, configuration keys, or extension identity changed.
+The later focus tree preview refactor is described in
+[2026-09-29: Focus tree preview refactor](#2026-09-29-focus-tree-preview-refactor).
 
 ## Focus trees
 
@@ -104,3 +106,113 @@ geometry; the suspend/resume behavior described above fixes it, with regression 
 included in the full run. No commit, push, or release publication is part of this work.
 Real-game installation performance, long-running memory use, and Node.js 20 execution
 were not benchmarked in this run.
+
+## 2026-09-29: Focus tree preview refactor
+
+Measured on Windows with Node.js v24.14.0 against commit
+`f80bc6cb5a935a7351e89830494cbdf5135e78fd` (a Git worktree of that commit served as the
+baseline). No dependency versions, public commands, configuration keys, or extension
+identity changed. The host/webview protocol constant moved from 3 to 4; host and webview
+ship in the same bundle, so no mixed versions are expected.
+
+### Design
+
+- **Stable render signatures.** Source offsets (`start`, `end`, layout edit keys) are kept
+  out of card markup, render signatures, and view signatures. Typing above a focus changes
+  only its source ranges, which are sent separately.
+- **Per-tree deltas.** `focusTreeScenePatch` and `focusTreeAssetBatch` carry
+  `focusTreePatches`: changed focus views, source ranges, tree fields, and either full
+  warnings or only warning navigation ranges. Trees whose focus ids are added, removed, or
+  reordered are replaced whole. Patches name their `baseSnapshotVersion`; a webview that
+  diverged requests the scene again instead of applying the delta.
+- **Card templates.** The host renders the GUI card once per background and overlay
+  variant and sends content-hashed templates plus a focus-to-template map. The webview
+  fills id, label, file, title, checkbox, and icon placeholders
+  (`src/previewdef/focustree/cardtemplate.ts`). Patches send only unknown templates.
+- **Content-addressed styles.** Focus tree one-time style classes are named by content
+  hash, and style patches append only rules the webview does not have. The stylesheet no
+  longer grows with each edit.
+- **Retained scene.** `webviewsrc/focustree/scene.ts` reconciles nodes and edges by focus
+  id, parses card markup in batches through one `<template>`, keeps measured visuals for
+  unchanged cards, and mounts the 120 nodes nearest the viewport before the first frame.
+  The rest are materialized in 6 ms frame slices whose node count halves when frames
+  arrive later than 48 ms apart and grows by 25% when they arrive within 24 ms.
+- **Class-driven visual state.** Hover, selection, pending links, search, filters, and
+  hidden branches are body attributes and classes styled by the shell stylesheet instead of
+  per-element inline styles. Hover clearing is deferred by one animation frame so moving
+  between cards does not restyle the whole tree twice.
+- **Webview modules.** The former `webviewsrc/focustree.ts` monolith is split into the
+  modules listed in the [overview](overview.md#focus-tree-update-pipeline).
+- **Host pipeline.** Document edits invalidate only the structure stage. Icon GFX
+  resolution is cached by sprite names and explicit GFX dependencies and cleared on asset,
+  presentation, or layout invalidation. Render metadata and view signatures are computed in
+  one pass.
+- **Tokenizer.** `src/hoiformat/hoiparser.ts` scans character codes instead of matching an
+  alternation regular expression. It keeps the regular expression's alternation order and
+  backtracking results, including escaped quotes, unit numbers, and the `\s` whitespace set;
+  unit tests compare it against the previous tokenizer on fixtures and random inputs.
+- **Conditions.** Condition extraction deduplicates by a string key instead of pairwise
+  deep equality.
+
+### Measurements
+
+Webview numbers come from a session-local harness that is not part of the repository. It
+generated host messages with the real session code (sprites, images, and localisation
+stubbed), replayed them into each side's production `static/focustree.js` in headless
+Chrome at 1600 × 1000, and served images as local placeholders. VS Code itself was not
+involved. Every value is the median of five runs; synthetic ranges span two back-to-back
+before/after pairs. Inputs: `FOCUS_EXAMPLE/GXC focus (Liangguang).txt` (553 focuses), a
+TFR Korea national focus file (multiple trees, 626 focuses), and a generated 1,200-focus
+tree in which every card is mounted.
+
+| Synthetic 1,200-focus tree | Before | After |
+| --- | ---: | ---: |
+| Initial render, first paint | 52–59 ms | 42–46 ms |
+| Initial render, all nodes mounted | 477–506 ms | 131–159 ms |
+| Asset hydration, painted | 267–302 ms | 42–52 ms |
+| Comment edit above focuses, applied | 583–599 ms | 17 ms |
+| Position edit, applied | 643–719 ms | 20–23 ms |
+| Long tasks during either edit | 53–73 ms | 0 ms |
+| Hover, median | 39–40 ms | 0.6 ms |
+| Edit mode toggle, median | 19.5–19.8 ms | 10.9–13.6 ms |
+| Hydration messages | 3,136 KB | 65 KB |
+| Edit patch message | 3,123 KB | 34–35 KB |
+| Stylesheet | 26,017 rules / 2,482 KB | 813 rules / 14 KB |
+
+| Real focus files | GXC before | GXC after | TFR before | TFR after |
+| --- | ---: | ---: | ---: | ---: |
+| Initial render, painted | 38 ms | 36 ms | 31 ms | 28 ms |
+| Asset hydration, painted | 35 ms | 20 ms | 28 ms | 14 ms |
+| Comment edit, painted | 24 ms | 5 ms | 22 ms | 6 ms |
+| Position edit, painted | 25 ms | 4 ms | 25 ms | 4 ms |
+| Hover, median | 1.6 ms | 0.2 ms | 0.5 ms | 0.1 ms |
+| Initial scene message | 542 KB | 499 KB | 699 KB | 651 KB |
+| Hydration messages | 1,951 KB | 243 KB | 2,251 KB | 262 KB |
+| Edit patch message | 1,756 KB | 28 KB | 2,035 KB | 39 KB |
+| Tree switch scene message | — | — | 1,434 KB | 104 KB |
+| Stylesheet rules | 12,822 | 1,205 | 14,414 | 1,264 |
+
+The production `static/focustree.js` bundle shrank from 244,595 to 201,660 bytes.
+
+Host-side measurements with the same inputs and three alternating runs: planning the
+update for a comment or position edit fell from 20–53 ms to 5–13 ms, and the edit no longer
+re-renders any focus card (553–1,200 cards before). Parsing the GXC file fell from
+17.7–18.2 ms to 5.2–5.6 ms and a generated 5,000-focus script from 22.2–22.8 ms to
+6.2–6.4 ms (medians of 15 alternating runs against `f80bc6c`, two invocations, identical
+AST for both inputs). `node scripts/benchmark-performance.mjs --baseline=c2afd9e` reports
+the parser at 27.99 → 6.18 ms; that baseline predates both the lazy diagnostic line index
+and the scanner.
+
+### Verification scope
+
+`npm run verify` passed: extension and webview typechecks, the production build, ESLint,
+877 unit tests, 21 desktop integration tests on VS Code 1.139.1, and local VSIX packaging
+(40 files, 1.15 MB). No fixture modifications remained afterwards.
+
+Functional parity was compared between the baseline and current bundles in the same
+harness: navigation clicks, hover dimming, edit mode, drag edits, link edits, marquee
+selection, search, completion checkboxes, and normalized card markup matched on all three
+inputs, and tree switching matched on TFR. Two intended differences remain: an editable card keeps its
+edit-mode outline after a rejected link edit, and all synthetic cards stay mounted after an
+edit instead of being rebuilt around the viewport. Real-game installations, VS Code's own
+webview host, long-running memory use, and Node.js 20 were not benchmarked.

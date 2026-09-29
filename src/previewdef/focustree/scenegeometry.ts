@@ -60,7 +60,16 @@ const defaultVisualWidth = 72;
 const defaultVisualHeight = 104;
 const defaultVisualTop = 10;
 
-export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): FocusSceneGeometry {
+/** Measured bounds that remain valid because the listed cards keep their markup. */
+export interface RetainedFocusSceneVisuals {
+    geometry: FocusSceneGeometry;
+    focusIds: ReadonlySet<string>;
+}
+
+export function buildFocusSceneGeometry(
+    options: FocusSceneGeometryOptions,
+    retained?: RetainedFocusSceneVisuals,
+): FocusSceneGeometry {
     const format = options.format ?? 'up';
     const layout = layoutFocusSlots(options, format);
     const visualSize = {
@@ -75,6 +84,21 @@ export function buildFocusSceneGeometry(options: FocusSceneGeometryOptions): Foc
     const nodes: Record<string, FocusNodeGeometry> = {};
     for (const item of options.items) {
         const slot = layout.slots[item.id];
+        const previous = retained?.focusIds.has(item.id) ? retained.geometry.nodes[item.id] : undefined;
+        if (previous) {
+            const dx = slot.x - previous.slot.x;
+            const dy = slot.y - previous.slot.y;
+            const visual = translateRect(previous.visual, dx, dy);
+            nodes[item.id] = {
+                id: item.id,
+                slot,
+                visual,
+                exclusiveVisual: translateRect(previous.exclusiveVisual, dx, dy),
+                anchors: createAnchors(visual, anchorGap),
+            };
+            continue;
+        }
+
         const visual: FocusSceneRect = {
             x: slot.x + visualOffset.x,
             y: slot.y + visualOffset.y,
@@ -259,6 +283,10 @@ export function updateFocusSceneNodeVisuals(
         }
     }
     return changedEdges;
+}
+
+function translateRect(rect: FocusSceneRect, dx: number, dy: number): FocusSceneRect {
+    return { x: rect.x + dx, y: rect.y + dy, width: rect.width, height: rect.height };
 }
 
 function rectEquals(left: FocusSceneRect, right: FocusSceneRect): boolean {

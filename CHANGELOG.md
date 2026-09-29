@@ -9,7 +9,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Changed
 * Skip vanilla files by default in document, range, on-type, and workspace formatting and in lint Quick Fixes and `Source: Fix All` edits: files under `hoi4ModUtilities.installPath`, including DLC folders, and vanilla-derived folders (`interface`, `gfx`, `common/names`, `common/occupation_laws`, `common/special_projects`, `common/technologies`, `common/units` except division and ship name lists, and `history/states`), following the Kaiserreich formatter skip list. Lint warnings are still shown. Turn off `hoi4ModUtilities.skipVanillaFiles` to format and fix them; `hoi4ModUtilities.formatter.ignoreFiles` patterns apply to formatting independently.
 
+* Update Focus Tree Preview in place: edits, drags, links, and asset loading now change only the affected focus cards and connections instead of rebuilding the tree, and typing above a focus no longer re-renders it. Updates while editing large trees are sent as small deltas, and hovering, selecting, and filtering restyle only the focuses involved.
+* Parse HOI4 scripts about twice as fast in previews, indexes, and formatting.
+
 ### Fixed
+* Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.
+* Restore hidden allow-branch selections in Focus Tree Preview when conditions are disabled.
 * Format blocks that start with content on the opening-brace line and close on a later line: a lone entry closes back into an inline block, such as `traits = { AFR_red_queen_trait }`, and other content moves to its own line. Wrapped lists that close right after their last entry keep their layout.
 * Stop classifying non-script `.txt` files in a Steam game folder (`steamapps/common/<game>`) as HOI4 scripts.
 

@@ -30,8 +30,8 @@ describe('focustree message apply', () => {
             applyFocusTreePatches: () => {
                 throw new Error('should not patch trees');
             },
-            setRenderedFocus: () => undefined,
-            patchRenderedFocus: () => undefined,
+            setFocusTemplates: () => undefined,
+            patchFocusTemplates: () => undefined,
             setRenderedInlayWindows: () => undefined,
             patchRenderedInlayWindows: () => undefined,
             refreshFocusTreeSelectorOptions: () => {
@@ -56,7 +56,8 @@ describe('focustree message apply', () => {
             focusPositionActiveFile: 'common/national_focus/test.txt',
             changedSlots: ['treeDefinitions', 'treeBody', 'selector', 'warnings', 'layout', 'styleDeps'],
             focusTrees: [{ id: 'tree_b', focuses: {}, warnings: [], inlayWindows: [] } as any],
-            renderedFocus: { FOCUS_A: '<div>A</div>' },
+            focusTemplates: { card: '<div>A</div>' },
+            focusTemplateKeyById: { FOCUS_A: 'card' },
             gridBox: { position: { x: 10, y: 20 } },
             xGridSize: 120,
             yGridSize: 144,
@@ -93,11 +94,11 @@ describe('focustree message apply', () => {
             applyFocusTreePatches: () => {
                 throw new Error('should prefer full tree replacement when focusTrees are present');
             },
-            setRenderedFocus: renderedFocus => {
-                applied.renderedFocus = renderedFocus;
+            setFocusTemplates: (templates, keyById) => {
+                applied.focusTemplates = [templates, keyById];
             },
-            patchRenderedFocus: () => {
-                throw new Error('should not patch rendered focus when full map is present');
+            patchFocusTemplates: () => {
+                throw new Error('should not patch focus templates when full maps are present');
             },
             setRenderedInlayWindows: () => undefined,
             patchRenderedInlayWindows: () => undefined,
@@ -123,7 +124,7 @@ describe('focustree message apply', () => {
 
         assert.strictEqual(result, true);
         assert.deepStrictEqual(applied.focusTrees, [{ id: 'tree_b', focuses: {}, warnings: [], inlayWindows: [] }]);
-        assert.deepStrictEqual(applied.renderedFocus, { FOCUS_A: '<div>A</div>' });
+        assert.deepStrictEqual(applied.focusTemplates, [{ card: '<div>A</div>' }, { FOCUS_A: 'card' }]);
         assert.deepStrictEqual(applied.gridBox, { position: { x: 10, y: 20 } });
         assert.strictEqual(applied.xGridSize, 120);
         assert.strictEqual(applied.yGridSize, 144);
@@ -159,8 +160,8 @@ describe('focustree message apply', () => {
             },
             setFocusTrees: () => undefined,
             applyFocusTreePatches: () => undefined,
-            setRenderedFocus: () => undefined,
-            patchRenderedFocus: () => undefined,
+            setFocusTemplates: () => undefined,
+            patchFocusTemplates: () => undefined,
             setRenderedInlayWindows: () => undefined,
             patchRenderedInlayWindows: () => undefined,
             refreshFocusTreeSelectorOptions: () => undefined,
@@ -199,8 +200,8 @@ describe('focustree message apply', () => {
                 throw new Error('should patch trees instead of replacing them');
             },
             applyFocusTreePatches: () => undefined,
-            setRenderedFocus: () => undefined,
-            patchRenderedFocus: () => undefined,
+            setFocusTemplates: () => undefined,
+            patchFocusTemplates: () => undefined,
             setRenderedInlayWindows: () => undefined,
             patchRenderedInlayWindows: () => undefined,
             refreshFocusTreeSelectorOptions: () => undefined,

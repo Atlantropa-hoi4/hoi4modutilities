@@ -6,7 +6,11 @@ import {
 } from "./contentbuilder";
 import { FocusConditionPresetsByTree } from "./conditionpresets";
 import { FocusTreeLoaderAdapter } from "./loaderadapter";
-import { createFullFocusTreeRenderUpdateWithCancellation, FocusTreeRenderCache } from "./renderpayloadpatch";
+import {
+    createFullFocusTreeRenderUpdateWithCancellation,
+    FocusTreeRenderCache,
+    FocusTreeRenderPreparation,
+} from "./renderpayloadpatch";
 import { FocusTreeAssetLoadMode } from "./loader";
 import { FocusTreeSnapshot } from "./runtime";
 import { FocusTreeInvalidation } from './invalidation';
@@ -40,14 +44,6 @@ export class FocusTreeSnapshotBuilder {
         );
     }
 
-    public async renderDocument(document: vscode.TextDocument): Promise<string> {
-        return this.loaderAdapter.renderDocument(
-            document,
-            this.webview,
-            this.getConditionPresetsByTree(),
-        );
-    }
-
     public async buildBaseState(
         document: vscode.TextDocument,
         assetLoadMode: FocusTreeAssetLoadMode,
@@ -67,16 +63,19 @@ export class FocusTreeSnapshotBuilder {
         previousCache?: FocusTreeRenderCache,
         isCancelled?: () => boolean,
         onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
+        prepared?: FocusTreeRenderPreparation,
     ): Promise<FocusTreeSnapshot> {
         const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(
             baseState,
             isCancelled,
             onAssetStyleBatch,
+            prepared?.views,
         );
         const { update, cache } = await createFullFocusTreeRenderUpdateWithCancellation(
             payload,
             previousCache,
             isCancelled,
+            prepared?.metadata,
         );
         return {
             payload,

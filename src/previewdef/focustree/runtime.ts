@@ -1,6 +1,6 @@
 import { FocusConditionPresetsByTree } from "./conditionpresets";
 import { FocusTreeRenderBaseState, FocusTreeRenderPayload, FocusTreeRenderPayloadBuildMetrics } from "./contentbuilder";
-import { FocusTreeRenderCache } from "./renderpayloadpatch";
+import { FocusTreeRenderCache, FocusTreeRenderPreparation } from "./renderpayloadpatch";
 import { FocusTreeContentUpdateMessage } from "./webviewupdate";
 
 export interface PendingBaseStatePromise {
@@ -17,6 +17,8 @@ export interface FocusTreeSnapshot {
 
 export interface FocusTreePatchPlan {
     kind: 'full' | 'partial';
+    /** Views and signatures from planning, reused by the full snapshot build. */
+    prepared?: FocusTreeRenderPreparation;
     update?: FocusTreeContentUpdateMessage;
     cache?: FocusTreeRenderCache;
     changedTreeCount?: number;

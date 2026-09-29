@@ -1,3 +1,15 @@
+Focus tree performance refactor 2026-09-29:
+- [x] Measure the host pipeline and the built webview (headless Chrome) on GXC, TFR, and a 1,200-focus synthetic tree.
+- [x] Keep source offsets out of focus render signatures, card markup, and tree view metadata; send per-tree deltas (protocol v4).
+- [x] Use content-addressed one-time styles and one GUI render per focus variant; append only new style rules to patches.
+- [x] Split the webview monolith into modules with a retained scene that reconciles nodes and edges by focus id.
+- [x] Move hover, selection, link, search, filter, and branch visuals to classes; defer hover clearing between cards.
+- [x] Replace the regular-expression tokenizer with a character scanner and compare it against the old tokenizer.
+- [x] Cache icon GFX resolution across document edits and invalidate it on asset, presentation, or layout changes.
+- [x] Verify with unit tests, functional parity against the previous bundle, and before/after measurements.
+
+Review note: see `docs/architecture/performance.md` (2026-09-29 section) for measurements and the verification scope.
+
 Functional deep audit 2026-08-11:
 - [x] Capture a clean baseline and map the current functional surfaces and verification commands.
 - [x] Audit extension activation/contributions, previews/webviews, and parser/index/cache utilities without performing a security audit.

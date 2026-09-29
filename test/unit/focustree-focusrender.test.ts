@@ -1,7 +1,8 @@
 import * as assert from 'assert';
 import { StyleTable } from '../../src/util/styletable';
+import { fillFocusCardTemplate, focusCardPlaceholders } from '../../src/previewdef/focustree/cardtemplate';
 import {
-    renderFocusHtmlTemplate,
+    renderFocusCardTemplate,
     resolveFocusLocalizationText,
     resolveFocusLocalizationTextById,
     resolveFocusLocalizationTextByIdIfReady,
@@ -39,48 +40,37 @@ describe('focustree focus render', () => {
         assert.strictEqual(result, undefined);
     });
 
-    it('renders switchable ID and localized-name metadata', () => {
-        const html = renderFocusHtmlTemplate(
-            {
-                id: 'FOCUS_ID',
-                text: 'FOCUS_TEXT_KEY',
-                token: undefined,
-                file: 'common/national_focus/test.txt',
-                layout: undefined,
-                isInCurrentFile: true,
-            } as any,
+    it('renders one card template that is filled with switchable ID and localized-name metadata', () => {
+        const template = renderFocusCardTemplate(
             new StyleTable(),
-            'common/national_focus/test.txt',
             96,
-            130,
-            'Localized focus title',
+            `<div class="name">  ${focusCardPlaceholders.label}  </div><div class="${focusCardPlaceholders.iconClass}"></div>`,
         );
+        const fields = {
+            id: 'FOCUS_ID',
+            displayName: 'Localized "focus" title',
+            file: 'common/national_focus/test.txt',
+            activeFile: 'common/national_focus/test.txt',
+            editable: true,
+            sourceFile: 'common/national_focus/test.txt',
+            position: { x: 3, y: 4 },
+            iconClass: 'st-focus-icon-GFX_A',
+        };
+        const html = fillFocusCardTemplate(template, fields);
 
-        assert.match(html, /FOCUS_ID/);
-        assert.match(html, /Localized focus title/);
+        assert.doesNotMatch(template, /FOCUS_ID|\s\s/);
+        assert.match(html, /data-focus-id="FOCUS_ID"/);
+        assert.match(html, /data-focus-editable="true"/);
         assert.match(html, /data-preview-label-id="FOCUS_ID"/);
-        assert.match(html, /data-preview-label-name="Localized focus title"/);
-        assert.match(html, /data-preview-title-name="Localized focus title/);
-    });
-
-    it('renders a focus overlay layer when configured', () => {
-        const html = renderFocusHtmlTemplate(
-            {
-                id: 'FOCUS_ID',
-                overlay: 'GFX_focus_overlay',
-                token: undefined,
-                file: 'common/national_focus/test.txt',
-                layout: undefined,
-                isInCurrentFile: true,
-            } as any,
-            new StyleTable(),
-            'common/national_focus/test.txt',
-            96,
-            130,
+        assert.match(html, /data-preview-label-name="Localized &quot;focus&quot; title"/);
+        assert.match(html, /data-preview-title-name="Localized &quot;focus&quot; title\n\(3, 4\)"/);
+        assert.match(html, /<input id="checkbox-FOCUS_ID" type="checkbox"\/>/);
+        assert.match(html, /class="st-focus-icon-GFX_A"/);
+        assert.doesNotMatch(html, /\{\{|\sfile=|\sstart=/);
+        assert.match(
+            fillFocusCardTemplate(template, { ...fields, file: 'common/national_focus/shared.txt' }),
+            / file="common\/national_focus\/shared\.txt"/,
         );
-
-        assert.match(html, /focus-overlay-common/);
-        assert.match(html, /focus-overlay-GFX_focus_overlay/);
     });
 
     it('resolves actual focus localization text for multiple focuses', async () => {

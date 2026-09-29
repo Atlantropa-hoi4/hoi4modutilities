@@ -35,52 +35,223 @@ export interface ParseOptions {
     keepTokens?: boolean;
 }
 
-function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T, [string, number]>, errorMessagePrefix: string = ''): Tokenizer<T> {
-    const types = Object.keys(tokenRegexStrings);
-    const typeEntries = Object.entries<[string, number]>(tokenRegexStrings);
-    typeEntries.sort((a, b) => a[1][1] - b[1][1]);
+type HOITokenType = 'comment' | 'symbol' | 'operator' | 'string' | 'number' | 'unitnumber' | 'eof';
 
-    const regex = new RegExp(
-        '\\s*(?<result>' +
-            typeEntries.map(([n, [s]]) => `(?<${n}>${s})`).join('|')
-            + ')',
-        'y');
-    let prevPos = 0;
-    let pos = 0;
-    let token: Token<T> | null = null;
-    let groups: RegExpExecArray | null = null;
+const charTab = 9;
+const charLineFeed = 10;
+const charCarriageReturn = 13;
+const charSpace = 32;
+const charExclamation = 33;
+const charQuote = 34;
+const charHash = 35;
+const charPercent = 37;
+const charPlus = 43;
+const charComma = 44;
+const charMinus = 45;
+const charDot = 46;
+const charZero = 48;
+const charNine = 57;
+const charSemicolon = 59;
+const charLess = 60;
+const charEquals = 61;
+const charGreater = 62;
+const charBackslash = 92;
+const charLowerX = 120;
+const charOpenBrace = 123;
+const charCloseBrace = 125;
 
-    function nextGroups() {
-        prevPos = pos;
-        do {
-            groups = regex.exec(input);
-            if (groups === null) {
-                throwError("Invalid token");
-            }
+/** Matches the JavaScript regular expression class `\s`. */
+function isWhitespace(code: number): boolean {
+    if (code <= charSpace) {
+        return code === charSpace || (code >= charTab && code <= charCarriageReturn);
+    }
+    if (code < 0xa0) {
+        return false;
+    }
+    return code === 0xa0 || code === 0x1680 || (code >= 0x2000 && code <= 0x200a) || code === 0x2028
+        || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
+}
 
-            const result = groups.groups!['result'];
-            // input = input.substr(groups[0].length);
-            pos += groups[0].length;
+function isDigit(code: number): boolean {
+    return code >= charZero && code <= charNine;
+}
 
-            const localGroups = groups;
-            const type = types.find(t => localGroups.groups![t] !== undefined);
+function isHexDigit(code: number): boolean {
+    return isDigit(code) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+}
 
-            token = {
-                value: result,
-                start: pos - result.length,
-                end: pos,
-                type: type as T,
-            };
-        } while (token.type === 'comment');
+/** Matches `\w` or `.`, which may not follow a plain number. */
+function isNumberSuffixChar(code: number): boolean {
+    return isDigit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 || code === charDot;
+}
+
+function isOperatorChar(code: number): boolean {
+    return code === charEquals || code === charOpenBrace || code === charCloseBrace || code === charLess
+        || code === charGreater || code === charSemicolon || code === charComma;
+}
+
+/** Matches the symbol class `[^\s#={}<>!,;]`. */
+function isSymbolChar(code: number): boolean {
+    return !isWhitespace(code) && code !== charHash && code !== charExclamation && !isOperatorChar(code);
+}
+
+function countDigits(input: string, start: number): number {
+    let end = start;
+    while (end < input.length && isDigit(input.charCodeAt(end))) {
+        end++;
+    }
+    return end - start;
+}
+
+/**
+ * Ends of the numeric bodies `0x[0-9a-fA-F]+`, `\d+\.\d*`, `\.\d+`, and `\d+` at `start`, in the
+ * order the former regular expression tried them. Only the longest match of each body can be
+ * followed by a character other than a digit, so shorter backtracking candidates never match.
+ */
+function getNumberBodyEnds(input: string, start: number): number[] {
+    const ends: number[] = [];
+    const first = input.charCodeAt(start);
+    if (first === charZero && input.charCodeAt(start + 1) === charLowerX) {
+        let end = start + 2;
+        while (end < input.length && isHexDigit(input.charCodeAt(end))) {
+            end++;
+        }
+        if (end > start + 2) {
+            ends.push(end);
+        }
+    }
+    const integerDigits = countDigits(input, start);
+    if (integerDigits > 0 && input.charCodeAt(start + integerDigits) === charDot) {
+        ends.push(start + integerDigits + 1 + countDigits(input, start + integerDigits + 1));
+    }
+    if (first === charDot) {
+        const fractionDigits = countDigits(input, start + 1);
+        if (fractionDigits > 0) {
+            ends.push(start + 1 + fractionDigits);
+        }
+    }
+    if (integerDigits > 0) {
+        ends.push(start + integerDigits);
+    }
+    return ends;
+}
+
+/**
+ * Scans one token at `start` (after whitespace). Alternatives are tried in the order of the
+ * former regular expression: comment, operator, string, unit number, number, symbol, end.
+ * Returns the token end and type, or undefined for an invalid token.
+ */
+function scanToken(input: string, start: number): { end: number; type: HOITokenType } | undefined {
+    const length = input.length;
+    if (start >= length) {
+        return { end: start, type: 'eof' };
     }
 
-    function peek(): Token<T> {
-        if (groups !== null) {
-            return token!;
+    const code = input.charCodeAt(start);
+    if (code === charHash) {
+        for (let index = start + 1; index < length; index++) {
+            const next = input.charCodeAt(index);
+            if (next === charLineFeed || next === charCarriageReturn) {
+                return { end: index + 1, type: 'comment' };
+            }
+            if (next === 0x2028 || next === 0x2029) {
+                return undefined;
+            }
         }
+        return { end: length, type: 'comment' };
+    }
 
-        nextGroups();
-        return token!;
+    if (code === charGreater || code === charLess || code === charExclamation) {
+        if (input.charCodeAt(start + 1) === charEquals) {
+            return { end: start + 2, type: 'operator' };
+        }
+    }
+    if (isOperatorChar(code)) {
+        return { end: start + 1, type: 'operator' };
+    }
+
+    if (code === charQuote) {
+        let lastEscapedQuote = -1;
+        let index = start + 1;
+        while (index < length) {
+            const next = input.charCodeAt(index);
+            if (next === charBackslash && index + 1 < length) {
+                const escaped = input.charCodeAt(index + 1);
+                if (escaped === charQuote) {
+                    lastEscapedQuote = index + 1;
+                    index += 2;
+                    continue;
+                }
+                if (escaped === charBackslash) {
+                    index += 2;
+                    continue;
+                }
+            } else if (next === charQuote) {
+                return { end: index + 1, type: 'string' };
+            }
+            index++;
+        }
+        // Without a closing quote, backtracking ended the string at the last escaped quote.
+        if (lastEscapedQuote >= 0) {
+            return { end: lastEscapedQuote + 1, type: 'string' };
+        }
+    }
+
+    const bodyStart = code === charPlus || code === charMinus ? start + 1 : start;
+    const bodyEnds = getNumberBodyEnds(input, bodyStart);
+    for (const end of bodyEnds) {
+        if (input.charCodeAt(end) === charPercent) {
+            return { end: input.charCodeAt(end + 1) === charPercent ? end + 2 : end + 1, type: 'unitnumber' };
+        }
+    }
+    for (const end of bodyEnds) {
+        if (end >= length || !isNumberSuffixChar(input.charCodeAt(end))) {
+            return { end, type: 'number' };
+        }
+    }
+
+    if (isSymbolChar(code)) {
+        let end = start + 1;
+        while (end < length && isSymbolChar(input.charCodeAt(end))) {
+            end++;
+        }
+        return { end, type: 'symbol' };
+    }
+
+    return undefined;
+}
+
+function tokenizer(input: string, errorMessagePrefix: string = ''): Tokenizer<HOITokenType> {
+    let prevPos = 0;
+    let pos = 0;
+    let token: Token<HOITokenType> | null = null;
+
+    function nextToken(): Token<HOITokenType> {
+        prevPos = pos;
+        while (true) {
+            let start = pos;
+            while (start < input.length && isWhitespace(input.charCodeAt(start))) {
+                start++;
+            }
+            const scanned = scanToken(input, start);
+            if (!scanned) {
+                throwError('Invalid token');
+            }
+
+            pos = scanned.end;
+            if (scanned.type !== 'comment') {
+                return {
+                    value: input.slice(start, scanned.end),
+                    start,
+                    end: scanned.end,
+                    type: scanned.type,
+                };
+            }
+        }
+    }
+
+    function peek(): Token<HOITokenType> {
+        return token ??= nextToken();
     }
 
     function throwError(message: string, prev: boolean = false): never {
@@ -95,32 +266,32 @@ function tokenizer<T extends string>(input: string, tokenRegexStrings: Record<T,
             ` at (${line + 1}, ${column + 1})`;
         throw new UserError(errorMessagePrefix + message + `${posString}: ` + (input + "(EOF)").substring(calculatePos, Math.min(calculatePos + 30, input.length + 5)));
     }
-    
+
     return {
         peek,
         next: () => {
             const result = peek();
-            groups = null;
+            token = null;
             return result;
         },
         throw: throwError,
     };
 }
-
-type HOITokenType = 'comment' | 'symbol' | 'operator' | 'string' | 'number' | 'unitnumber' | 'eof';
-const tokenRegexStrings: Record<HOITokenType, [string, number]> = {
-    comment: ['#.*(?:[\\r\\n]|$)', 0],
-    operator: ['>=|<=|!=|[={}<>;,]', 10],
-    string: ['"(?:\\\\"|\\\\\\\\|[^"])*"', 10],
-    unitnumber: ['[+-]?(?:0x[0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+))(?:%%?)', 49],
-    number: ['[+-]?(?:0x[0-9a-fA-F]+|(?:\\d+\\.\\d*|\\.\\d+|\\d+))(?![\\w.])', 50],
-    symbol: ['[^\\s#={}<>!,;]+', 60],
-    eof: ['$', 1000],
-};
+/** Tokens of an HOI4 script, without comments and ending with an `eof` token. */
+export function tokenizeHoi4(input: string): Token[] {
+    const tokens = tokenizer(input);
+    const result: Token[] = [];
+    let token: Token<HOITokenType>;
+    do {
+        token = tokens.next();
+        result.push(token);
+    } while (token.type !== 'eof');
+    return result;
+}
 
 export function parseHoi4File(input: string, errorMessagePrefix: string = '', options: ParseOptions = {}): Node {
     const keepTokens = options.keepTokens !== false;
-    const tokens = tokenizer(input, tokenRegexStrings, errorMessagePrefix);
+    const tokens = tokenizer(input, errorMessagePrefix);
     const value = parseBlockContent(tokens, keepTokens);
 
     if (tokens.peek().type !== 'eof') {
@@ -166,8 +337,8 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
     }
 
     let nextToken = tokens.peek();
-    if (nextToken.type !== 'operator' || nextToken.value.match(/^[,;}]$/)) {
-        while (nextToken.value.match(/^[,;]$/)) {
+    if (nextToken.type !== 'operator' || isSeparatorToken(nextToken) || nextToken.value === '}') {
+        while (isSeparatorToken(nextToken)) {
             tokens.next();
             nextToken = tokens.peek();
         }
@@ -209,7 +380,7 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
     }
 
     let tailComma = tokens.peek();
-    while (tailComma.value.match(/^[,;]$/)) {
+    while (isSeparatorToken(tailComma)) {
         tokens.next();
         tailComma = tokens.peek();
     }
@@ -225,6 +396,10 @@ function parseNode(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): Node {
         valueAttachment,
         valueAttachmentToken: keepTokens ? valueAttachmentToken : null,
     };
+}
+
+function isSeparatorToken(token: Token<HOITokenType>): boolean {
+    return token.value === ',' || token.value === ';';
 }
 
 function parseNodeValue(tokens: Tokenizer<HOITokenType>, keepTokens: boolean): [ NodeValue, Token<HOITokenType>, Token<HOITokenType> ] {

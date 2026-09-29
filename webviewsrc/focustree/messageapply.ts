@@ -1,4 +1,4 @@
-import { FocusTreeView } from '../../src/previewdef/focustree/viewmodel';
+import { FocusTreeView, FocusTreeViewPatch } from '../../src/previewdef/focustree/viewmodel';
 import { FocusTreeContentUpdateMessage } from "../../src/previewdef/focustree/webviewupdate";
 
 export interface FocusTreeMessageApplyContext {
@@ -10,10 +10,14 @@ export interface FocusTreeMessageApplyContext {
     getCurrentSelectionTreeId: () => string | undefined;
     setSelectedFocusTreeById: (treeId: string | undefined) => void;
     setFocusTrees: (focusTrees: FocusTreeView[]) => void;
-    applyFocusTreePatches: (focusTreePatches: Array<{ treeId: string; tree: FocusTreeView }> | undefined) => void;
+    applyFocusTreePatches: (focusTreePatches: FocusTreeViewPatch[] | undefined, baseSnapshotVersion?: number) => void;
     setContinuousFocusHtml?: (html: string) => void;
-    setRenderedFocus: (renderedFocus: Record<string, string>) => void;
-    patchRenderedFocus: (changedEntries: Record<string, string> | undefined, removedKeys: string[] | undefined) => void;
+    setFocusTemplates: (templates: Record<string, string>, keyById: Record<string, string>) => void;
+    patchFocusTemplates: (
+        templates: Record<string, string> | undefined,
+        keyById: Record<string, string> | undefined,
+        removedFocusIds: string[] | undefined,
+    ) => void;
     setRenderedInlayWindows: (renderedInlayWindows: Record<string, string>) => void;
     patchRenderedInlayWindows: (changedEntries: Record<string, string> | undefined, removedKeys: string[] | undefined) => void;
     refreshFocusTreeSelectorOptions: () => void;
@@ -49,7 +53,7 @@ export function applyFocusTreeContentUpdate(
         if (message.focusTrees) {
             context.setFocusTrees(message.focusTrees);
         } else if (message.focusTreePatches) {
-            context.applyFocusTreePatches(message.focusTreePatches);
+            context.applyFocusTreePatches(message.focusTreePatches, message.baseSnapshotVersion);
         }
         const previousSelectionStillExists = !!previousSelectedTreeId
             && (message.focusTrees
@@ -62,10 +66,10 @@ export function applyFocusTreeContentUpdate(
         );
     }
     if (message.continuousFocusHtml !== undefined) { context.setContinuousFocusHtml?.(message.continuousFocusHtml); }
-    if (changedSlots.has('treeBody') && message.renderedFocus) {
-        context.setRenderedFocus(message.renderedFocus);
+    if (changedSlots.has('treeBody') && message.focusTemplateKeyById) {
+        context.setFocusTemplates(message.focusTemplates ?? {}, message.focusTemplateKeyById);
     } else if (changedSlots.has('treeBody')) {
-        context.patchRenderedFocus(message.renderedFocusPatch, message.removedRenderedFocusIds);
+        context.patchFocusTemplates(message.focusTemplatePatch, message.focusTemplateKeyPatch, message.removedFocusTemplateKeyIds);
     }
     if (changedSlots.has('inlays') && message.renderedInlayWindows) {
         context.setRenderedInlayWindows(message.renderedInlayWindows);

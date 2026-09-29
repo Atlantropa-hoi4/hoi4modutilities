@@ -42,7 +42,7 @@ describe('focustree webview update decisions', () => {
             changedTreeIds: ['tree_b'],
             focusTreePatches: [{ treeId: 'tree_b', tree: { id: 'tree_b' } as any }],
             changedFocusIds: ['FOCUS_B'],
-            renderedFocusPatch: { FOCUS_B: '<div>B</div>' },
+            focusTemplateKeyPatch: { FOCUS_B: '<div>B</div>' },
         });
 
         assert.deepStrictEqual(result, {
@@ -119,7 +119,7 @@ describe('focustree webview update decisions', () => {
             documentVersion: 3,
             changedSlots: ['treeBody'],
             changedFocusIds: ['FOCUS_A'],
-            renderedFocusPatch: {
+            focusTemplateKeyPatch: {
                 FOCUS_A: '<div>updated</div>',
             },
         });

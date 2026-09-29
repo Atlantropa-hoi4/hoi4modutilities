@@ -2,8 +2,6 @@ import * as assert from 'assert';
 import {
     applyLocalFocusDeletion,
     createPlaceholderFocus,
-    isPendingPlaceholderFocus,
-    renderPendingPlaceholderFocusTemplate,
 } from '../../src/previewdef/focustree/localpreview';
 
 describe('focustree local preview helpers', () => {
@@ -35,37 +33,6 @@ describe('focustree local preview helpers', () => {
         assert.strictEqual(focus.layout?.sourceFile, 'common/national_focus/test.txt');
         assert.deepStrictEqual(focus.prerequisite, []);
         assert.deepStrictEqual(focus.exclusive, []);
-    });
-
-    it('marks freshly created placeholder focuses as pending and renders a fallback template', () => {
-        const focus = createPlaceholderFocus({
-            id: 'tree_a',
-            kind: 'focus',
-            focuses: {},
-            createTemplate: {
-                editKey: 'tree-edit',
-                editable: true,
-                kind: 'focus',
-                sourceFile: 'common/national_focus/test.txt',
-            },
-            allowBranchOptions: [],
-            conditionExprs: [],
-            inlayConditionExprs: [],
-            inlayWindowRefs: [],
-            inlayWindows: [],
-            isSharedFocues: false,
-            warnings: [],
-        } as any, 'TAG_FOCUS_ID', 7, 9, 'common/national_focus/test.txt');
-
-        assert.strictEqual(isPendingPlaceholderFocus(focus), true);
-        const template = renderPendingPlaceholderFocusTemplate(focus);
-        assert.match(template, /data-focus-id="TAG_FOCUS_ID"/);
-        assert.match(template, /data-focus-editable="true"/);
-        assert.match(template, /focus-checkbox/);
-        assert.match(template, /\{\{iconClass\}\}/);
-        assert.match(template, /TAG_FOCUS_ID/);
-        assert.match(template, /data-focus-source-file="common\/national_focus\/test\.txt"/);
-        assert.doesNotMatch(template, /\sstyle="/);
     });
 
     it('removes deleted focuses and strips their references from surviving nodes', () => {

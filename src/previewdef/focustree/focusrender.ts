@@ -4,8 +4,8 @@ import {
     throwIfFocusTreeRenderCancelled,
     yieldToFocusTreeRenderCancellation,
 } from './rendercancellation';
-import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { htmlAttributeEscape, htmlTextEscape } from '../../util/htmlescape';
+import { StyleTable } from '../../util/styletable';
+import { focusCardPlaceholders } from './cardtemplate';
 
 export const focusIconSidePadding = 12;
 export const focusIconTopOffset = 10;
@@ -136,62 +136,26 @@ export async function resolveFocusLocalizationTextByIdIfReady(
     return textById;
 }
 
-export function renderFocusHtmlTemplate(
-    focus: Focus,
-    styleTable: StyleTable,
-    file: string,
-    xGridSize: number,
-    yGridSize: number,
-    localizedText: string | undefined = resolveFocusLocalizationText(focus),
-    guiContent?: string,
-): string {
+/**
+ * Card markup shared by every focus of one GUI variant. Per-focus fields are placeholders that
+ * `fillFocusCardTemplate` replaces from the focus view in the webview.
+ */
+export function renderFocusCardTemplate(styleTable: StyleTable, xGridSize: number, guiContent: string): string {
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const sharedStyles = ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
-    const displayName = localizedText ?? focus.id;
-    const textContent = `
-        <span
-            class="${sharedStyles.codeLineClass}"
-            data-preview-label-id="${htmlAttributeEscape(focus.id)}"
-            data-preview-label-name="${htmlAttributeEscape(displayName)}"
-            data-preview-label-css-toggle="true"
-        ><span class="preview-label-id-text">${htmlTextEscape(focus.id)}</span><span class="preview-label-name-text">${htmlTextEscape(displayName)}</span></span>
-    `;
-    const idTitle = `${focus.id}\n({{position}})`;
-    const nameTitle = `${displayName}\n({{position}})`;
-
-    return `<div
-    class="
-        navigator
-        ${sharedStyles.commonClass}
-    "
-    start="${focus.token?.start}"
-    end="${focus.token?.end}"
-    ${file === focus.file ? '' : `file="${htmlAttributeEscape(focus.file)}"`}
-    data-focus-id="${htmlAttributeEscape(focus.id)}"
-    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
-    data-focus-source-file="${htmlAttributeEscape(focus.layout?.sourceFile ?? focus.file)}"
-    title="${htmlAttributeEscape(idTitle)}"
-    data-preview-title-id="${htmlAttributeEscape(idTitle)}"
-    data-preview-title-name="${htmlAttributeEscape(nameTitle)}">
-        <div class="focus-checkbox ${sharedStyles.checkboxClass}">
-            <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
-        </div>
-        ${guiContent ?? `
-        ${focus.overlay ? `<div class="focus-decoration-gfx ${sharedStyles.overlayClass} ${styleTable.name('focus-overlay-' + normalizeForStyle(focus.overlay))}"></div>` : ''}
-        <div
-        class="${sharedStyles.iconSlotClass}">
-            <div
-            class="
-                {{iconClass}}
-                ${sharedStyles.iconImageClass}
-            "></div>
-        </div>
-        <span
-        class="${sharedStyles.spanClass}">
-        ${textContent}
-        </span>`}
-    </div>`;
+    const placeholders = focusCardPlaceholders;
+    // Source ranges are not rendered: they move on every edit above the focus, and the webview
+    // resolves navigation ranges from the current focus view instead.
+    return `<div class="navigator ${sharedStyles.commonClass}"${placeholders.fileAttribute}`
+        + ` data-focus-id="${placeholders.focusId}"`
+        + ` data-focus-editable="${placeholders.editable}"`
+        + ` data-focus-source-file="${placeholders.sourceFile}"`
+        + ` title="${placeholders.idTitle}"`
+        + ` data-preview-title-id="${placeholders.idTitle}"`
+        + ` data-preview-title-name="${placeholders.nameTitle}">`
+        + `<div class="focus-checkbox ${sharedStyles.checkboxClass}"><input id="checkbox-${placeholders.checkboxId}" type="checkbox"/></div>`
+        + `${guiContent.replace(/\s\s+/g, ' ')}</div>`;
 }
 
 export function ensureFocusTemplateStyles(

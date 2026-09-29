@@ -53,6 +53,12 @@ interface FocusTreeSourceSnapshotCache {
     snapshot?: FocusTreeSourceSnapshot;
 }
 
+/** Icon GFX resolution for one set of icon names; cleared when assets or presentation change. */
+interface FocusIconAssetCache {
+    key?: string;
+    resolution?: FocusIconAssetResolution;
+}
+
 function collectPresentationSprites(presentation: FocusPresentation | undefined): string[] {
     if (!presentation) { return []; }
     const names = presentation.styles.map(style => style.unavailable!).filter(Boolean);
@@ -77,6 +83,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         private readonly sourceSnapshotCache: FocusTreeSourceSnapshotCache = {},
         private readonly sourceSnapshotKey?: string,
         private readonly priorityIconNames: string[] = [],
+        private readonly iconAssetCache: FocusIconAssetCache = {},
     ) {
         super(file, contentProvider);
     }
@@ -93,6 +100,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             this.sourceSnapshotCache,
             sourceSnapshotKey,
             this.priorityIconNames,
+            this.iconAssetCache,
         );
         this.copyDependencyLoadersTo(loader);
         return loader;
@@ -106,6 +114,11 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         this.sourceSnapshotCache.key = undefined;
         this.sourceSnapshotCache.content = undefined;
         this.sourceSnapshotCache.snapshot = undefined;
+    }
+
+    public clearIconAssetResolution(): void {
+        this.iconAssetCache.key = undefined;
+        this.iconAssetCache.resolution = undefined;
     }
 
     public setPriorityIconNames(iconNames: readonly string[]): void {
@@ -272,9 +285,17 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             ...this.priorityIconNames.filter(iconName => focusIconNames.includes(iconName)),
             ...focusIconNames.filter(iconName => !priorityIconNameSet.has(iconName)),
         ];
+        const iconAssetNames = [...orderedFocusIconNames, ...collectPresentationSprites(presentation)];
+        // Edits rarely change which icons a file uses; reuse the last resolution of the same set.
+        const iconAssetKey = deferAssetLoad
+            ? undefined
+            : JSON.stringify([Array.from(new Set(iconAssetNames)).sort(), explicitGfxDependencies]);
+        const cachedIconGfxAssets = iconAssetKey !== undefined && this.iconAssetCache.key === iconAssetKey
+            ? this.iconAssetCache.resolution
+            : undefined;
         const iconGfxAssets = deferAssetLoad
             ? createEmptyFocusIconAssetResolution()
-            : await resolveFocusIconGfxAssets([...orderedFocusIconNames, ...collectPresentationSprites(presentation)], {
+            : cachedIconGfxAssets ?? await resolveFocusIconGfxAssets(iconAssetNames, {
                 resolveIndexedFile: async gfxName => getGfxContainerFile(gfxName),
                 listInterfaceGfxFiles: async () => orderFocusIconFallbackGfxFiles(await getCachedInterfaceGfxFiles()),
                 readSpriteNames: getCachedInterfaceGfxSpriteNames,
@@ -284,6 +305,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 fallbackScanLimit: 0,
                 throwIfCancelled: () => session.throwIfCancelled(),
             });
+        if (iconAssetKey !== undefined && !cachedIconGfxAssets) {
+            this.iconAssetCache.key = iconAssetKey;
+            this.iconAssetCache.resolution = iconGfxAssets;
+        }
         session.throwIfCancelled();
 
         const gfxDependencies = [

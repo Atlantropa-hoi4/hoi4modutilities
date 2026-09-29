@@ -113,7 +113,21 @@ export function subscribeNavigators(root: ParentNode = document) {
     }
 }
 
-export function subscribeNavigatorDelegation(root: HTMLElement): void {
+export interface NavigatorTarget {
+    start?: number;
+    end?: number;
+    file?: string;
+    focusId?: string;
+}
+
+/**
+ * Delegates navigator clicks under `root`. `resolveTarget` can supply source ranges that are
+ * not rendered into the markup, e.g. ranges kept current in a retained view model.
+ */
+export function subscribeNavigatorDelegation(
+    root: HTMLElement,
+    resolveTarget?: (navigator: HTMLElement) => NavigatorTarget | undefined,
+): void {
     if (root.dataset.navigatorDelegated === 'true') {
         return;
     }
@@ -129,6 +143,11 @@ export function subscribeNavigatorDelegation(root: HTMLElement): void {
         }
 
         event.stopPropagation();
+        const resolved = resolveTarget?.(navigator);
+        if (resolved) {
+            navigateText(resolved.start, resolved.end, resolved.file, resolved.focusId, getNavigatorDocumentVersion());
+            return;
+        }
         const startStr = navigator.getAttribute('start') ?? undefined;
         const endStr = navigator.getAttribute('end') ?? undefined;
         const file = navigator.getAttribute('file') ?? undefined;
@@ -219,6 +238,11 @@ export function enableZoom(contentElement: HTMLDivElement, xOffset: number, yOff
     {
         passive: false
     });
+}
+
+function getNavigatorDocumentVersion(): number | undefined {
+    const documentVersion = (window as any).focusPositionDocumentVersion;
+    return typeof documentVersion === 'number' ? documentVersion : undefined;
 }
 
 function navigateText(

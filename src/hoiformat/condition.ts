@@ -1,7 +1,6 @@
 import { Node, NodeValue } from "./hoiparser";
 import { nodeToString } from "./tostring";
 import { Scope, tryMoveScope } from "./scope";
-import { isEqual } from "lodash";
 
 export type ConditionFolderType = 'and' | 'or' | 'ornot' | 'andnot';
 export type ConditionComplexExpr = ConditionFolder | ConditionAmountFolder | ConditionItem | boolean;
@@ -200,7 +199,7 @@ export function applyCondition(condition: ConditionComplexExpr, trueExprs: Condi
     }
 
     if (!('items' in condition)) {
-        return trueExprs.some(e => isEqual(condition, e));
+        return trueExprs.some(e => isSameConditionItem(condition, e));
     }
 
     if (condition.type === 'count') {
@@ -388,22 +387,32 @@ export function andCondition(a: ConditionComplexExpr, b: ConditionComplexExpr): 
     return simplifyCondition({ type: 'and', items });
 }
 
+/** Condition leaves only carry these two fields, so comparing them matches deep equality. */
+function isSameConditionItem(left: ConditionItem, right: ConditionItem): boolean {
+    return left.scopeName === right.scopeName && left.nodeContent === right.nodeContent;
+}
+
+function getConditionItemKey(item: ConditionItem): string {
+    return `${item.scopeName}\u0000${item.nodeContent}`;
+}
+
 export function extractConditionalExprs(condition: ConditionComplexExpr, result: ConditionItem[] = []): ConditionItem[] {
-    if (typeof condition === 'boolean') {
-        return result;
-    }
-
-    if (!('items' in condition)) {
-        if (result.every(e => !isEqual(e, condition))) {
-            result.push(condition);
+    const seen = new Set(result.map(getConditionItemKey));
+    const visit = (current: ConditionComplexExpr): void => {
+        if (typeof current === 'boolean') {
+            return;
         }
-        return result;
-    }
-
-    for (const item of condition.items) {
-        extractConditionalExprs(item, result);
-    }
-
+        if (!('items' in current)) {
+            const key = getConditionItemKey(current);
+            if (!seen.has(key)) {
+                seen.add(key);
+                result.push(current);
+            }
+            return;
+        }
+        current.items.forEach(visit);
+    };
+    visit(condition);
     return result;
 }
 
