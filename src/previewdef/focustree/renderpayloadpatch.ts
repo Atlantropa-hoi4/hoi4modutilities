@@ -48,6 +48,7 @@ export interface FocusTreeRenderMetadata {
 export interface FocusTreeRenderCache extends FocusTreeRenderMetadata {
     snapshotVersion: number;
     selectedTreeId?: string;
+    assetTreeIds?: string[];
     focusTrees: FocusTreeView[];
     continuousFocusHtml?: string;
     focusTemplates: Record<string, string>;
@@ -102,6 +103,7 @@ interface RenderMetadataInputs {
     gfxFiles?: readonly string[];
     focusIconGfxFileByName?: Readonly<Record<string, string>>;
     focusIconStyleSignature?: string;
+    assetTreeIds?: readonly string[];
 }
 
 export function createFocusTreeRenderCache(
@@ -111,7 +113,8 @@ export function createFocusTreeRenderCache(
 ): FocusTreeRenderCache {
     return {
         snapshotVersion: previousVersion + 1,
-        selectedTreeId: payload.focusTrees[0]?.id,
+        selectedTreeId: payload.selectedTreeId ?? payload.focusTrees[0]?.id,
+        assetTreeIds: payload.assetTreeIds,
         focusTrees: payload.focusTrees,
         continuousFocusHtml: payload.continuousFocusHtml,
         focusTemplates: payload.focusTemplates ?? {},
@@ -294,7 +297,8 @@ export async function createFocusTreeRenderUpdate(
     }
     const cache: FocusTreeRenderCache = {
         snapshotVersion: previous.snapshotVersion + 1,
-        selectedTreeId: nextBaseState.focusTrees[0]?.id,
+        selectedTreeId: nextBaseState.assetTreeIds?.[0] ?? nextBaseState.focusTrees[0]?.id,
+        assetTreeIds: nextBaseState.assetTreeIds,
         focusTrees: nextFocusTrees,
         focusTemplates: { ...previous.focusTemplates, ...focusTemplatePatch },
         focusTemplateKeyById: mergeStringMap(previous.focusTemplateKeyById, focusTemplateKeyPatch, focusSignatureDiff.removedKeys),
@@ -503,6 +507,8 @@ function shouldUseFullRender(
         || previous.hasWarningsButton !== nextBaseState.hasWarningsButton
         || previous.deferredAssetLoad !== nextBaseState.deferredAssetLoad
         || previous.localisationIndexReady !== nextBaseState.localisationIndexReady
+        || JSON.stringify(previous.assetTreeIds) !== JSON.stringify(nextBaseState.assetTreeIds)
+        || previous.focusIconStyleSignature !== (nextBaseState.focusIconStyleSignature ?? '')
         || previous.xGridSize !== nextBaseState.xGridSize
         || previous.yGridSize !== nextBaseState.yGridSize
         || previous.focusPositionActiveFile !== nextBaseState.focusPositionActiveFile
@@ -540,7 +546,8 @@ class RenderMetadataBuilder {
     private readonly styleDependencyParts: string[];
     private structureParts: string[] = [];
 
-    constructor(inputs: RenderMetadataInputs) {
+    private renderTree = true;
+    constructor(private readonly inputs: RenderMetadataInputs) {
         this.styleDependencyParts = [JSON.stringify([
             inputs.xGridSize,
             inputs.yGridSize,
@@ -551,6 +558,7 @@ class RenderMetadataBuilder {
     }
 
     public beginTree(tree: FocusTree, view: FocusTreeView | undefined): void {
+        this.renderTree = !this.inputs.assetTreeIds || this.inputs.assetTreeIds.includes(tree.id);
         const header = view ?? toFocusTreeViews([tree])[0];
         const { warnings, ...headerWithoutWarnings } = toFocusTreeHeaderView(header);
         this.metadata.treeHeaderSignatures[tree.id] = JSON.stringify(headerWithoutWarnings);
@@ -573,17 +581,19 @@ class RenderMetadataBuilder {
     }
 
     public addFocus(treeId: string, focus: Focus, view: FocusView | undefined): void {
-        const iconSignature = JSON.stringify([focus.icon, focus.overlay]);
-        this.styleDependencyParts.push(`${focus.id}\u0002${iconSignature}`);
-        this.metadata.focusRenderSignatures[focus.id] = `${iconSignature}\u0001${JSON.stringify([
-            focus.file,
-            focus.isInCurrentFile,
-            focus.text,
-            focus.textIcon,
-            focus.layout?.editable,
-            focus.layout?.sourceFile,
-            view?.displayName,
-        ])}`;
+        if (this.renderTree) {
+            const iconSignature = JSON.stringify([focus.icon, focus.overlay]);
+            this.styleDependencyParts.push(`${focus.id}\u0002${iconSignature}`);
+            this.metadata.focusRenderSignatures[focus.id] = `${iconSignature}\u0001${JSON.stringify([
+                focus.file,
+                focus.isInCurrentFile,
+                focus.text,
+                focus.textIcon,
+                focus.layout?.editable,
+                focus.layout?.sourceFile,
+                view?.displayName,
+            ])}`;
+        }
         this.structureParts.push(JSON.stringify([
             focus.id,
             focus.x,
@@ -604,6 +614,7 @@ class RenderMetadataBuilder {
     }
 
     public addInlay(inlay: FocusTreeInlay): void {
+        if (!this.renderTree) { return; }
         this.metadata.inlayRenderSignatures[inlay.id] = JSON.stringify(toInlayRenderComparable(inlay));
         this.styleDependencyParts.push(`${inlay.id}\u0003${JSON.stringify(
             inlay.scriptedImages.map(slot => slot.gfxOptions.map(option => [option.gfxFile, option.gfxName, option.condition])),

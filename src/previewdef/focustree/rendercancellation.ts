@@ -14,6 +14,7 @@ export async function yieldToFocusTreeRenderCancellation(isCancelled?: () => boo
         return;
     }
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    // Yield to host events without Windows' minimum timer delay on every render batch.
+    await new Promise<void>(resolve => setImmediate(resolve));
     throwIfFocusTreeRenderCancelled(isCancelled);
 }

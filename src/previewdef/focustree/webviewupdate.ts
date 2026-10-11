@@ -96,6 +96,8 @@ export interface FocusTreeContentUpdatePerf {
     snapshotBuildDurationMs: number;
     focusCount?: number;
     inlayCount?: number;
+    renderedFocusCount?: number;
+    renderedInlayCount?: number;
     deferredAssetLoad?: boolean;
 }
 

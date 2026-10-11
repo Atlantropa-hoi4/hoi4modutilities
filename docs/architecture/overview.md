@@ -47,6 +47,13 @@ The feature catalog keeps preview priority stable while allowing `services/previ
 
 - `src/previewdef/*`: preview detection, base classes, dependency tracking, focus tree loader/runtime helpers, and world map handling
 
+### Rust compute worker
+
+- `rust/hoi4-compute/`: dependency-free BC1/BC2/BC3 DDS decoding and 24-bit province BMP color extraction, compiled to portable WebAssembly
+- `src/util/compute/*`: trusted byte-buffer ABI, lazy bounded worker service, cancellation, lifecycle, and TypeScript fallback
+- Large DDS pixel decoding and PNG encoding run in the worker; raw DDS formats use the existing TypeScript decoder there. VS Code APIs, source editing, file precedence, parser, indexes, map boundary analysis, and browser rendering remain TypeScript.
+- Build outputs `dist/compute-worker.js` and `dist/hoi4_compute.wasm` ship in the universal VSIX. See [Rust compute details](rust-compute.md).
+
 ### Webview/browser side
 
 - `webviewsrc/*`: browser entrypoints and rendering logic for focus tree, event tree, technology, world map, GFX, GUI, and MIO previews
@@ -62,6 +69,19 @@ The host keeps the last render cache per preview and plans each refresh against 
   ids were added, removed, or reordered are replaced whole;
 - asset updates (`focusTreeAssetBatch`) for hydration, with content-addressed style classes so
   patches only append rules the webview does not have.
+
+Asset preparation is scoped to the selected tree on first open. The complete catalog and
+source graph remain available for selection, navigation, warnings, and editing. Selecting
+an unloaded tree hydrates its icons, card templates, and inlays through the existing
+`focusTreeSceneRequest`/merge path. Already-loaded scenes stay in the render cache and
+are refreshed together after invalidation, so client-local revisits cannot retain stale
+assets. The loader adapter retains only one scoped asset base state, not a source graph
+copy per visited tree; dependency manifests retain paths for every loaded scene and
+replace obsolete paths once a refresh covers that scope.
+
+Host-side render and loader progress checkpoints use `setImmediate` rather than
+zero-delay timers. They still yield to host events and check cancellation before
+committing, without paying Windows timer granularity for each batch.
 
 Focus cards are not sent as per-focus HTML. The host renders one GUI card template per
 background and overlay variant (`focusTemplates`, keyed by content hash) and maps each focus

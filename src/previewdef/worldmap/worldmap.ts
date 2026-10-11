@@ -20,12 +20,19 @@ import { WorldMapLoadQueue, WorldMapLoadRequest } from './worldmaploadqueue';
 import { moveProvince } from './editor/moveprovince';
 import { addMapItem } from './editor/addmapitem';
 
+export interface WorldMapDebugOptions {
+    includeRetainedSize?: boolean;
+    performanceLimit?: number;
+}
+
 export class WorldMap {
     public panel: vscode.WebviewPanel | undefined;
 
     private worldMapLoader: WorldMapLoader;
     private worldMapDependencies: string[] | undefined;
     private cachedWorldMap: WorldMapData | undefined;
+    private cachedJsonSize: { worldMap: WorldMapData; bytes: number } | undefined;
+    private loadTimings: { loadGeneration: number; loadStartedAt: number; summaryPostedAt?: number; dataCommittedAt?: number } | undefined;
     private committedWorldMap: WorldMapData | undefined;
     private pendingWorldMap: { loadGeneration: number; worldMap: WorldMapData } | undefined;
     private loadGeneration = 0;
@@ -70,13 +77,22 @@ export class WorldMap {
         this.worldMapLoader.clearCache();
         this.worldMapDependencies = undefined;
         this.cachedWorldMap = undefined;
+        this.cachedJsonSize = undefined;
+        this.loadTimings = undefined;
         this.committedWorldMap = undefined;
         this.pendingWorldMap = undefined;
         this.panel = undefined;
     }
 
-    public getDebugState(): unknown {
+    public getDebugState(options: WorldMapDebugOptions = {}): unknown {
         const cachedWorldMap = this.cachedWorldMap;
+        let retainedJsonBytes: number | undefined;
+        if (cachedWorldMap && options.includeRetainedSize !== false) {
+            if (this.cachedJsonSize?.worldMap !== cachedWorldMap) {
+                this.cachedJsonSize = { worldMap: cachedWorldMap, bytes: getMessageSize(cachedWorldMap) };
+            }
+            retainedJsonBytes = this.cachedJsonSize.bytes;
+        }
         return {
             hasPanel: !!this.panel,
             loadGeneration: this.loadGeneration,
@@ -96,9 +112,10 @@ export class WorldMap {
                 railwaysCount: cachedWorldMap.railwaysCount,
                 supplyNodesCount: cachedWorldMap.supplyNodesCount,
                 warningCount: cachedWorldMap.warnings.length,
-                retainedJsonBytes: getMessageSize(cachedWorldMap),
+                retainedJsonBytes,
             } : undefined,
-            performance: getPerfSnapshot({ limit: 25 }),
+            timings: this.loadTimings ? { ...this.loadTimings } : undefined,
+            performance: getPerfSnapshot({ limit: options.performanceLimit ?? 25 }),
         };
     }
 
@@ -215,6 +232,7 @@ export class WorldMap {
 
     private async loadWorldMapGeneration({ loadGeneration, force }: WorldMapLoadRequest): Promise<void> {
         const worldMapLoader = this.worldMapLoader;
+        this.loadTimings = { loadGeneration, loadStartedAt: Date.now() };
         this.loaderProgressGenerations.set(worldMapLoader, loadGeneration);
         if (force) {
             worldMapLoader.clearCache();
@@ -231,6 +249,7 @@ export class WorldMap {
 
             this.worldMapDependencies = dependencies;
             this.cachedWorldMap = worldMap;
+            this.cachedJsonSize = undefined;
 
             if (!force && committedWorldMap) {
                 const sentDifferences = await measureAsync('worldmap.diff', {}, () =>
@@ -250,6 +269,9 @@ export class WorldMap {
                 data: createWorldMapSummary(worldMap),
                 loadGeneration,
             } as WorldMapMessage);
+            if (this.loadTimings?.loadGeneration === loadGeneration) {
+                this.loadTimings.summaryPostedAt = Date.now();
+            }
         } catch (e) {
             if (!this.isCurrentLoadGeneration(loadGeneration)) {
                 return;
@@ -560,6 +582,9 @@ export class WorldMap {
 
         this.committedWorldMap = this.pendingWorldMap.worldMap;
         this.pendingWorldMap = undefined;
+        if (this.loadTimings?.loadGeneration === loadGeneration) {
+            this.loadTimings.dataCommittedAt = Date.now();
+        }
     }
 
     private async requestExportMap() {
@@ -613,7 +638,7 @@ export class WorldMap {
 
 function getMessageSize(message: unknown): number {
     try {
-        return JSON.stringify(message).length;
+        return Buffer.byteLength(JSON.stringify(message), 'utf8');
     } catch {
         return 0;
     }

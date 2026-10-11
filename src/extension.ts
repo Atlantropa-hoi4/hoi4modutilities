@@ -7,12 +7,14 @@ import { registerIndexServices } from './services/indexes';
 import { registerPreviewServices } from './services/previews';
 import { createExtensionServices } from './services/serviceRegistry';
 import { registerTelemetryServices } from './services/telemetry';
+import { registerRustCompute } from './util/compute/service';
 
 export function activate(context: vscode.ExtensionContext) {
     const services = createExtensionServices(context);
 
     // Must register this first because other components may use it.
     services.push(registerContextContainer(context));
+    services.push(registerRustCompute(context.extensionPath));
 
     registerTelemetryServices(services);
     registerPreviewServices(services);

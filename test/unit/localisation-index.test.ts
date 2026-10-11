@@ -23,6 +23,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 
 const {
     applyLocalisationFileIndexUpdate,
+    createGlobalLocalisationFileFilter,
     createLocalisedTextQuickIfReadyResolver,
     getLocalisationIndexLangKeyFromPath,
     isLocalisationIndexFilePath,
@@ -151,6 +152,47 @@ describe('localisation index helpers', () => {
     it('extracts the localisation language key from non-underscore file names', () => {
         assert.strictEqual(getLocalisationIndexLangKeyFromPath('korean/MEO - New Soul l_korean.yml'), 'l_korean');
         assert.strictEqual(getLocalisationIndexLangKeyFromPath('english/test_l_english.yml'), 'l_english');
+    });
+
+    it('selects only the preview language and English using the supported filename pattern', () => {
+        const languages: Record<string, string> = {
+            'Brazilian Portuguese': 'l_braz_por',
+            English: 'l_english',
+            French: 'l_french',
+            German: 'l_german',
+            Japanese: 'l_japanese',
+            Korean: 'l_korean',
+            Polish: 'l_polish',
+            Russian: 'l_russian',
+            'Simplified Chinese': 'l_simp_chinese',
+            Spanish: 'l_spanish',
+        };
+        for (const [profile, langKey] of Object.entries(languages)) {
+            const includeFile = createGlobalLocalisationFileFilter(profile, 'ko');
+            for (const candidate of Object.values(languages)) {
+                const eligible = candidate === 'l_english' || candidate === langKey;
+                for (const separator of [' ', '-', '_']) {
+                    assert.strictEqual(includeFile(`nested/Test${separator}${candidate.toUpperCase()}.YML`), eligible);
+                }
+                assert.strictEqual(includeFile(`${candidate}.yml`), eligible);
+                assert.strictEqual(includeFile(`nested/Test${candidate}.yml`), false);
+                assert.strictEqual(includeFile(`nested/Test_${candidate}.yaml`), false);
+            }
+            assert.strictEqual(includeFile('test_l_portuguese.yml'), false);
+            assert.strictEqual(includeFile('test_l_chinese.yml'), false);
+        }
+    });
+
+    it('uses the environment language mapping when no preview profile is selected', () => {
+        for (const [language, langKey] of [['KO', 'l_korean'], ['pt-BR', 'l_braz_por'], ['ZH-CN', 'l_simp_chinese']]) {
+            const includeFile = createGlobalLocalisationFileFilter(undefined, language);
+            assert.strictEqual(includeFile(`test_${langKey}.yml`), true);
+            assert.strictEqual(includeFile('test_l_english.yml'), true);
+            assert.strictEqual(includeFile('test_l_russian.yml'), false);
+        }
+        const includeFile = createGlobalLocalisationFileFilter(undefined, 'unsupported');
+        assert.strictEqual(includeFile('test_l_english.yml'), true);
+        assert.strictEqual(includeFile('test_l_korean.yml'), false);
     });
 
     it('rebuilds workspace localisation from per-file indexes without dropping same-language files', () => {
@@ -299,3 +341,196 @@ describe('localisation index helpers', () => {
         assert.deepStrictEqual(parseLocalisationFileContent(source), parseLocalisationFile(processed));
     });
 });
+
+type LocalisationLayer = 'base' | 'dlc' | 'workspace';
+type LocalisationIndexApi = typeof import('../../src/util/localisationIndex');
+
+interface LocalisationHarness {
+    previewLocalisation: string;
+    files: Record<LocalisationLayer, Record<string, string>>;
+    reads: string[];
+    readFile?: (layer: LocalisationLayer, file: string) => Promise<string>;
+    changePreviewLanguage(language: string): void;
+}
+
+describe('localisation index language loading', () => {
+    it('limits base and DLC inputs while keeping all workspace languages and precedence', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            await api.whenLocalisationIndexReady({ showStatusBar: false });
+
+            assert.deepStrictEqual(harness.reads.sort(), [
+                'base/base_l_english.yml', 'base/base_l_korean.yml',
+                'dlc/dlc_l_english.yml', 'dlc/dlc_l_korean.yml',
+                'workspace/mod_l_english.yml', 'workspace/mod_l_korean.yml', 'workspace/mod_l_russian.yml',
+            ]);
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'ko'), 'Workspace Korean');
+            assert.strictEqual(api.getLocalisedTextIfReady('DLC_OVERRIDE', 'en'), 'DLC English');
+            assert.strictEqual(api.getLocalisedTextIfReady('WORKSPACE_ONLY', 'en'), 'Workspace Russian');
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_RUSSIAN_ONLY', 'ru'), 'GLOBAL_RUSSIAN_ONLY');
+        });
+    });
+
+    it('rebuilds a ready global index on a preview language switch without rebuilding workspace', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            await api.whenLocalisationIndexReady({ showStatusBar: false });
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_KOREAN_ONLY', 'ko'), 'Base Korean');
+            harness.reads.length = 0;
+
+            harness.changePreviewLanguage('Russian');
+            assert.strictEqual(api.isLocalisationIndexReady(), false);
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_KOREAN_ONLY', 'ko'), 'GLOBAL_KOREAN_ONLY');
+            await api.whenLocalisationIndexReady({ showStatusBar: false });
+
+            assert.deepStrictEqual(harness.reads.sort(), [
+                'base/base_l_english.yml', 'base/base_l_russian.yml',
+                'dlc/dlc_l_english.yml', 'dlc/dlc_l_russian.yml',
+            ]);
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_RUSSIAN_ONLY', 'ru'), 'Base Russian');
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_KOREAN_ONLY', 'ko'), 'GLOBAL_KOREAN_ONLY');
+            assert.strictEqual(api.getLocalisedTextIfReady('WORKSPACE_ONLY', 'en'), 'Workspace Russian');
+        });
+    });
+
+    it('does not start an unused index when preview localisation changes', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            harness.changePreviewLanguage('English');
+            await Promise.resolve();
+            assert.deepStrictEqual(harness.reads, []);
+            assert.strictEqual(api.isLocalisationIndexReady(), false);
+        });
+    });
+
+    it('prevents an obsolete language build from committing after the new generation is ready', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            let releaseStale!: () => void;
+            let markStarted!: () => void;
+            const staleGate = new Promise<void>(resolve => { releaseStale = resolve; });
+            const started = new Promise<void>(resolve => { markStarted = resolve; });
+            let delayed = false;
+            harness.readFile = async (layer, file) => {
+                const content = harness.files[layer][file];
+                if (layer === 'base' && file === 'base_l_english.yml' && !delayed) {
+                    delayed = true;
+                    markStarted();
+                    await staleGate;
+                }
+                return content;
+            };
+
+            const staleReady = api.whenLocalisationIndexReady({ showStatusBar: false });
+            await started;
+            harness.files.base['base_l_english.yml'] = 'l_english:\n ENGLISH_ONLY:0 "Current English"';
+            harness.changePreviewLanguage('Russian');
+            try {
+                await api.whenLocalisationIndexReady({ showStatusBar: false });
+                assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_RUSSIAN_ONLY', 'ru'), 'Base Russian');
+            } finally {
+                releaseStale();
+                await staleReady;
+            }
+
+            assert.strictEqual(api.getLocalisedTextIfReady('ENGLISH_ONLY', 'en'), 'Current English');
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_RUSSIAN_ONLY', 'ru'), 'Base Russian');
+            assert.strictEqual(api.getLocalisedTextIfReady('GLOBAL_KOREAN_ONLY', 'ko'), 'GLOBAL_KOREAN_ONLY');
+        });
+    });
+});
+
+async function withLocalisationIndex(
+    run: (api: LocalisationIndexApi, harness: LocalisationHarness) => Promise<void>,
+): Promise<void> {
+    const configurationListeners: Array<(event: { affectsConfiguration(key: string): boolean }) => void> = [];
+    const harness: LocalisationHarness = {
+        previewLocalisation: 'Korean',
+        reads: [],
+        files: {
+            base: {
+                'base_l_english.yml': 'l_english:\n ENGLISH_ONLY:0 "Old English"\n DLC_OVERRIDE:0 "Base English"',
+                'base_l_korean.yml': 'l_korean:\n GLOBAL_KOREAN_ONLY:0 "Base Korean"\n SHARED:0 "Base Korean"',
+                'base_l_russian.yml': 'l_russian:\n GLOBAL_RUSSIAN_ONLY:0 "Base Russian"',
+            },
+            dlc: {
+                'dlc_l_english.yml': 'l_english:\n DLC_OVERRIDE:0 "DLC English"',
+                'dlc_l_korean.yml': 'l_korean:\n SHARED:0 "DLC Korean"',
+                'dlc_l_russian.yml': 'l_russian:\n DLC_RUSSIAN_ONLY:0 "DLC Russian"',
+            },
+            workspace: {
+                'mod_l_english.yml': 'l_english:\n SHARED:0 "Workspace English"',
+                'mod_l_korean.yml': 'l_korean:\n SHARED:0 "Workspace Korean"',
+                'mod_l_russian.yml': 'l_russian:\n WORKSPACE_ONLY:0 "Workspace Russian"',
+            },
+        },
+        changePreviewLanguage: language => {
+            harness.previewLocalisation = language;
+            configurationListeners.forEach(listener => listener({
+                affectsConfiguration: key => key === 'hoi4ModUtilities.previewLocalisation',
+            }));
+        },
+    };
+    class Disposable {
+        constructor(private readonly callback: () => void = () => undefined) {}
+        public dispose(): void { this.callback(); }
+        public static from(...items: Disposable[]): Disposable {
+            return new Disposable(() => items.forEach(item => item.dispose()));
+        }
+    }
+    const event = () => new Disposable();
+    const getConfig = () => ({ featureFlags: ['localisationIndex'], previewLocalisation: harness.previewLocalisation });
+    const layerFor = (options: { mod?: boolean; hoi4?: boolean }): LocalisationLayer =>
+        options.mod ? 'workspace' : options.hoi4 ? 'base' : 'dlc';
+    const mocks: Record<string, unknown> = {
+        vscode: {
+            Disposable,
+            env: { language: 'en' },
+            workspace: {
+                getConfiguration: getConfig,
+                onDidChangeWorkspaceFolders: event, onDidChangeTextDocument: event,
+                onDidCloseTextDocument: event, onDidCreateFiles: event,
+                onDidDeleteFiles: event, onDidRenameFiles: event,
+                onDidChangeConfiguration: (listener: typeof configurationListeners[number]) => {
+                    configurationListeners.push(listener);
+                    return new Disposable(() => configurationListeners.splice(configurationListeners.indexOf(listener), 1));
+                },
+                createFileSystemWatcher: () => ({ dispose: () => undefined, onDidChange: event, onDidCreate: event, onDidDelete: event }),
+            },
+        },
+        vsccommon: { getConfiguration: getConfig },
+        context: { contextContainer: { current: null } },
+        telemetry: { sendEvent: () => undefined },
+        fileloader: {
+            getSelectedModRootFolders: async () => [],
+            listFilesFromModOrHOI4: async (_folder: string, options: { mod?: boolean; hoi4?: boolean }) =>
+                Object.keys(harness.files[layerFor(options)]),
+            readFileFromModOrHOI4: async (relative: string, options: { mod?: boolean; hoi4?: boolean }) => {
+                const layer = layerFor(options);
+                const file = relative.slice('localisation/'.length);
+                harness.reads.push(`${layer}/${file}`);
+                const content = harness.readFile ? await harness.readFile(layer, file) : harness.files[layer][file];
+                return [Buffer.from(content)];
+            },
+        },
+        modfile: { onDidChangeSelectedModSource: event },
+    };
+    const original = nodeModule._load;
+    const cached = { ...require.cache };
+    for (const name of ['../../src/util/localisationIndex', '../../src/services/indexService', '../../src/services/indexCache']) {
+        delete require.cache[require.resolve(name)];
+    }
+    nodeModule._load = function(request, parent, isMain) {
+        const name = request.split(/[\\/]/).pop()!;
+        return Object.hasOwn(mocks, name) ? mocks[name] : original.call(this, request, parent, isMain);
+    };
+    let registration: { dispose(): void } | undefined;
+    try {
+        const api = require('../../src/util/localisationIndex') as LocalisationIndexApi;
+        registration = api.registerLocalisationIndex();
+        await run(api, harness);
+    } finally {
+        registration?.dispose();
+        nodeModule._load = original;
+        for (const key of Object.keys(require.cache)) {
+            if (!cached[key]) { delete require.cache[key]; }
+        }
+        Object.assign(require.cache, cached);
+    }
+}

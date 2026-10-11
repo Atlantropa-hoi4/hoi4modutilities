@@ -3,7 +3,7 @@ import { FocusTreeAssetStyleBatchHandler, FocusTreeRenderBaseState } from './con
 import type { FocusTreeRenderPreparation } from './renderpayloadpatch';
 import { getDocumentByUri } from '../../util/vsccommon';
 import { FocusConditionPresetsByTree } from './conditionpresets';
-import { FocusTreeAssetLoadMode, FocusTreeLoader } from './loader';
+import { FocusTreeAssetLoadMode, FocusTreeAssetScope, FocusTreeLoader } from './loader';
 import { FocusTreeLoaderAdapter } from './loaderadapter';
 import { FocusTreePatchPlanner } from './patchplanner';
 import {
@@ -57,7 +57,7 @@ export interface FocusTreeSnapshotBuilderLike {
     invalidate?(invalidation: FocusTreeInvalidation): void;
     setPriorityAssetKeys?(assetKeys: readonly string[]): void;
     renderShell(documentVersion: number): string;
-    buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean): Promise<FocusTreeRenderBaseState>;
+    buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean, assetScope?: FocusTreeAssetScope): Promise<FocusTreeRenderBaseState>;
     createFullSnapshot(
         baseState: FocusTreeRenderBaseState,
         previousCache: FocusTreePreviewSession['runtimeState']['lastRenderCache'],
@@ -229,19 +229,58 @@ export class FocusTreePreviewSession {
     }
 
     public async handleSceneRequest(treeId: string): Promise<void> {
-        const cache = this.runtimeState.lastRenderCache;
-        const tree = cache?.focusTrees.find(candidate => candidate.id === treeId);
-        if (this.disposed || !cache || !tree || this.latestDocument?.version !== cache.focusPositionDocumentVersion) {
+        let cache = this.runtimeState.lastRenderCache;
+        let tree = cache?.focusTrees.find(candidate => candidate.id === treeId);
+        const document = this.latestDocument;
+        if (this.disposed || !cache || !tree || !document || document.version !== cache.focusPositionDocumentVersion) {
             return;
         }
 
         this.preferredTreeId = treeId;
-        const focusIds = new Set(Object.keys(tree.focuses));
-        const inlayIds = new Set(tree.inlayWindows.map(inlay => inlay.id));
+        this.cancelDeferredHydrationTimer();
+        const requestId = beginFocusTreeRefresh(this.runtimeState);
+        const isCancelled = this.createRefreshCancellationPredicate(requestId, document.version);
+        if (cache.deferredAssetLoad || (cache.assetTreeIds && !cache.assetTreeIds.includes(treeId))) {
+            try {
+                const baseState = await this.snapshotBuilder.buildBaseState(document, 'full', isCancelled, {
+                    treeId, treeIds: cache.deferredAssetLoad ? cache.assetTreeIds : undefined,
+                });
+                if (isCancelled()) { return; }
+                const snapshot = await this.snapshotBuilder.createFullSnapshot(baseState, cache, isCancelled);
+                if (isCancelled()) { return; }
+                const previousTrees = new Map(cache.focusTrees.map(value => [value.id, value]));
+                const previousRules = cache.dynamicStyleRules ?? new Map<string, string>();
+                cache = {
+                    ...snapshot.cache,
+                    focusTrees: snapshot.cache.focusTrees.map(value =>
+                        snapshot.cache.assetTreeIds?.includes(value.id) ? value : previousTrees.get(value.id) ?? value),
+                    assetTreeIds: Array.from(new Set([...(cache.assetTreeIds ?? []), ...(snapshot.cache.assetTreeIds ?? [treeId])])),
+                    focusTemplates: { ...cache.focusTemplates, ...snapshot.cache.focusTemplates },
+                    focusTemplateKeyById: { ...cache.focusTemplateKeyById, ...snapshot.cache.focusTemplateKeyById },
+                    focusRenderSignatures: { ...cache.focusRenderSignatures, ...snapshot.cache.focusRenderSignatures },
+                    inlayRenderSignatures: { ...cache.inlayRenderSignatures, ...snapshot.cache.inlayRenderSignatures },
+                    renderedInlayWindows: { ...cache.renderedInlayWindows, ...snapshot.cache.renderedInlayWindows },
+                    dynamicStyleCss: `${cache.dynamicStyleCss}\n${snapshot.cache.dynamicStyleCss}`,
+                    dynamicStyleRules: new Map([...previousRules, ...snapshot.cache.dynamicStyleRules]),
+                };
+                tree = cache.focusTrees.find(value => value.id === treeId);
+                this.trace('sceneHydrated', { treeId, documentVersion: document.version, renderMetrics: snapshot.metrics });
+            } catch (error) {
+                if (error instanceof UserError || isCancelled()) { return; }
+                throw error;
+            }
+        }
+        if (isCancelled() || !tree) { return; }
+        // Cached client-side switches send no host request. Keep those scenes selectable if
+        // the user returns to one while this tree's hydration is still in flight.
+        const loadedTreeIds = cache.assetTreeIds;
+        const sceneTrees = loadedTreeIds ? cache.focusTrees.filter(value => loadedTreeIds.includes(value.id)) : [tree];
+        const focusIds = new Set(sceneTrees.flatMap(value => Object.keys(value.focuses)));
+        const inlayIds = new Set(sceneTrees.flatMap(value => value.inlayWindows.map(inlay => inlay.id)));
         await this.webview.postMessage({
             command: 'focusTreeScene',
             protocolVersion: focusTreeProtocolVersion,
-            requestId: this.runtimeState.latestRefreshRequestId,
+            requestId,
             snapshotVersion: cache.snapshotVersion,
             documentVersion: cache.focusPositionDocumentVersion,
             sceneRevision: ++this.sceneRevision,
@@ -251,11 +290,11 @@ export class FocusTreePreviewSession {
             selectedTreeId: treeId,
             catalog: toFocusTreeCatalogViews(cache.focusTrees),
             changedSlots: ['treeDefinitions', 'selector', 'warnings', 'treeBody', 'inlays', 'layout', 'styleDeps'],
-            changedTreeIds: [treeId],
-            structurallyChangedTreeIds: [treeId],
+            changedTreeIds: sceneTrees.map(value => value.id),
+            structurallyChangedTreeIds: sceneTrees.map(value => value.id),
             changedFocusIds: [...focusIds],
             changedInlayWindowIds: [...inlayIds],
-            focusTrees: [tree],
+            focusTrees: sceneTrees,
             continuousFocusHtml: cache.continuousFocusHtml,
             ...pickFocusTemplates(cache.focusTemplates, cache.focusTemplateKeyById, focusIds),
             renderedInlayWindows: pickStringEntries(cache.renderedInlayWindows, inlayIds),
@@ -265,6 +304,10 @@ export class FocusTreePreviewSession {
             yGridSize: cache.yGridSize,
             focusPositionActiveFile: cache.focusPositionActiveFile,
         });
+        if (!isCancelled()) {
+            cache.selectedTreeId = treeId;
+            this.runtimeState.lastRenderCache = cache;
+        }
     }
 
     public handleContentApplied(
@@ -341,7 +384,7 @@ export class FocusTreePreviewSession {
         storePendingReadyBaseStatePromise(this.runtimeState, undefined);
         const isCancelled = this.createRefreshCancellationPredicate(requestId, requestDocumentVersion);
         const baseState = await measureAsync('focustree.baseState', { mode: assetLoadMode, source: options.source }, () =>
-            this.snapshotBuilder.buildBaseState(document, assetLoadMode, isCancelled));
+            this.snapshotBuilder.buildBaseState(document, assetLoadMode, isCancelled, this.getRefreshAssetScope()));
         const latestDocumentVersion = this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
         if (!isCurrentFocusTreeRefresh(this.runtimeState, requestId)
             || (latestDocumentVersion !== undefined && latestDocumentVersion !== requestDocumentVersion)) {
@@ -493,7 +536,7 @@ export class FocusTreePreviewSession {
                         snapshotVersion: targetSnapshotVersion,
                         documentVersion: requestDocumentVersion,
                         sceneRevision: this.sceneRevision + 1,
-                        treeId: this.runtimeState.lastRenderCache?.focusTrees[0]?.id ?? '',
+                        treeId: baseState.assetTreeIds?.[0] ?? this.preferredTreeId ?? baseState.focusTrees[0]?.id ?? '',
                         updateType: 'assets',
                         batchKind: 'style',
                         ...batch,
@@ -561,14 +604,17 @@ export class FocusTreePreviewSession {
                 ?? allFocusTrees.find(tree => tree.id === updateMessage.selectedTreeId)
                 ?? allFocusTrees[0];
             if (selectedTree) {
-                const focusIds = new Set(Object.keys(selectedTree.focuses));
-                const inlayIds = new Set(selectedTree.inlayWindows.map(inlay => inlay.id));
+                const sceneTrees = baseState.assetTreeIds
+                    ? allFocusTrees.filter(tree => baseState.assetTreeIds!.includes(tree.id))
+                    : [selectedTree];
+                const focusIds = new Set(sceneTrees.flatMap(tree => Object.keys(tree.focuses)));
+                const inlayIds = new Set(sceneTrees.flatMap(tree => tree.inlayWindows.map(inlay => inlay.id)));
                 updateMessage.sceneMode = 'replace';
                 updateMessage.treeId = selectedTree.id;
                 updateMessage.selectedTreeId = selectedTree.id;
-                updateMessage.focusTrees = [selectedTree];
-                updateMessage.changedTreeIds = [selectedTree.id];
-                updateMessage.structurallyChangedTreeIds = [selectedTree.id];
+                updateMessage.focusTrees = sceneTrees;
+                updateMessage.changedTreeIds = sceneTrees.map(tree => tree.id);
+                updateMessage.structurallyChangedTreeIds = sceneTrees.map(tree => tree.id);
                 updateMessage.changedFocusIds = updateMessage.changedFocusIds?.filter(id => focusIds.has(id));
                 updateMessage.changedInlayWindowIds = updateMessage.changedInlayWindowIds?.filter(id => inlayIds.has(id));
                 if (updateMessage.focusTemplates && updateMessage.focusTemplateKeyById) {
@@ -595,6 +641,8 @@ export class FocusTreePreviewSession {
             focusCount: snapshotMetrics?.focusCount ?? baseState.allFocuses.length,
             inlayCount: snapshotMetrics?.inlayCount ?? baseState.allInlays.length,
             deferredAssetLoad: baseState.deferredAssetLoad,
+            renderedFocusCount: snapshotMetrics?.renderedFocusCount,
+            renderedInlayCount: snapshotMetrics?.renderedInlayCount,
         };
         try {
             const postMessageStart = Date.now();
@@ -768,7 +816,7 @@ export class FocusTreePreviewSession {
             const baseState = pendingBaseStatePromise
                 ? await pendingBaseStatePromise
                 : await measureAsync('focustree.baseState', { mode: 'full', source: 'hydration' }, () =>
-                    this.snapshotBuilder.buildBaseState(document, 'full', isCancelled));
+                    this.snapshotBuilder.buildBaseState(document, 'full', isCancelled, this.getRefreshAssetScope()));
             await this.applySnapshotUpdate(
                 document,
                 baseState,
@@ -787,6 +835,11 @@ export class FocusTreePreviewSession {
                 message: error instanceof Error ? error.message : String(error),
             });
         }
+    }
+
+    private getRefreshAssetScope(): FocusTreeAssetScope {
+        const cache = this.runtimeState.lastRenderCache;
+        return { treeId: this.preferredTreeId, treeIds: cache?.deferredAssetLoad ? undefined : cache?.assetTreeIds };
     }
 
     private createRefreshCancellationPredicate(

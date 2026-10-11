@@ -608,6 +608,7 @@ export class FocusScene {
         const sceneRect = sceneRoot.getBoundingClientRect();
         const visualByFocusId: Record<string, FocusSceneRect> = {};
         const exclusiveVisualByFocusId: Record<string, FocusSceneRect> = {};
+        const connectionVisualByFocusId: Record<string, FocusSceneRect> = {};
         for (const focusId of focusIds) {
             const wrapper = this.wrappers.get(focusId);
             if (!wrapper || !wrapper.isConnected || wrapper.classList.contains('focus-branch-hidden')) {
@@ -616,8 +617,10 @@ export class FocusScene {
             const measured = measureFocusSceneNodeVisuals(wrapper, sceneRect, scale);
             visualByFocusId[focusId] = measured.visual;
             exclusiveVisualByFocusId[focusId] = measured.exclusiveVisual;
+            connectionVisualByFocusId[focusId] = measured.connectionVisual;
         }
-        const changedEdges = updateFocusSceneNodeVisuals(geometry, visualByFocusId, exclusiveVisualByFocusId);
+        const changedEdges = updateFocusSceneNodeVisuals(geometry,
+            visualByFocusId, exclusiveVisualByFocusId, connectionVisualByFocusId);
         for (const edge of changedEdges) {
             const element = this.edgeElements.get(edge.id);
             if (element) {

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire, builtinModules } from 'node:module';
 import { cleanBuildOutputDirectories } from './build-output.mjs';
 import { copyManifestLocalisations } from './manifest-localisation.mjs';
+import { buildRustCompute, computeWorkerOptions } from './compute-build.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -151,7 +152,8 @@ async function main() {
     await cleanBuildOutputDirectories(rootDir);
     await copyManifestLocalisations(rootDir);
     await copyStaticAssets();
-    await Promise.all([buildHost(), buildWebviews()]);
+    await buildRustCompute(rootDir, distDir);
+    await Promise.all([buildHost(), buildWebviews(), buildTarget(computeWorkerOptions(rootDir, distDir, isProd))]);
     console.log(isWatch ? `Watching bundles (${mode}).` : `Build complete (${mode}).`);
 
     if (isWatch) {

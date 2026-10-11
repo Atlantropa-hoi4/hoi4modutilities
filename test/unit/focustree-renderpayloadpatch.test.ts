@@ -6,6 +6,8 @@ import {
 } from '../../src/previewdef/focustree/renderpayloadpatch';
 import { toFocusTreeViews } from '../../src/previewdef/focustree/viewmodel';
 import { getPerfSnapshot, resetPerfMetrics } from '../../src/util/perf';
+import type { FocusTree } from '../../src/previewdef/focustree/schema';
+import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from '../../src/previewdef/focustree/contentbuilder';
 
 describe('focus tree render payload patching', () => {
     const createTree = (treeId: string, focusId: string) => ({
@@ -461,7 +463,7 @@ describe('focus tree render payload patching', () => {
         assert.strictEqual(hydrated.update.structurallyChangedTreeIds, undefined);
     });
 
-    it('falls back to a full snapshot when icon texture expiry changes', async () => {
+    it('uses a full asset snapshot for changed texture expiry even when focus presentation also changes', async () => {
         const previous = createFocusTreeRenderCache({
             focusTrees: [createTree('tree_a', 'FOCUS_A')],
             focusTemplates: {},
@@ -483,7 +485,11 @@ describe('focus tree render payload patching', () => {
             focusToolbarHeight: 68,
         } as any);
 
-        const tree = createTree('tree_a', 'FOCUS_A');
+        const originalTree = createTree('tree_a', 'FOCUS_A');
+        const tree = {
+            ...originalTree,
+            focuses: { FOCUS_A: { ...originalTree.focuses.FOCUS_A, text: 'EDITED_FOCUS_LABEL' } },
+        };
         const result = await createFocusTreeRenderUpdate(previous, {
             focusTrees: [tree],
             focusById: {
@@ -737,6 +743,47 @@ describe('focus tree render payload patching', () => {
         assert.strictEqual(second.cache.dynamicStyleRules.has('st-focus-overlay-GFX_overlay_a'), true);
     });
 
+    it('never caches render signatures for unprepared trees and hydrates a newly selected scope', async () => {
+        // This local factory intentionally supplies only source fields used by the renderer.
+        const trees = [createTree('tree_a', 'FOCUS_A'), createTree('tree_b', 'FOCUS_B')] as unknown as FocusTree[];
+        const baseState = {
+            focusTrees: trees,
+            allFocuses: trees.flatMap(tree => Object.values(tree.focuses)),
+            allInlays: [],
+            focusById: { ...trees[0].focuses, ...trees[1].focuses },
+            gfxFiles: [],
+            focusIconGfxFileByName: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: true,
+            hasWarningsButton: false,
+            deferredAssetLoad: false,
+            localisationIndexReady: true,
+            loadDurationMs: 0,
+            assetTreeIds: ['tree_a'],
+        } as unknown as FocusTreeRenderBaseState;
+        const previous = createFocusTreeRenderCache({
+            ...baseState,
+            sourceFocusTrees: trees,
+            focusTrees: toFocusTreeViews(trees),
+            focusTemplates: {},
+            focusTemplateKeyById: {},
+            renderedInlayWindows: {},
+            dynamicStyleCss: '',
+        } as unknown as FocusTreeRenderPayload);
+        assert.deepStrictEqual(Object.keys(previous.focusRenderSignatures), ['FOCUS_A']);
+        assert.deepStrictEqual(Object.keys(previous.focusViewSignatures), ['tree_a', 'tree_b']);
+        const next = await createFocusTreeRenderUpdate(previous, { ...baseState, assetTreeIds: ['tree_b'] });
+        assert.strictEqual(next.kind, 'full');
+        if (next.kind === 'full') {
+            assert.deepStrictEqual(Object.keys(next.prepared.metadata.focusRenderSignatures), ['FOCUS_B']);
+        }
+    });
+
     it('stops large signature planning at a cooperative cancellation checkpoint', async () => {
         const focusTree = createTree('tree_cancel', 'FOCUS_0') as any;
         focusTree.focuses = Object.fromEntries(Array.from({ length: 512 }, (_, index) => {
@@ -751,11 +798,12 @@ describe('focus tree render payload patching', () => {
         }));
         let cancelled = false;
         const isCancelled = () => cancelled;
-        setTimeout(() => {
+        const cancellation = setImmediate(() => {
             cancelled = true;
-        }, 0);
+        });
 
-        await assert.rejects(
+        try {
+            await assert.rejects(
             createFocusTreeRenderUpdate(undefined, {
                 focusTrees: [focusTree],
                 focusById: focusTree.focuses,
@@ -777,5 +825,8 @@ describe('focus tree render payload patching', () => {
             } as any, isCancelled),
             /Focus tree render cancelled/,
         );
+        } finally {
+            clearImmediate(cancellation);
+        }
     });
 });

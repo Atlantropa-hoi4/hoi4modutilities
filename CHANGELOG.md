@@ -11,6 +11,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 * Update Focus Tree Preview in place: edits, drags, links, and asset loading now change only the affected focus cards and connections instead of rebuilding the tree, and typing above a focus no longer re-renders it. Updates while editing large trees are sent as small deltas, and hovering, selecting, and filtering restyle only the focuses involved.
 * Parse HOI4 scripts about twice as fast in previews, indexes, and formatting.
+* Hydrate Focus Tree icons, card templates, and inlays for the selected tree first; load other trees on demand while retaining the full tree selector and refreshing already-loaded scenes after edits.
+* Reduce Windows Focus Tree loading and editing delays by yielding render and loader progress batches with `setImmediate` instead of zero-delay timers.
 
 ### Fixed
 * Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.

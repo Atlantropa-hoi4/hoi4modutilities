@@ -117,4 +117,25 @@ describe('focustree focus render', () => {
         assert.deepStrictEqual(result, { FOCUS_499: 'Last focus' });
     });
 
+    it('discards a localisation batch invalidated by a host event before visiting later focuses', async () => {
+        const focuses = Array.from({ length: 512 }, (_, index) => ({ id: `FOCUS_${index}` }));
+        const resolvedIds = new Set<string>();
+        let cancelled = false;
+        const cancel = setImmediate(() => { cancelled = true; });
+        try {
+            await assert.rejects(
+                resolveFocusLocalizationTextByIdIfReady(focuses, key => {
+                    resolvedIds.add(key);
+                    return `Title ${key}`;
+                }, () => cancelled),
+                /Focus tree render cancelled/,
+            );
+            assert.strictEqual(cancelled, true);
+            assert.ok(resolvedIds.has('FOCUS_0'));
+            assert.strictEqual(resolvedIds.has('FOCUS_511'), false);
+        } finally {
+            clearImmediate(cancel);
+        }
+    });
+
 });

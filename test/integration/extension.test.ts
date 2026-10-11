@@ -10,6 +10,11 @@ import { getMiosFromFile } from '../../src/previewdef/mio/schema';
 import { buildMioWorkspaceEdit } from '../../src/previewdef/mio/editworkspace';
 import { isHoi4FormatterIgnored } from '../../src/util/formatterIgnore';
 import { waitFor } from '../testUtils';
+import * as path from 'node:path';
+import { PNG } from 'pngjs';
+import { RustComputeService } from '../../src/util/compute/service';
+import { CompressFormat } from '../../src/util/image/dds/pixelformat';
+import { compressedSurface } from '../computeFixtures';
 
 function hasPreviewTab(viewType: string, labelPrefix?: string): boolean {
     return vscode.window.tabGroups.all
@@ -119,6 +124,25 @@ suite('extension smoke', () => {
         ]) {
             assert.ok(commands.includes(command), `expected command ${command} to be registered`);
         }
+    });
+
+    test('runs the packaged Rust DDS worker inside the VS Code extension host', async () => {
+        const extension = vscode.extensions.getExtension('server.hoi4modutilities');
+        assert.ok(extension);
+        const service = new RustComputeService({
+            workerPath: path.join(extension.extensionPath, 'dist', 'compute-worker.js'),
+            wasmPath: path.join(extension.extensionPath, 'dist', 'hoi4_compute.wasm'),
+            minimumPixels: 0,
+        });
+        try {
+            const surface = compressedSurface(512, 512, CompressFormat.bc3);
+            const result = await service.run({ kind: 'dds', bytes: surface.getPixelData(), width: 512, height: 512, pixelFormat: surface.pixelFormat });
+            assert.ok(result?.pngBytes, 'Rust worker must execute, not silently fall back');
+            assert.strictEqual(result.engine, 'rust-wasm');
+            const png = new PNG({ width: 512, height: 512 });
+            png.data = Buffer.from(surface.getFullRgba());
+            assert.deepStrictEqual(Buffer.from(result.pngBytes), PNG.sync.write(png));
+        } finally { service.dispose(); }
     });
 
     test('skips vanilla-derived folders while vanilla file skipping is on by default', () => {

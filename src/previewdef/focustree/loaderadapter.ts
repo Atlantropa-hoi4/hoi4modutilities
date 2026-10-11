@@ -5,7 +5,7 @@ import {
     renderFocusTreeShellHtml,
 } from "./contentbuilder";
 import { FocusConditionPresetsByTree } from "./conditionpresets";
-import { FocusTreeAssetLoadMode, FocusTreeLoader } from "./loader";
+import { FocusTreeAssetLoadMode, FocusTreeAssetScope, FocusTreeLoader } from "./loader";
 import { FocusTreeInvalidation } from './invalidation';
 
 export interface FocusTreeSessionSnapshot {
@@ -13,6 +13,7 @@ export interface FocusTreeSessionSnapshot {
     sourceText: string;
     structureState?: FocusTreeRenderBaseState;
     assetState?: FocusTreeRenderBaseState;
+    assetScopeKey?: string;
     treeCatalog: Array<{ id: string; focusCount: number }>;
     assetReferences: string[];
 }
@@ -26,6 +27,10 @@ export class FocusTreeLoaderAdapter {
     private readonly focusTreeLoader: FocusTreeLoader;
     private readonly updateDependencies: (dependencies: string[]) => void;
     private sessionSnapshot: FocusTreeSessionSnapshot | undefined;
+    private dependencies: string[] = [];
+    private dependencyAssetTreeIds: string[] = [];
+    private replaceDependenciesOnAssetLoad = false;
+    private generation = 0;
 
     constructor(options: FocusTreeLoaderAdapterOptions) {
         this.focusTreeLoader = options.focusTreeLoader;
@@ -47,9 +52,12 @@ export class FocusTreeLoaderAdapter {
         conditionPresetsByTree: FocusConditionPresetsByTree,
         assetLoadMode: FocusTreeAssetLoadMode,
         isCancelled?: () => boolean,
+        assetScope?: FocusTreeAssetScope,
     ): Promise<FocusTreeRenderBaseState> {
         if (this.sessionSnapshot?.documentVersion !== documentVersion
             || this.sessionSnapshot.sourceText !== content) {
+            this.generation++;
+            this.replaceDependenciesOnAssetLoad = true;
             this.sessionSnapshot = {
                 documentVersion,
                 sourceText: content,
@@ -58,26 +66,29 @@ export class FocusTreeLoaderAdapter {
             };
         }
         const sessionSnapshot = this.sessionSnapshot;
+        const scopeKey = assetScope ? JSON.stringify(assetScope) : '*';
         const cachedState = assetLoadMode === 'deferred'
             ? sessionSnapshot.structureState
-            : sessionSnapshot.assetState;
+            : sessionSnapshot.assetScopeKey === scopeKey ? sessionSnapshot.assetState : undefined;
         if (cachedState) {
             return cachedState;
         }
 
-        const loader = this.createSnapshotLoader(content, assetLoadMode, documentVersion);
+        const generation = this.generation;
+        const loader = this.createSnapshotLoader(content, assetLoadMode, documentVersion, assetScope, isCancelled);
         const baseState = await buildFocusTreeRenderBaseState(
             loader,
             documentVersion,
             conditionPresetsByTree,
             isCancelled,
         );
-        this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
-        if (!isCancelled?.() && this.sessionSnapshot === sessionSnapshot) {
+        if (!isCancelled?.() && this.sessionSnapshot === sessionSnapshot && this.generation === generation) {
+            this.focusTreeLoader.adoptDependencyLoadersFrom(loader);
             if (assetLoadMode === 'deferred') {
                 sessionSnapshot.structureState = baseState;
             } else {
                 sessionSnapshot.assetState = baseState;
+                sessionSnapshot.assetScopeKey = scopeKey;
             }
             sessionSnapshot.treeCatalog = baseState.focusTrees.map(tree => ({
                 id: tree.id,
@@ -92,6 +103,10 @@ export class FocusTreeLoaderAdapter {
     }
 
     public invalidate(invalidation: FocusTreeInvalidation): void {
+        this.generation++;
+        if (invalidation !== FocusTreeInvalidation.None) {
+            this.replaceDependenciesOnAssetLoad = true;
+        }
         if ((invalidation & (FocusTreeInvalidation.Layout
             | FocusTreeInvalidation.Presentation
             | FocusTreeInvalidation.Assets)) !== 0) {
@@ -110,6 +125,7 @@ export class FocusTreeLoaderAdapter {
             | FocusTreeInvalidation.Assets
             | FocusTreeInvalidation.Localisation)) !== 0) {
             this.sessionSnapshot.assetState = undefined;
+            this.sessionSnapshot.assetScopeKey = undefined;
         }
     }
 
@@ -121,17 +137,43 @@ export class FocusTreeLoaderAdapter {
         content: string,
         assetLoadMode: FocusTreeAssetLoadMode,
         documentVersion: number,
+        assetScope?: FocusTreeAssetScope,
+        isCancelled?: () => boolean,
     ): FocusTreeLoader {
         const loader = this.focusTreeLoader.createSnapshotLoader(
             () => Promise.resolve(content),
             assetLoadMode,
             String(documentVersion),
+            assetScope,
         );
-        loader.onLoadDone(result => this.updateDependencies(result.dependencies));
+        const generation = this.generation;
+        loader.onLoadDone(result => {
+            if (generation !== this.generation || isCancelled?.()) { return; }
+            const catalogTreeIds = new Set(result.result.focusTrees.map(tree => tree.id));
+            const liveLoadedTreeIds = this.dependencyAssetTreeIds.filter(id => catalogTreeIds.has(id));
+            const assetTreeIds = result.result.assetTreeIds ?? Array.from(catalogTreeIds);
+            if (assetLoadMode === 'full' && this.replaceDependenciesOnAssetLoad
+                && liveLoadedTreeIds.every(id => assetTreeIds.includes(id))) {
+                // The refresh covers every still-loaded scene; its manifest replaces obsolete paths.
+                this.dependencies = result.dependencies;
+                this.dependencyAssetTreeIds = assetTreeIds;
+                this.replaceDependenciesOnAssetLoad = false;
+            } else {
+                this.dependencies = Array.from(new Set([...this.dependencies, ...result.dependencies]));
+                if (assetLoadMode === 'full') {
+                    this.dependencyAssetTreeIds = Array.from(new Set([...liveLoadedTreeIds, ...assetTreeIds]));
+                }
+            }
+            this.updateDependencies(this.dependencies);
+        });
         return loader;
     }
 
     public dispose(): void {
+        this.generation++;
+        this.dependencies = [];
+        this.dependencyAssetTreeIds = [];
+        this.replaceDependenciesOnAssetLoad = false;
         this.sessionSnapshot = undefined;
         this.focusTreeLoader.clearSourceSnapshot();
         this.focusTreeLoader.clearIconAssetResolution();

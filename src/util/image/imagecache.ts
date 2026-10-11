@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { PNG } from 'pngjs';
 import { parseHoi4File } from '../../hoiformat/hoiparser';
 import { getSpriteTypes } from '../../hoiformat/spritetype';
-import { readFileFromModOrHOI4, hoiFileExpiryToken, expiryToken } from '../fileloader';
+import { readFileFromModOrHOI4, hoiFileExpiryToken, expiryToken, getFileContentSourceGeneration } from '../fileloader';
 import { PromiseCache } from '../cache';
-import { ddsToPng, tgaToPng } from './converter';
+import { ddsToPngBufferAsync, tgaToPng } from './converter';
 import { AnySpriteType } from '../../hoiformat/spritetype';
 import { Sprite, Image, CorneredTileSprite, ProgressBarSprite } from './sprite';
 import { localize } from '../i18n';
@@ -17,17 +17,68 @@ import { incrementPerfCounter, measureAsync } from '../perf';
 export { Sprite, Image };
 
 const runImageDecode = createConcurrencyLimiter(3);
+let activeImageRequests = 0;
+
+class SpriteCache extends PromiseCache<Sprite | undefined> {
+    public async get(key: string = ''): Promise<Sprite | undefined> {
+        // Include result-dependent expiry discovery in the guard, but bound retries during edits.
+        for (let attempt = 0; ; attempt++) {
+            const generation = getFileContentSourceGeneration();
+            const sprite = await super.get(key);
+            const entry = this._cache.get(key);
+            const ownsEntry = entry !== undefined && (await entry.value) === sprite;
+            if (ownsEntry) {
+                await entry.expiryToken;
+            }
+            if (generation === getFileContentSourceGeneration()) {
+                return sprite;
+            }
+            if (!entry || (ownsEntry && this._cache.get(key) === entry)) {
+                this.remove(key);
+                gfxMapCache.remove(key.split('?')[0]);
+            }
+            if (attempt === 1) {
+                return sprite;
+            }
+        }
+    }
+}
+
+class GfxMapCache extends PromiseCache<Record<string, AnySpriteType>> {
+    private sourceGeneration = getFileContentSourceGeneration();
+
+    public async get(key: string = ''): Promise<Record<string, AnySpriteType>> {
+        const generation = getFileContentSourceGeneration();
+        if (this.sourceGeneration !== generation) {
+            this.sourceGeneration = generation;
+            // Recheck tokens only when a map is requested; unchanged maps and cached sprites survive.
+            for (const entry of this._cache.values()) {
+                entry.lastAccess = Number.NEGATIVE_INFINITY;
+            }
+        }
+        const entry = this._cache.get(key);
+        if (entry?.lastAccess === Number.NEGATIVE_INFINITY) {
+            // Let an interrupted initial probe/load finish before validating its captured token.
+            await entry.value;
+            if (this._cache.get(key) === entry) {
+                entry.lastAccess = Number.NEGATIVE_INFINITY;
+            }
+        }
+        return super.get(key);
+    }
+}
 
 const imageCache = new PromiseCache({
     name: 'image',
     expireWhenChange: hoiFileExpiryToken,
+    initialExpiryToken: hoiFileExpiryToken,
     factory: getImage,
     life: 10 * 60 * 1000,
     maxBytes: 128 * 1024 * 1024,
     weigher: image => image ? image.pngBuffer.length : 0,
 });
 
-const spriteCache = new PromiseCache({
+const spriteCache = new SpriteCache({
     name: 'sprite',
     expireWhenChange: spriteCacheExpiryToken,
     factory: getSpriteByKey,
@@ -35,9 +86,10 @@ const spriteCache = new PromiseCache({
     maxSize: 128,
 });
 
-const gfxMapCache = new PromiseCache({
+const gfxMapCache = new GfxMapCache({
     name: 'gfxMap',
     expireWhenChange: hoiFileExpiryToken,
+    initialExpiryToken: hoiFileExpiryToken,
     factory: loadGfxMap,
     life: 10 * 60 * 1000,
     maxSize: 64,
@@ -138,7 +190,12 @@ async function getSpriteByGfxNameImpl(name: string, gfxFilePath: string): Promis
     return new Sprite(name, image, sprite.noofframes);
 }
 
-async function getImage(relativePath: string): Promise<Image | undefined> {
+function getImage(relativePath: string): Promise<Image | undefined> {
+    activeImageRequests++;
+    return decodeImage(relativePath).finally(() => { activeImageRequests--; });
+}
+
+async function decodeImage(relativePath: string): Promise<Image | undefined> {
     return runImageDecode(() => measureAsync('image.decode', { extension: getExtension(relativePath) }, async () => {
         let readFileResult: [Buffer, vscode.Uri] | undefined = undefined;
         try {
@@ -165,8 +222,10 @@ async function getImage(relativePath: string): Promise<Image | undefined> {
             relativePath = relativePath.toLowerCase();
             if (relativePath.endsWith('.dds')) {
                 const dds = DDS.parse(toArrayBuffer(buffer), 0);
-                png = ddsToPng(dds);
-                pngBuffer = PNG.sync.write(png);
+                // Bulk hydration benefits from off-thread PNG work even for tiny raw DDS icons.
+                // Single-image requests retain the low-latency inline path.
+                const image = await ddsToPngBufferAsync(dds, undefined, activeImageRequests >= 6);
+                return new Image(image.pngBuffer, image.width, image.height, realPath);
 
             } else if (relativePath.endsWith('.tga')) {
                 png = tgaToPng(buffer);

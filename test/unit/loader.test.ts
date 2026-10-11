@@ -104,4 +104,26 @@ describe('loader error recovery', () => {
         assert.strictEqual((await loader.load(new LoaderSession(false))).result, 'result-3');
         assert.strictEqual(loads, 3);
     });
+    it('does not publish a load cancelled while reporting progress and permits a later retry', async () => {
+        let cancelled = false;
+        class ProgressLoader extends Loader<string> {
+            protected override async loadImpl() {
+                await this.fireOnProgressEvent('Loading');
+                return { result: 'ready', dependencies: [] };
+            }
+        }
+
+        const loader = new ProgressLoader();
+        const cancel = setImmediate(() => { cancelled = true; });
+        try {
+            await assert.rejects(
+                loader.load(new LoaderSession(false, () => cancelled)),
+                /Load session cancelled/,
+            );
+            cancelled = false;
+            assert.strictEqual((await loader.load(new LoaderSession(false, () => cancelled))).result, 'ready');
+        } finally {
+            clearImmediate(cancel);
+        }
+    });
 });

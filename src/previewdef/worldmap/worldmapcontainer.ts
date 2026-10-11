@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Commands, WebviewType } from '../../constants';
-import { WorldMap } from './worldmap';
+import { WorldMap, type WorldMapDebugOptions } from './worldmap';
 import { contextContainer } from '../../context';
 import { localize } from '../../util/i18n';
 import { sendEvent } from '../../util/telemetry';
@@ -70,7 +70,7 @@ export class WorldMapContainer implements vscode.WebviewPanelSerializer {
         this.worldMap?.onDocumentChange(document.uri);
     }
 
-    private getPreviewDebugState(): unknown {
-        return this.worldMap?.getDebugState();
+    private getPreviewDebugState(options?: WorldMapDebugOptions): unknown {
+        return this.worldMap?.getDebugState(options);
     }
 }

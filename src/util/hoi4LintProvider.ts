@@ -3,8 +3,12 @@ import { collectHoi4LintFindings, Hoi4LintFinding, Hoi4LintRule } from '../hoifo
 import { localize } from './i18n';
 import { isHoi4VanillaFileSkipped } from './vanillaFiles';
 import { uriToFilePathWhenPossible } from './vsccommon';
+import { UpdateScheduler } from '../services/updateScheduler';
 
 const diagnosticSource = 'HOI4 Mod Utilities';
+const diagnosticDebounceMs = 200;
+const diagnosticMaxWaitMs = 1000;
+const maxCachedDocuments = 128;
 const fixAllKind = vscode.CodeActionKind.SourceFixAll.append('hoi4');
 const documentSelector: vscode.DocumentSelector = [
     { pattern: '**/*.txt' },
@@ -14,9 +18,61 @@ const documentSelector: vscode.DocumentSelector = [
 
 export function registerHoi4LintProvider(): vscode.Disposable[] {
     const diagnostics = vscode.languages.createDiagnosticCollection('hoi4ModUtilities');
+    const findingsCache = new Hoi4LintFindingsCache();
+    const scheduler = new UpdateScheduler<string>(key => key);
+    const pendingUpdates = new Map<string, { document: vscode.TextDocument; version: number; startedAt: number }>();
+    let disposed = false;
     const updateDiagnostics = (document: vscode.TextDocument) => {
-        const findings = getFindings(document);
-        diagnostics.set(document.uri, findings.map(finding => createDiagnostic(document, finding)));
+        if (disposed || document.isClosed) {
+            return;
+        }
+        const version = document.version;
+        const findings = findingsCache.get(document);
+        const result = findings.map(finding => createDiagnostic(document, finding));
+        if (!disposed && !document.isClosed && document.version === version) {
+            diagnostics.set(document.uri, result);
+        }
+    };
+    const onOpen = (document: vscode.TextDocument) => {
+        const key = document.uri.toString();
+        scheduler.cancel(key);
+        pendingUpdates.delete(key);
+        updateDiagnostics(document);
+    };
+    const onChange = (document: vscode.TextDocument) => {
+        if (disposed || document.isClosed) {
+            return;
+        }
+        const key = document.uri.toString();
+        const previous = pendingUpdates.get(key);
+        const now = Date.now();
+        const pending = {
+            document,
+            version: document.version,
+            startedAt: previous?.document === document ? previous.startedAt : now,
+        };
+        pendingUpdates.set(key, pending);
+        scheduler.schedule(key, Math.min(diagnosticDebounceMs, Math.max(0, diagnosticMaxWaitMs - (now - pending.startedAt))), () => {
+            if (disposed || pendingUpdates.get(key) !== pending) {
+                return;
+            }
+            pendingUpdates.delete(key);
+            if (!document.isClosed && document.version === pending.version) {
+                updateDiagnostics(document);
+            }
+        });
+    };
+    const onClose = (document: vscode.TextDocument) => {
+        if (disposed) {
+            return;
+        }
+        const key = document.uri.toString();
+        if (pendingUpdates.get(key)?.document === document) {
+            scheduler.cancel(key);
+            pendingUpdates.delete(key);
+        }
+        findingsCache.delete(document);
+        diagnostics.delete(document.uri);
     };
 
     for (const document of vscode.workspace.textDocuments) {
@@ -24,30 +80,39 @@ export function registerHoi4LintProvider(): vscode.Disposable[] {
     }
 
     return [
-        diagnostics,
-        vscode.workspace.onDidOpenTextDocument(updateDiagnostics),
-        vscode.workspace.onDidChangeTextDocument(event => updateDiagnostics(event.document)),
-        vscode.workspace.onDidCloseTextDocument(document => diagnostics.delete(document.uri)),
+        new vscode.Disposable(() => {
+            disposed = true;
+            scheduler.dispose();
+            pendingUpdates.clear();
+            findingsCache.dispose();
+            diagnostics.dispose();
+        }),
+        vscode.workspace.onDidOpenTextDocument(onOpen),
+        vscode.workspace.onDidChangeTextDocument(event => onChange(event.document)),
+        vscode.workspace.onDidCloseTextDocument(onClose),
         vscode.languages.registerCodeActionsProvider(
             documentSelector,
-            new Hoi4LintCodeActionProvider(),
+            new Hoi4LintCodeActionProvider(findingsCache),
             { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, fixAllKind] },
         ),
     ];
 }
 
 export class Hoi4LintCodeActionProvider implements vscode.CodeActionProvider {
+    constructor(private readonly findingsCache = new Hoi4LintFindingsCache()) {}
+
     public provideCodeActions(
         document: vscode.TextDocument,
         range: vscode.Range,
         context: vscode.CodeActionContext,
-        _token: vscode.CancellationToken,
+        token: vscode.CancellationToken,
     ): vscode.CodeAction[] {
-        if (isHoi4VanillaFileSkipped(document)) {
+        if (document.isClosed || token.isCancellationRequested || isHoi4VanillaFileSkipped(document)) {
             return [];
         }
 
-        const findings = getFindings(document);
+        const version = document.version;
+        const findings = this.findingsCache.get(document);
         if (findings.length === 0) {
             return [];
         }
@@ -78,12 +143,50 @@ export class Hoi4LintCodeActionProvider implements vscode.CodeActionProvider {
             actions.push(action);
         }
 
-        return actions;
+        return document.isClosed || token.isCancellationRequested || document.version !== version ? [] : actions;
     }
 }
 
-function getFindings(document: vscode.TextDocument): Hoi4LintFinding[] {
-    return collectHoi4LintFindings(document.getText(), uriToFilePathWhenPossible(document.uri));
+class Hoi4LintFindingsCache implements vscode.Disposable {
+    private readonly entries = new Map<string, { document: vscode.TextDocument; version: number; findings: Hoi4LintFinding[] }>();
+    private disposed = false;
+
+    public get(document: vscode.TextDocument): Hoi4LintFinding[] {
+        if (this.disposed || document.isClosed) {
+            return [];
+        }
+        const key = document.uri.toString();
+        const version = document.version;
+        const cached = this.entries.get(key);
+        if (cached?.document === document && cached.version === version) {
+            this.entries.delete(key);
+            this.entries.set(key, cached);
+            return cached.findings;
+        }
+
+        const findings = collectHoi4LintFindings(document.getText(), uriToFilePathWhenPossible(document.uri));
+        if (this.disposed || document.isClosed || document.version !== version) {
+            return [];
+        }
+        this.entries.delete(key);
+        this.entries.set(key, { document, version, findings });
+        if (this.entries.size > maxCachedDocuments) {
+            this.entries.delete(this.entries.keys().next().value!);
+        }
+        return findings;
+    }
+
+    public delete(document: vscode.TextDocument): void {
+        const key = document.uri.toString();
+        if (this.entries.get(key)?.document === document) {
+            this.entries.delete(key);
+        }
+    }
+
+    public dispose(): void {
+        this.disposed = true;
+        this.entries.clear();
+    }
 }
 
 function createDiagnostic(document: vscode.TextDocument, finding: Hoi4LintFinding): vscode.Diagnostic {

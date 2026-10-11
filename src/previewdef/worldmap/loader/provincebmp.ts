@@ -6,6 +6,10 @@ import { Point, ProgressReporter, ProvinceBmp, ProvinceEdgeGraph, ProvinceGraph,
 import { FileLoader, LoadResult, LoadResultOD, mergeRegions } from "./common";
 import { LoaderSession } from '../../../util/loader/loader';
 import { DefinesLoader } from './defines';
+import { ProvinceColorContainer, ProvinceColors, scanProvinceColors, scanProvinceColorsTypescript } from '../../../util/image/bmp/provincecolors';
+import { incrementPerfCounter, measureAsync, measureSync } from '../../../util/perf';
+import { tryRustCompute } from '../../../util/compute/service';
+import { decodeProvinceEdges } from '../../../util/compute/provinceedges';
 
 export class ProvinceBmpLoader extends FileLoader<ProvinceBmp> {
     private readonly definesLoader = new DefinesLoader();
@@ -18,7 +22,7 @@ export class ProvinceBmpLoader extends FileLoader<ProvinceBmp> {
         const warnings: WorldMapWarning[] = [];
         const defines = await this.definesLoader.load(session);
         return {
-            result: await loadProvincesBmp(this.file, e => this.fireOnProgressEvent(e), defines.result.minimumProvinceSize?.value ?? 8, warnings),
+            result: await loadProvincesBmp(this.file, e => this.fireOnProgressEvent(e), defines.result.minimumProvinceSize?.value ?? 8, warnings, session),
             warnings,
             dependencies: [this.file, ...defines.dependencies],
         };
@@ -43,6 +47,7 @@ async function loadProvincesBmp(
     progressReporter: ProgressReporter,
     minimumProvinceSize: number,
     warnings: WorldMapWarning[],
+    session: LoaderSession,
 ): Promise<ProvinceBmp> {
     await progressReporter(localize('worldmap.progress.loadingprovincebmp', 'Loading province bmp...',));
 
@@ -51,19 +56,26 @@ async function loadProvincesBmp(
     
     await progressReporter(localize('worldmap.progress.calculatingregion', 'Calculating province region...'));
 
-    const { colorByPosition, provinces: colorOnlyProvinces, colorToProvince } = getProvincesByPosition(provinceMapImage);
+    validateProvinceDimensions(provinceMapImage);
+    session.throwIfCancelled();
+    const tags = { width: provinceMapImage.width, height: provinceMapImage.height };
+    const { colorByPosition, provinces: colorOnlyProvinces, colorToProvince } = await measureAsync('worldmap.provinceColors', tags, () =>
+        scanProvinceColors(provinceMapImage));
+    session.throwIfCancelled();
     
     const width = provinceMapImage.width;
     const height = provinceMapImage.height;
-    const provincesWithZone = fillProvinceZones(colorOnlyProvinces, colorToProvince, colorByPosition, width, height,
-        provincesFile, minimumProvinceSize, warnings);
+    const provincesWithZone = measureSync('worldmap.provinceZones', tags, () =>
+        fillProvinceZones(colorOnlyProvinces, colorToProvince, colorByPosition, width, height,
+            provincesFile, minimumProvinceSize, warnings));
     
     await progressReporter(localize('worldmap.progress.calculatingedge', 'Calculating province edges...'));
     
-    const provinces = fillEdges(provincesWithZone, colorToProvince as Record<number, ColorContainer & ProvinceZoneDef>,
-        colorByPosition, width, height, provincesFile, warnings);
-
-    validateProvince(colorByPosition, width, height, provincesFile, warnings);
+    session.throwIfCancelled();
+    const provinces = await measureAsync('worldmap.provinceEdges', tags, () =>
+        fillProvinceEdges(provincesWithZone, colorToProvince as Record<number, ColorContainer & ProvinceZoneDef>,
+            colorByPosition, width, height, provincesFile, warnings, () => session.throwIfCancelled()));
+    session.throwIfCancelled();
 
     return {
         width,
@@ -74,41 +86,17 @@ async function loadProvincesBmp(
     };
 }
 
-type ColorContainer = { color: number, warnings: [] };
-function getProvincesByPosition(provinceMapImage: BMP): { colorByPosition: Uint32Array, provinces: ColorContainer[], colorToProvince: Record<number, ColorContainer> } {
-    if (provinceMapImage.width % 256 !== 0 || provinceMapImage.height % 256 !== 0) {
+type ColorContainer = ProvinceColorContainer;
+function validateProvinceDimensions(image: BMP): void {
+    if (image.width % 256 !== 0 || image.height % 256 !== 0) {
         throw new UserError(localize('worldmap.error.multiply256', 'Height and width of map image must be multiply of 256: {0}x{1}.',
-            provinceMapImage.width, provinceMapImage.height));
+            image.width, image.height));
     }
+}
 
-    const colorByPosition = new Uint32Array(provinceMapImage.width * provinceMapImage.height);
-    const bitmapData = provinceMapImage.data;
-    const provinces: ColorContainer[] = [];
-    const colorToProvince: Record<number, ColorContainer> = {};
-
-    for (let y = provinceMapImage.height - 1, sy = 0, dy = (provinceMapImage.height - 1) * provinceMapImage.width;
-        y >= 0;
-        y--, sy += provinceMapImage.bytesPerRow, dy -= provinceMapImage.width) {
-        for (let x = 0, sx = sy, dx = dy; x < provinceMapImage.width; x++, sx += 3, dx++) {
-            const color = (bitmapData[sx + 2] << 16) | (bitmapData[sx + 1] << 8) | bitmapData[sx];
-            const province = colorToProvince[color];
-            if (province === undefined) {
-                const newProvince: ColorContainer = { color, warnings: [] };
-
-                provinces.push(newProvince);
-                colorToProvince[color] = newProvince;
-                colorByPosition[dx] = color;
-            } else {
-                colorByPosition[dx] = province.color;
-            }
-        }
-    }
-
-    return {
-        colorByPosition,
-        colorToProvince,
-        provinces,
-    };
+function getProvincesByPosition(image: BMP): ProvinceColors {
+    validateProvinceDimensions(image);
+    return scanProvinceColorsTypescript(image);
 }
 
 export function parseProvinceBmpBuffer(buffer: Uint8Array): BMP {
@@ -199,6 +187,68 @@ function fillProvinceZones<T extends ColorContainer>(
 }
 
 type EdgeDef = { edges: ProvinceEdgeGraph[] };
+
+export async function fillProvinceEdges<T extends ColorContainer>(
+    provincesWithoutEdges: (T & Partial<EdgeDef>)[],
+    colorToProvince: Record<number, T & Partial<EdgeDef>>,
+    colorByPosition: Uint32Array,
+    width: number,
+    height: number,
+    file: string,
+    warnings: WorldMapWarning[],
+    checkCancelled?: () => void,
+): Promise<(T & EdgeDef)[]> {
+    const nativeBytes = new Uint8Array(colorByPosition.buffer, colorByPosition.byteOffset, colorByPosition.byteLength);
+    const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+    const bytes = littleEndian ? nativeBytes : new Uint8Array(nativeBytes.byteLength);
+    if (!littleEndian) {
+        const view = new DataView(bytes.buffer);
+        colorByPosition.forEach((color, index) => view.setUint32(index * 4, color, true));
+    }
+    checkCancelled?.();
+    const result = await tryRustCompute({ kind: 'edges', bytes, width, height });
+    checkCancelled?.();
+    if (result?.provinceEdges) {
+        try {
+            const decoded = decodeProvinceEdges(result.provinceEdges, width, height, new Set(provincesWithoutEdges.map(province => province.color)));
+            checkCancelled?.();
+            const provinces = provincesWithoutEdges as (T & EdgeDef)[];
+            for (const province of provinces) { province.edges = decoded.byColor.get(province.color) ?? []; }
+            for (const { color, x, y } of decoded.onePixels) {
+                warnings.push({
+                    source: [{ type: 'province', id: -1, color }], relatedFiles: [file],
+                    text: localize('worldmap.warnings.onepixelprovince', 'One-pixel province color found at {0}, {1}.', x, y),
+                });
+            }
+            for (const { x, y } of decoded.crossings) {
+                const bottom = (y + 1) * width + x;
+                const right = bottom + (x === width - 1 ? -width : 0) + 1;
+                warnings.push({
+                    source: [colorByPosition[bottom], colorByPosition[right], colorByPosition[bottom - width], colorByPosition[right - width]]
+                        .map(color => ({ color, id: -1, type: 'province' as const })),
+                    relatedFiles: [file],
+                    text: localize('worldmap.warnings.xcrossing', 'Map invalid X crossing at: ({0}, {1}).', x, y),
+                });
+            }
+            incrementPerfCounter('worldmap.provinceEdges.backend', { engine: 'rust-wasm' });
+            return provinces;
+        } catch (error) {
+            checkCancelled?.();
+            if (!(error instanceof Error && error.message === 'Invalid Rust province edge payload.')) { throw error; }
+            incrementPerfCounter('rustcompute.fallback', { kind: 'edges', reason: 'invalid-result' });
+        }
+    }
+    incrementPerfCounter('worldmap.provinceEdges.backend', { engine: 'typescript' });
+    const tags = { width, height };
+    const provinces = measureSync('worldmap.provinceEdges.typescript', tags, () =>
+        fillEdges(provincesWithoutEdges, colorToProvince, colorByPosition, width, height, file, warnings));
+    measureSync('worldmap.provinceValidation.typescript', tags, () => validateProvince(colorByPosition, width, height, file, warnings));
+    return provinces;
+}
+
+// Retained as parity oracles and as the production fallback.
+export { fillEdges as fillProvinceEdgesTypescript, validateProvince as validateProvinceRasterTypescript };
+
 function fillEdges<T extends ColorContainer>(
     provincesWithoutEdges: (T & Partial<EdgeDef>)[],
     colorToProvinceWithoutEdges: Record<number, T & Partial<EdgeDef>>,

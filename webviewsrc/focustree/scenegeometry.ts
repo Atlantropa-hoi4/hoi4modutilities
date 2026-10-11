@@ -4,12 +4,18 @@ export function measureFocusSceneNodeVisuals(
     wrapper: HTMLElement,
     sceneRect: Pick<DOMRect, 'left' | 'top'>,
     scale: number,
-): { visual: FocusSceneRect; exclusiveVisual: FocusSceneRect } {
+): { visual: FocusSceneRect; connectionVisual: FocusSceneRect; exclusiveVisual: FocusSceneRect } {
+    // Absolute GUI children can extend beyond a zero-sized wrapper; include their rendered bounds.
     const visualRects = measureVisibleElements(wrapper,
-        '.navigator > :not(.focus-checkbox):not([hidden]), .navigator > :not(.focus-checkbox):not([hidden]) [data-preview-label-css-toggle="true"]');
+        '.navigator > :not(.focus-checkbox):not([hidden]), .navigator > :not(.focus-checkbox):not([hidden]) [data-preview-label-css-toggle="true"], '
+        + '.st-focus-icon-image, .focus-gui-symbol, .focus-frame-gfx, .focus-decoration-gfx');
     if (visualRects.length === 0) {
         visualRects.push((wrapper.querySelector<HTMLElement>('.navigator') ?? wrapper).getBoundingClientRect());
     }
+
+    // Outgoing ports follow the caption/frame, not the symbol's transparent padding or ornaments.
+    const connectionRects = measureVisibleElements(wrapper,
+        '.focus-frame-gfx, [data-preview-label-css-toggle="true"]');
 
     // Measure the rendered symbol, not its slot, title, or decorative overlay.
     let exclusiveRects = measureVisibleElements(wrapper, '.st-focus-icon-image, .focus-gui-symbol');
@@ -19,6 +25,8 @@ export function measureFocusSceneNodeVisuals(
 
     return {
         visual: toSceneRect(visualRects, sceneRect, scale),
+        connectionVisual: toSceneRect(connectionRects.length > 0 ? connectionRects
+            : exclusiveRects.length > 0 ? exclusiveRects : visualRects, sceneRect, scale),
         exclusiveVisual: toSceneRect(exclusiveRects.length > 0 ? exclusiveRects : visualRects, sceneRect, scale),
     };
 }

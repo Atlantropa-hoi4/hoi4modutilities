@@ -1,5 +1,7 @@
 import * as assert from 'assert';
 import Module = require('module');
+import type * as LoaderAdapterModule from '../../src/previewdef/focustree/loaderadapter';
+import type * as InvalidationModule from '../../src/previewdef/focustree/invalidation';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -39,12 +41,17 @@ const focusIconFallbackLimits: Array<number | undefined> = [];
 const blockingSharedFocusIndexLookups: string[] = [];
 const readySharedFocusIndexLookups: string[] = [];
 let sharedFocusIndexReady = true;
+let iconResolutionBarrier: { started: () => void; released: Promise<void> } | undefined;
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
         class EventEmitter<T> {
-            public event = (_listener: (value: T) => unknown) => ({ dispose: () => undefined });
-            public fire(_value: T): void { }
+            private readonly listeners: Array<(value: T) => unknown> = [];
+            public event = (listener: (value: T) => unknown) => {
+                this.listeners.push(listener);
+                return { dispose: () => undefined };
+            };
+            public fire(value: T): void { this.listeners.forEach(listener => listener(value)); }
         }
 
         return {
@@ -77,6 +84,8 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         || request === '../../util/featureflags') {
         return {
             isSharedFocusIndexEnabled: () => true,
+            isLocalisationIndexEnabled: () => false,
+            isUseConditionInFocusEnabled: () => false,
         };
     }
 
@@ -102,7 +111,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         return {
             getGfxContainerFile: async (gfxName: string) => {
                 gfxIndexLookups.push(gfxName);
-                return gfxName === 'GFX_LOCAL' ? indexedGfxFile : undefined;
+                return gfxName === 'GFX_LOCAL' ? indexedGfxFile : gfxName === 'GFX_SECOND' ? 'interface/second_icons.gfx' : undefined;
             },
         };
     }
@@ -120,6 +129,11 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             resolveFocusIconGfxAssets: async (iconNames: string[], resolver: { resolveIndexedFile: (gfxName: string) => Promise<string | undefined> }) => {
                 focusIconResolutionCalls.push([...iconNames]);
                 focusIconFallbackLimits.push((resolver as { fallbackScanLimit?: number }).fallbackScanLimit);
+                const barrier = iconResolutionBarrier;
+                if (barrier) {
+                    barrier.started();
+                    await barrier.released;
+                }
                 const gfxFileByIconName: Record<string, string> = {};
                 for (const iconName of iconNames) {
                     const gfxFile = await resolver.resolveIndexedFile(iconName);
@@ -159,6 +173,8 @@ const {
     resetPerfMetrics,
 } = require('../../src/util/perf') as typeof import('../../src/util/perf');
 
+const { FocusTreeLoaderAdapter } = require('../../src/previewdef/focustree/loaderadapter') as typeof LoaderAdapterModule;
+const { FocusTreeInvalidation } = require('../../src/previewdef/focustree/invalidation') as typeof InvalidationModule;
 nodeModule._load = originalLoad;
 
 describe('focustree loader', () => {
@@ -169,6 +185,7 @@ describe('focustree loader', () => {
         blockingSharedFocusIndexLookups.length = 0;
         readySharedFocusIndexLookups.length = 0;
         sharedFocusIndexReady = true;
+        iconResolutionBarrier = undefined;
     });
 
     it('propagates deferred asset loading to shared focus dependencies', async () => {
@@ -202,6 +219,120 @@ describe('focustree loader', () => {
         assert.ok(focusIconResolutionCalls.length >= 1);
         assert.ok(focusIconResolutionCalls.flat().includes('GFX_SHARED'));
         assert.deepStrictEqual(blockingSharedFocusIndexLookups, ['SHARED_EXT']);
+    });
+
+    it('prepares only the selected tree icons while retaining both trees and imported source focuses', async () => {
+        const originalSharedContent = fileContents[sharedFocusFile];
+        fileContents[sharedFocusFile] += `
+            shared_focus = { id = UNUSED_IMPORT icon = GFX_UNUSED_IMPORT x = 2 y = 0 }
+        `;
+        try {
+        const content = fileContents[mainFocusFile] + `
+            focus_tree = { id = SECOND focus = { id = SECOND_FOCUS icon = GFX_SECOND x = 1 y = 1 } }
+        `;
+        const root = new FocusTreeLoader(mainFocusFile);
+        const first = await root.createSnapshotLoader(async () => content, 'full', 'scope', { treeId: 'MAIN' })
+            .load(new LoaderSession(true));
+        assert.deepStrictEqual(first.result.focusTrees.map(tree => tree.id), ['MAIN', 'SECOND']);
+        assert.ok(first.result.focusTrees[0].focuses.SHARED_EXT);
+        assert.deepStrictEqual(first.result.assetTreeIds, ['MAIN']);
+        assert.strictEqual(focusIconResolutionCalls.length, 1, 'Imported source loaders must not resolve their own assets');
+        assert.ok(focusIconResolutionCalls[0].includes('GFX_SHARED'));
+        assert.ok(!focusIconResolutionCalls.flat().includes('GFX_SECOND'));
+        assert.ok(!focusIconResolutionCalls.flat().includes('GFX_UNUSED_IMPORT'));
+        const second = await root.createSnapshotLoader(async () => content, 'full', 'scope', { treeId: 'SECOND' })
+            .load(new LoaderSession(true));
+        assert.deepStrictEqual(second.result.assetTreeIds, ['SECOND']);
+        assert.deepStrictEqual(focusIconResolutionCalls.at(-1), ['GFX_SECOND']);
+        const unscoped = await root.createSnapshotLoader(async () => content, 'full', 'scope')
+            .load(new LoaderSession(true));
+        assert.strictEqual(unscoped.result.assetTreeIds, undefined);
+        assert.ok(focusIconResolutionCalls.at(-1)?.includes('GFX_SECOND'));
+        assert.ok(focusIconResolutionCalls.at(-1)?.includes('GFX_SHARED'));
+        } finally {
+            fileContents[sharedFocusFile] = originalSharedContent;
+        }
+    });
+
+    it('reuses scoped session states, retains watchers for loaded trees, and invalidates every asset scope', async () => {
+        const content = fileContents[mainFocusFile] + `
+            focus_tree = { id = SECOND focus = { id = SECOND_FOCUS icon = GFX_SECOND x = 1 y = 1 } }
+        `;
+        const dependencyUpdates: string[][] = [];
+        const adapter = new FocusTreeLoaderAdapter({
+            focusTreeLoader: new FocusTreeLoader(mainFocusFile),
+            updateDependencies: dependencies => dependencyUpdates.push(dependencies),
+        });
+        const first = await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'MAIN' });
+        const firstResolutionCount = focusIconResolutionCalls.length;
+        const repeatedFirst = await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.strictEqual(repeatedFirst, first);
+        assert.strictEqual(focusIconResolutionCalls.length, firstResolutionCount);
+        const second = await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'SECOND' });
+        assert.notStrictEqual(second, first);
+        assert.deepStrictEqual(second.assetTreeIds, ['SECOND']);
+        assert.ok(dependencyUpdates.at(-1)?.includes(indexedGfxFile));
+        assert.ok(dependencyUpdates.at(-1)?.includes('interface/second_icons.gfx'));
+        const returnedFirst = await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.notStrictEqual(returnedFirst, first, 'Only the most recent full source graph is retained');
+        assert.strictEqual(await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'MAIN' }), returnedFirst);
+        for (const invalidation of [FocusTreeInvalidation.Assets, FocusTreeInvalidation.Presentation, FocusTreeInvalidation.Localisation]) {
+            adapter.invalidate(invalidation);
+            assert.notStrictEqual(await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'MAIN' }), first);
+            assert.notStrictEqual(await adapter.buildBaseState(content, 10, {}, 'full', undefined, { treeId: 'SECOND' }), second);
+        }
+        const edited = await adapter.buildBaseState(content + '\n# edit', 11, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.notStrictEqual(edited, first);
+        adapter.dispose();
+    });
+
+    it('replaces obsolete watchers only after an invalidated refresh covers every loaded tree', async () => {
+        const content = fileContents[mainFocusFile] + `
+            focus_tree = { id = SECOND focus = { id = SECOND_FOCUS icon = GFX_SECOND x = 1 y = 1 } }
+        `;
+        const dependencyUpdates: string[][] = [];
+        const adapter = new FocusTreeLoaderAdapter({
+            focusTreeLoader: new FocusTreeLoader(mainFocusFile),
+            updateDependencies: dependencies => dependencyUpdates.push(dependencies),
+        });
+        await adapter.buildBaseState(content, 20, {}, 'full', undefined, { treeId: 'MAIN' });
+        await adapter.buildBaseState(content, 20, {}, 'full', undefined, { treeId: 'SECOND' });
+        adapter.invalidate(FocusTreeInvalidation.Assets);
+        assert.ok(dependencyUpdates.at(-1)?.includes(indexedGfxFile), 'Invalidation retains watchers until replacement');
+        const edited = content.replace('GFX_LOCAL', 'GFX_REPLACED');
+        await adapter.buildBaseState(edited, 21, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.ok(dependencyUpdates.at(-1)?.includes(indexedGfxFile), 'A one-tree load cannot drop another loaded scene manifest');
+        await adapter.buildBaseState(edited, 21, {}, 'full', undefined, { treeId: 'MAIN', treeIds: ['MAIN', 'SECOND'] });
+        assert.ok(!dependencyUpdates.at(-1)?.includes(indexedGfxFile), 'Complete refreshed scope removes obsolete assets');
+        assert.ok(dependencyUpdates.at(-1)?.includes('interface/second_icons.gfx'), 'Previously loaded scene remains watched');
+        adapter.dispose();
+    });
+
+    it('cannot repopulate scoped assets or watchers from a load invalidated mid-resolution', async () => {
+        let markStarted: () => void = () => undefined;
+        let release: () => void = () => undefined;
+        const started = new Promise<void>(resolve => { markStarted = resolve; });
+        iconResolutionBarrier = {
+            started: markStarted,
+            released: new Promise<void>(resolve => { release = resolve; }),
+        };
+        const dependencyUpdates: string[][] = [];
+        const adapter = new FocusTreeLoaderAdapter({
+            focusTreeLoader: new FocusTreeLoader(mainFocusFile),
+            updateDependencies: dependencies => dependencyUpdates.push(dependencies),
+        });
+        const pending = adapter.buildBaseState(fileContents[mainFocusFile], 12, {}, 'full', undefined, { treeId: 'MAIN' });
+        await started;
+        adapter.invalidate(FocusTreeInvalidation.Assets);
+        iconResolutionBarrier = undefined;
+        release();
+        const stale = await pending;
+        assert.strictEqual(dependencyUpdates.length, 0);
+        const current = await adapter.buildBaseState(fileContents[mainFocusFile], 12, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.notStrictEqual(current, stale);
+        assert.strictEqual(focusIconResolutionCalls.length, 2);
+        assert.ok(dependencyUpdates.at(-1)?.includes(indexedGfxFile));
+        adapter.dispose();
     });
 
     it('uses the GFX index during full asset loading so icons do not require explicit dependency headers', async () => {

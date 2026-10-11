@@ -39,10 +39,17 @@ export interface FocusTreeLoaderResult {
     focusIconAssetResolution: FocusIconAssetResolution;
     focusSpacing?: NumberPosition;
     deferredAssetLoad?: boolean;
+    /** Undefined retains the unscoped API; an empty list prepares structure only. */
+    assetTreeIds?: string[];
     presentation?: FocusPresentation;
 }
 
 export type FocusTreeAssetLoadMode = 'full' | 'deferred';
+
+export interface FocusTreeAssetScope {
+    treeId?: string;
+    treeIds?: readonly string[];
+}
 
 const focusesGFX = 'interface/goals.gfx';
 const focusTreeGuiFile = 'interface/nationalfocusview.gui';
@@ -55,6 +62,7 @@ interface FocusTreeSourceSnapshotCache {
 
 /** Icon GFX resolution for one set of icon names; cleared when assets or presentation change. */
 interface FocusIconAssetCache {
+    revision?: number;
     key?: string;
     resolution?: FocusIconAssetResolution;
 }
@@ -84,6 +92,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         private readonly sourceSnapshotKey?: string,
         private readonly priorityIconNames: string[] = [],
         private readonly iconAssetCache: FocusIconAssetCache = {},
+        private readonly assetScope?: FocusTreeAssetScope,
     ) {
         super(file, contentProvider);
     }
@@ -92,6 +101,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         contentProvider: () => Promise<string>,
         assetLoadMode: FocusTreeAssetLoadMode = this.assetLoadMode,
         sourceSnapshotKey?: string,
+        assetScope?: FocusTreeAssetScope,
     ): FocusTreeLoader {
         const loader = new FocusTreeLoader(
             this.file,
@@ -101,6 +111,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             sourceSnapshotKey,
             this.priorityIconNames,
             this.iconAssetCache,
+            assetScope,
         );
         this.copyDependencyLoadersTo(loader);
         return loader;
@@ -117,6 +128,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
     }
 
     public clearIconAssetResolution(): void {
+        this.iconAssetCache.revision = (this.iconAssetCache.revision ?? 0) + 1;
         this.iconAssetCache.key = undefined;
         this.iconAssetCache.resolution = undefined;
     }
@@ -179,13 +191,14 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         }
 
         const focusTreeDependencies = dependencies.filter(d => d.type === 'focus').map(d => d.path);
-        const focusTreeDependencyLoaderType = deferAssetLoad ? DeferredFocusTreeLoader : FocusTreeLoader;
+        const focusTreeDependencyLoaderType = deferAssetLoad ? DeferredFocusTreeLoader
+            : this.assetScope ? StructuralFocusTreeLoader : FullFocusTreeDependencyLoader;
         const focusTreeDepFiles = await this.loaderDependencies.loadMultiple(focusTreeDependencies, session, focusTreeDependencyLoaderType);
         session.throwIfCancelled();
         const focusSpacingDepFiles = await this.loaderDependencies.loadMultiple([focusTreeGuiFile], session, FocusSpacingLoader);
         session.throwIfCancelled();
         const focusSpacing = focusSpacingDepFiles[0]?.result.focusSpacing;
-        const presentationGuiFiles = deferAssetLoad ? [] : await this.loaderDependencies.loadMultiple(
+        const presentationGuiFiles = deferAssetLoad || this.assetScope?.treeId === '' ? [] : await this.loaderDependencies.loadMultiple(
             uniq([focusTreeGuiFile, ...dependencies.filter(d => d.type === 'gui').map(d => d.path)]), session, GuiFileLoader);
         const styleFiles = deferAssetLoad ? [] : await this.loaderDependencies.loadMultiple(
             ['common/national_focus/00_titlebar_styles.txt'], session, FocusTitleStyleLoader);
@@ -210,6 +223,11 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         }
         focusTrees.push(...importedFocusTrees.filter(tree => tree.kind === 'joint' && !focusTrees.some(localTree => localTree.id === tree.id)));
 
+        const selectedAssetTree = focusTrees.find(tree => tree.id === this.assetScope?.treeId) ?? focusTrees[0];
+        const assetTreeIds = this.assetScope?.treeIds;
+        const assetTrees = !this.assetScope ? focusTrees : this.assetScope.treeId === '' ? []
+            : assetTreeIds ? focusTrees.filter(tree => tree === selectedAssetTree || assetTreeIds.includes(tree.id))
+            : selectedAssetTree ? [selectedAssetTree] : [];
         const hasInlayRefs = !deferAssetLoad && focusTrees.some(focusTree => focusTree.inlayWindowRefs.length > 0);
         let loadedInlayFiles: string[] = [];
         if (!hasInlayRefs) {
@@ -236,13 +254,13 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             }
         }
 
-        const allInlays = focusTrees.flatMap(ft => ft.inlayWindows);
+        const allInlays = assetTrees.flatMap(ft => ft.inlayWindows);
         const guiResolution = deferAssetLoad
             ? { guiFiles: [], warnings: [] as ReturnType<typeof sortFocusWarnings> }
             : await resolveInlayGuiWindows(allInlays);
         session.throwIfCancelled();
         if (!deferAssetLoad) {
-            for (const focusTree of focusTrees) {
+            for (const focusTree of assetTrees) {
                 session.throwIfCancelled();
                 focusTree.warnings.push(...guiResolution.warnings.filter(w => focusTree.inlayWindows.some(inlay => inlay.id === w.source)));
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
@@ -254,7 +272,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             : await resolveInlayGfxFiles(allInlays);
         session.throwIfCancelled();
         if (!deferAssetLoad) {
-            for (const focusTree of focusTrees) {
+            for (const focusTree of assetTrees) {
                 session.throwIfCancelled();
                 addInlayGfxWarnings(focusTree.inlayWindows, focusTree.warnings);
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
@@ -263,7 +281,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
         const focusIconNames = deferAssetLoad
             ? []
-            : focusTrees
+            : assetTrees
                 .flatMap(ft => Object.values(ft.focuses))
                 .flatMap(focus => [
                     ...focus.icon.map(icon => icon.icon),
@@ -287,13 +305,14 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         ];
         const iconAssetNames = [...orderedFocusIconNames, ...collectPresentationSprites(presentation)];
         // Edits rarely change which icons a file uses; reuse the last resolution of the same set.
-        const iconAssetKey = deferAssetLoad
+        const iconAssetKey = deferAssetLoad || assetTrees.length === 0
             ? undefined
             : JSON.stringify([Array.from(new Set(iconAssetNames)).sort(), explicitGfxDependencies]);
+        const iconAssetRevision = this.iconAssetCache.revision;
         const cachedIconGfxAssets = iconAssetKey !== undefined && this.iconAssetCache.key === iconAssetKey
             ? this.iconAssetCache.resolution
             : undefined;
-        const iconGfxAssets = deferAssetLoad
+        const iconGfxAssets = deferAssetLoad || assetTrees.length === 0
             ? createEmptyFocusIconAssetResolution()
             : cachedIconGfxAssets ?? await resolveFocusIconGfxAssets(iconAssetNames, {
                 resolveIndexedFile: async gfxName => getGfxContainerFile(gfxName),
@@ -305,7 +324,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 fallbackScanLimit: 0,
                 throwIfCancelled: () => session.throwIfCancelled(),
             });
-        if (iconAssetKey !== undefined && !cachedIconGfxAssets) {
+        session.throwIfCancelled();
+        if (iconAssetKey !== undefined && !cachedIconGfxAssets && this.iconAssetCache.revision === iconAssetRevision) {
             this.iconAssetCache.key = iconAssetKey;
             this.iconAssetCache.resolution = iconGfxAssets;
         }
@@ -319,7 +339,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         ];
         const textureDependencies = iconGfxAssets.textureFiles;
         if (!deferAssetLoad && iconGfxAssets.unresolvedIconNames.length > 0) {
-            addMissingFocusIconWarnings(focusTrees, iconGfxAssets.unresolvedIconNames);
+            addMissingFocusIconWarnings(assetTrees, iconGfxAssets.unresolvedIconNames);
         }
 
         return {
@@ -330,6 +350,10 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusIconAssetResolution: iconGfxAssets,
                 focusSpacing,
                 deferredAssetLoad: deferAssetLoad,
+                assetTreeIds: this.assetScope ? [
+                    ...assetTrees.filter(tree => tree === selectedAssetTree),
+                    ...assetTrees.filter(tree => tree !== selectedAssetTree),
+                ].map(tree => tree.id) : undefined,
                 presentation,
             },
             dependencies: uniq([
@@ -350,6 +374,19 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
     public toString() {
         return `[FocusTreeLoader ${this.file}]`;
+    }
+}
+
+class FullFocusTreeDependencyLoader extends FocusTreeLoader {
+    constructor(file: string) {
+        super(file);
+    }
+}
+
+/** Imported trees supply all source data, but only their consumer prepares render assets. */
+class StructuralFocusTreeLoader extends FocusTreeLoader {
+    constructor(file: string) {
+        super(file, undefined, 'full', {}, undefined, [], {}, { treeId: '' });
     }
 }
 

@@ -55,6 +55,8 @@ export interface FocusTreeRenderPayload {
     /** Host-only source used to calculate patch signatures. Never sent to the webview. */
     sourceFocusTrees: FocusTree[];
     selectedTreeId?: string;
+    /** Host-only asset scope; omitted by unscoped callers. */
+    assetTreeIds?: string[];
     continuousFocusHtml?: string;
     /** GUI card templates by content key; see `fillFocusCardTemplate`. */
     focusTemplates: Record<string, string>;
@@ -85,6 +87,7 @@ export interface FocusTreeRenderPayload {
 export interface FocusTreeRenderBaseState {
     presentation?: FocusPresentation;
     focusTrees: FocusTree[];
+    assetTreeIds?: string[];
     allFocuses: Focus[];
     allInlays: FocusTree["inlayWindows"][number][];
     focusById: Record<string, Focus>;
@@ -117,6 +120,8 @@ export interface FocusTreeRenderPayloadBuildMetrics {
     focusCount: number;
     inlayCount: number;
     deferredAssetLoad: boolean;
+    renderedFocusCount?: number;
+    renderedInlayCount?: number;
 }
 
 export function renderFocusTreeShellHtml(
@@ -201,6 +206,7 @@ export async function buildFocusTreeRenderBaseState(
 
     return {
         focusTrees,
+        assetTreeIds: loadResult.result.assetTreeIds,
         allFocuses,
         allInlays,
         focusById,
@@ -251,6 +257,10 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const localisationResolveStart = Date.now();
     const focusLocalizationTextById = await prepareFocusTreeBaseStateForRender(baseState, isCancelled);
     const localisationResolveDurationMs = Date.now() - localisationResolveStart;
+    const assetTreeIds = baseState.assetTreeIds && new Set(baseState.assetTreeIds);
+    const assetTrees = assetTreeIds ? baseState.focusTrees.filter(tree => assetTreeIds.has(tree.id)) : baseState.focusTrees;
+    const assetFocuses = assetTreeIds ? assetTrees.flatMap(tree => Object.values(tree.focuses)) : baseState.allFocuses;
+    const assetInlays = assetTreeIds ? assetTrees.flatMap(tree => tree.inlayWindows) : baseState.allInlays;
     const focusIconAssetResolution = baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution();
     const focusIconStyleSignature = baseState.focusIconStyleSignature ?? focusIconAssetResolution.styleSignature;
     const styleTable = createFocusTreeStyleTable();
@@ -261,7 +271,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const focusIconStyleStart = Date.now();
     if (baseState.deferredAssetLoad) {
         await prepareDeferredFocusIconStyles(
-            baseState.allFocuses,
+            assetFocuses,
             styleTable,
             baseState.xGridSize,
             baseState.yGridSize,
@@ -269,7 +279,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
         );
     } else {
         await prepareFocusIconStyles(
-            baseState.allFocuses,
+            assetFocuses,
             styleTable,
             focusIconAssetResolution,
             baseState.xGridSize,
@@ -284,7 +294,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const focusTemplateRenderStart = Date.now();
     const focusCardTemplates = baseState.deferredAssetLoad
         ? { templates: {}, keyById: {} }
-        : await renderFocusCardTemplates(baseState, baseState.allFocuses, styleTable, isCancelled);
+        : await renderFocusCardTemplates(baseState, assetFocuses, styleTable, isCancelled);
     const focusTemplateRenderDurationMs = Date.now() - focusTemplateRenderStart;
     const focusRenderDurationMs = Date.now() - focusRenderStart;
 
@@ -293,15 +303,15 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const renderedInlayWindows: Record<string, string> = {};
     if (!baseState.deferredAssetLoad) {
         const inlayStyleStart = Date.now();
-        await prepareInlayGfxStyles(baseState.focusTrees, styleTable, isCancelled);
+        await prepareInlayGfxStyles(assetTrees, styleTable, isCancelled);
         throwIfFocusTreeRenderCancelled(isCancelled);
         inlayStyleDurationMs = Date.now() - inlayStyleStart;
-        for (let start = 0; start < baseState.allInlays.length; start += focusTreeAssetRenderBatchSize) {
-            const inlays = baseState.allInlays.slice(start, start + focusTreeAssetRenderBatchSize);
+        for (let start = 0; start < assetInlays.length; start += focusTreeAssetRenderBatchSize) {
+            const inlays = assetInlays.slice(start, start + focusTreeAssetRenderBatchSize);
             await Promise.all(inlays.map(async inlay => {
                 renderedInlayWindows[inlay.id] = (await renderInlayWindow(inlay, styleTable, baseState.gfxFiles)).replace(/\s\s+/g, ' ');
             }));
-            if (start + focusTreeAssetRenderBatchSize < baseState.allInlays.length) {
+            if (start + focusTreeAssetRenderBatchSize < assetInlays.length) {
                 await yieldToFocusTreeRenderCancellation(isCancelled);
             } else {
                 throwIfFocusTreeRenderCancelled(isCancelled);
@@ -316,7 +326,8 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
         payload: {
             focusTrees: preparedViews ?? toFocusTreeViews(baseState.focusTrees, focusLocalizationTextById),
             sourceFocusTrees: baseState.focusTrees,
-            selectedTreeId: baseState.focusTrees[0]?.id,
+            selectedTreeId: baseState.assetTreeIds?.[0] ?? baseState.focusTrees[0]?.id,
+            assetTreeIds: baseState.assetTreeIds,
             focusTemplates: focusCardTemplates.templates,
             focusTemplateKeyById: focusCardTemplates.keyById,
             continuousFocusHtml,
@@ -350,6 +361,8 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             inlayRenderDurationMs,
             focusCount: baseState.allFocuses.length,
             inlayCount: baseState.allInlays.length,
+            renderedFocusCount: assetFocuses.length,
+            renderedInlayCount: assetInlays.length,
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
     };

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ddsToPng, tgaToPng } from './util/image/converter';
+import { ddsToPng, ddsToPngBufferAsync, EncodedImage, tgaToPng } from './util/image/converter';
 import { PNG } from 'pngjs';
 import { localize } from './util/i18n';
 import { DDS } from './util/image/dds';
@@ -10,7 +10,7 @@ import { forceError, toArrayBuffer, UserError } from './util/common';
 import { readFile } from './util/vsccommon';
 import { getStaticResourceRoots } from './util/webview';
 import { formatByteSize, isImagePreviewWithinLimit, maxCustomEditorImageBytes } from './util/image/previewlimits';
-import { measureSync, recordPerf } from './util/perf';
+import { measureAsync, measureSync, recordPerf } from './util/perf';
 import { runCancellableOperation } from './services/cancellableOperation';
 
 abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider {
@@ -20,6 +20,12 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
     }
 
     public async resolveCustomEditor(document: vscode.CustomDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): Promise<void> {
+        const controller = new AbortController();
+        const cancellation = token.onCancellationRequested(() => controller.abort());
+        const panelDisposal = webviewPanel.onDidDispose?.(() => controller.abort());
+        if (token.isCancellationRequested) {
+            controller.abort();
+        }
         try {
             this.onOpen();
             webviewPanel.webview.options = {
@@ -36,10 +42,12 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
                 return;
             }
 
-            const png = measureSync('imagePreview.decode', { provider: this.previewKind, bytes: buffer.byteLength }, () =>
-                this.getPng(Buffer.from(buffer)));
-            const pngBuffer = measureSync('imagePreview.encodePng', { provider: this.previewKind, width: png.width, height: png.height }, () =>
-                PNG.sync.write(png));
+            const png = await measureAsync('imagePreview.process', { provider: this.previewKind, bytes: buffer.byteLength }, () =>
+                this.getEncodedImage(buffer, controller.signal));
+            if (controller.signal.aborted) {
+                return;
+            }
+            const pngBuffer = png.pngBuffer;
             recordPerf('imagePreview.totalBytes', 0, {
                 provider: this.previewKind,
                 sourceBytes: buffer.byteLength,
@@ -56,8 +64,19 @@ abstract class CommonViewProvider implements vscode.CustomReadonlyEditorProvider
                 [styleTable]
             );
         } catch (e) {
-            webviewPanel.webview.html = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
+            if (!controller.signal.aborted) {
+                webviewPanel.webview.html = `${localize('error', 'Error')}: <br/>  <pre>${htmlEscape(forceError(e).toString())}</pre>`;
+            }
+        } finally {
+            cancellation.dispose();
+            panelDisposal?.dispose();
         }
+    }
+
+    protected async getEncodedImage(buffer: Buffer, _signal: AbortSignal): Promise<EncodedImage> {
+        const png = measureSync('imagePreview.decode', { provider: this.previewKind, bytes: buffer.byteLength }, () => this.getPng(buffer));
+        const pngBuffer = measureSync('imagePreview.encodePng', { provider: this.previewKind, width: png.width, height: png.height }, () => PNG.sync.write(png));
+        return { width: png.width, height: png.height, pngBuffer };
     }
 
     private async readPreviewBuffer(uri: vscode.Uri, token: vscode.CancellationToken): Promise<Buffer | null> {
@@ -97,6 +116,10 @@ export class DDSViewProvider extends CommonViewProvider {
 
     protected onOpen(): void {
         sendEvent('preview.dds');
+    }
+
+    protected override getEncodedImage(buffer: Buffer, signal: AbortSignal): Promise<EncodedImage> {
+        return ddsToPngBufferAsync(DDS.parse(toArrayBuffer(buffer), 0), signal);
     }
 
     protected getPng(buffer: Buffer): PNG {

@@ -1,0 +1,30 @@
+guiTypes = {
+    containerWindowType = {
+        name = national_focus_item
+        size = { width = 165 height = 128 }
+        iconType = {
+            name = symbol
+            position = { x = 87.5 y = 52 }
+            centerposition = yes
+            spriteType = GFX_goal_unknown
+        }
+        iconType = {
+            name = bg
+            position = { x = 87.5 y = 105 }
+            centerposition = yes
+            spriteType = GFX_focus_unavailable
+        }
+        iconType = {
+            name = ornament
+            spriteType = GFX_routing_ornament
+        }
+        instantTextBoxType = {
+            name = name
+            position = { x = 14 y = 86 }
+            maxWidth = 147
+            maxHeight = 44
+            font = hoi4font_16
+            format = center
+        }
+    }
+}

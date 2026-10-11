@@ -1,6 +1,15 @@
 import * as assert from 'assert';
 import Module = require('module');
 import * as vscode from 'vscode';
+import type { FocusTreeAssetScope } from '../../src/previewdef/focustree/loader';
+import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from '../../src/previewdef/focustree/contentbuilder';
+import type * as FocusSchemaModule from '../../src/previewdef/focustree/schema';
+import type * as HoiParserModule from '../../src/hoiformat/hoiparser';
+import type * as RenderPatchModule from '../../src/previewdef/focustree/renderpayloadpatch';
+import type * as FocusViewModule from '../../src/previewdef/focustree/viewmodel';
+import type * as FocusIconAssetsModule from '../../src/previewdef/focustree/focusicongfx';
+import { applyFocusTreeContentUpdate } from '../../webviewsrc/focustree/messageapply';
+import type { FocusTreeMessageApplyContext } from '../../webviewsrc/focustree/messageapply';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -31,6 +40,11 @@ const { UserError } = require('../../src/util/common') as typeof import('../../s
 const { focusTreeProtocolVersion } = require('../../src/previewdef/focustree/viewmodel') as typeof import('../../src/previewdef/focustree/viewmodel');
 const localisationIndex = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
 const featureFlags = require('../../src/util/featureflags') as typeof import('../../src/util/featureflags');
+const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof FocusSchemaModule;
+const { parseHoi4File } = require('../../src/hoiformat/hoiparser') as typeof HoiParserModule;
+const { createFullFocusTreeRenderUpdate, createFocusTreeRenderCache } = require('../../src/previewdef/focustree/renderpayloadpatch') as typeof RenderPatchModule;
+const { toFocusTreeViews } = require('../../src/previewdef/focustree/viewmodel') as typeof FocusViewModule;
+const { createEmptyFocusIconAssetResolution } = require('../../src/previewdef/focustree/focusicongfx') as typeof FocusIconAssetsModule;
 const originalIsLocalisationIndexReady = localisationIndex.isLocalisationIndexReady;
 const originalWhenLocalisationIndexReady = localisationIndex.whenLocalisationIndexReady;
 const originalIsLocalisationIndexEnabled = featureFlags.isLocalisationIndexEnabled;
@@ -44,7 +58,7 @@ function createDocument(version: number): vscode.TextDocument {
     } as vscode.TextDocument;
 }
 
-function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
+function createBaseState(documentVersion: number, deferredAssetLoad: boolean): FocusTreeRenderBaseState {
     return {
         focusTrees: [],
         allFocuses: [],
@@ -52,6 +66,9 @@ function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
         focusById: {},
         gfxFiles: [],
         focusIconGfxFileByName: {},
+        focusIconAssetResolution: createEmptyFocusIconAssetResolution(),
+        focusIconStyleSignature: '',
+        localisationIndexReady: false,
         gridBox: { position: { x: 0, y: 0 } },
         xGridSize: 96,
         yGridSize: 130,
@@ -62,7 +79,7 @@ function createBaseState(documentVersion: number, deferredAssetLoad: boolean) {
         hasWarningsButton: false,
         loadDurationMs: 1,
         deferredAssetLoad,
-    };
+    } as unknown as FocusTreeRenderBaseState;
 }
 
 function createTreeView(id: string, focusId: string): any {
@@ -106,7 +123,7 @@ async function waitForCondition(predicate: () => boolean, message: string): Prom
 
 function createSession(overrides?: {
     runtimeState?: ReturnType<typeof createFocusTreeRuntimeState>;
-    buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean) => Promise<any>;
+    buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean, assetScope?: FocusTreeAssetScope) => Promise<FocusTreeRenderBaseState>;
     createFullSnapshot?: (baseState: any, previousCache: any, isCancelled?: () => boolean) => Promise<any>;
     renderShell?: (documentVersion: number) => string;
     latestDocument?: vscode.TextDocument | undefined;
@@ -187,7 +204,185 @@ function createSession(overrides?: {
     return { session, webview, postMessages, runtimeState, latestDocument };
 }
 
+async function createScopedConsumerSession(version: number) {
+    let sourceText = `
+        focus_tree = { id = A focus = { id = FOCUS_A icon = GFX_A x = 0 y = 0 } }
+        focus_tree = { id = B focus = { id = FOCUS_B icon = GFX_B x = 1 y = 0 } }
+    `;
+    let trees = getFocusTree(parseHoi4File(sourceText), [], 'common/national_focus/test.txt');
+    const assetRequests: string[][] = [];
+    let waitForSecondTree: Promise<void> | undefined;
+    let cancelledSecondTree: (() => boolean) | undefined;
+    const document = createDocument(version);
+    const fixture = createSession({
+        latestDocument: document,
+        buildBaseState: async (currentDocument, mode, isCancelled, scope) => {
+            const selected = scope?.treeId ?? 'A';
+            const ids = Array.from(new Set([selected, ...scope?.treeIds ?? []]));
+            assetRequests.push(ids);
+            if (selected === 'B' && waitForSecondTree) {
+                cancelledSecondTree = isCancelled;
+                await waitForSecondTree;
+            }
+            trees = getFocusTree(parseHoi4File(sourceText), [], 'common/national_focus/test.txt');
+            const allFocuses = trees.flatMap(tree => Object.values(tree.focuses));
+            return {
+                ...createBaseState(currentDocument.version, mode === 'deferred'),
+                focusTrees: trees,
+                allFocuses,
+                focusById: Object.fromEntries(allFocuses.map(focus => [focus.id, focus])),
+                assetTreeIds: ids,
+                hasFocusSelector: true,
+                focusIconStyleSignature: JSON.stringify(allFocuses.map(focus => focus.icon)),
+            };
+        },
+        createFullSnapshot: async (baseState, previousCache) => {
+            const ids: string[] = baseState.assetTreeIds;
+            const focuses = trees.filter(tree => ids.includes(tree.id)).flatMap(tree => Object.values(tree.focuses));
+            const keyById = Object.fromEntries(focuses.map(focus => [focus.id, focus.id]));
+            const templates = Object.fromEntries(focuses.map(focus => [
+                focus.id, `<div>${focus.id}</div>`,
+            ]));
+            // Asset production is deterministic here; the session consumes real render caches.
+            const payload = {
+                ...baseState,
+                focusTrees: toFocusTreeViews(trees),
+                sourceFocusTrees: trees,
+                selectedTreeId: ids[0],
+                focusTemplates: templates,
+                focusTemplateKeyById: keyById,
+                renderedInlayWindows: {},
+                dynamicStyleCss: ids.map(id => `.${id} {}`).join('\n'),
+                dynamicStyleRules: new Map<string, string>(),
+            } as unknown as FocusTreeRenderPayload;
+            const { update, cache } = createFullFocusTreeRenderUpdate(payload, previousCache);
+            return { payload, update, cache, metrics: { renderedFocusCount: focuses.length } };
+        },
+    });
+    fixture.runtimeState.lastRenderCache = createFocusTreeRenderCache({
+        ...createBaseState(version, false),
+        focusTrees: toFocusTreeViews(trees),
+        sourceFocusTrees: trees,
+        selectedTreeId: 'A',
+        assetTreeIds: ['A'],
+        focusTemplates: { FOCUS_A: '<div>FOCUS_A</div>' },
+        focusTemplateKeyById: { FOCUS_A: 'FOCUS_A' },
+        renderedInlayWindows: {},
+        dynamicStyleCss: '.A {}',
+        dynamicStyleRules: new Map<string, string>(),
+        hasFocusSelector: true,
+    } as unknown as FocusTreeRenderPayload);
+    fixture.session.handleWebviewReady('A');
+    await fixture.session.refreshDocument(document, { assetLoadMode: 'full' });
+    return {
+        ...fixture, document, assetRequests,
+        blockSecondTree: (promise: Promise<void>) => { waitForSecondTree = promise; },
+        isSecondTreeCancelled: () => cancelledSecondTree?.() ?? false,
+        changeFirstIcon: () => { sourceText = sourceText.replace('GFX_A', 'GFX_A_EDITED'); },
+    };
+}
+
 describe('focustree preview session', () => {
+    it('lazily hydrates disjoint tree assets, reuses them on return, and refreshes all loaded scenes after an edit', async () => {
+        const fixture = await createScopedConsumerSession(60);
+        assert.deepStrictEqual(fixture.assetRequests, [['A']]);
+        assert.deepStrictEqual(Object.keys(fixture.runtimeState.lastRenderCache?.focusTemplateKeyById ?? {}), ['FOCUS_A']);
+        await fixture.session.handleSceneRequest('B');
+        assert.deepStrictEqual(fixture.assetRequests, [['A'], ['B']]);
+        assert.deepStrictEqual(Object.keys(fixture.runtimeState.lastRenderCache?.focusRenderSignatures ?? {}).sort(), ['FOCUS_A', 'FOCUS_B']);
+        const second = fixture.postMessages.at(-1);
+        assert.deepStrictEqual(second.catalog.map((tree: { id: string }) => tree.id), ['A', 'B']);
+        assert.strictEqual(second.focusTemplates.FOCUS_B, '<div>FOCUS_B</div>');
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.focusTemplates.FOCUS_A, '<div>FOCUS_A</div>');
+        await fixture.session.handleSceneRequest('A');
+        assert.deepStrictEqual(fixture.assetRequests, [['A'], ['B']], 'Returning to a hydrated tree must not prepare assets again');
+        assert.strictEqual(fixture.postMessages.at(-1).focusTemplates.FOCUS_A, '<div>FOCUS_A</div>');
+        const updated = createDocument(61);
+        fixture.changeFirstIcon();
+        fixture.latestDocument.current = updated;
+        await fixture.session.refreshDocument(updated, { assetLoadMode: 'full' });
+        assert.deepStrictEqual(fixture.assetRequests.at(-1), ['A', 'B']);
+        const firstAfterEdit = fixture.runtimeState.lastRenderCache?.focusTrees.find(tree => tree.id === 'A');
+        assert.strictEqual(firstAfterEdit?.focuses.FOCUS_A.icon[0].icon, 'GFX_A_EDITED');
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.focusTemplates.FOCUS_B, '<div>FOCUS_B</div>');
+        fixture.session.dispose();
+    });
+
+    it('keeps client-local return selection across an in-flight scene and a structural refresh', async () => {
+        const fixture = await createScopedConsumerSession(62);
+        let releaseSecond: () => void = () => undefined;
+        fixture.blockSecondTree(new Promise<void>(resolve => { releaseSecond = resolve; }));
+        const request = fixture.session.handleSceneRequest('B');
+        releaseSecond();
+        await request;
+        const merged = fixture.postMessages.at(-1);
+        assert.deepStrictEqual(merged.focusTrees.map((tree: { id: string }) => tree.id), ['A', 'B'],
+            'Both loaded scenes let the existing consumer preserve a local return to A');
+        let selectedTreeId: string | undefined = 'A';
+        const consumer: FocusTreeMessageApplyContext = {
+            getSnapshotVersion: () => 0, setSnapshotVersion: () => undefined,
+            getDocumentVersion: () => 0, setDocumentVersion: () => undefined,
+            setFocusPositionActiveFile: () => undefined,
+            getCurrentSelectionTreeId: () => selectedTreeId,
+            setSelectedFocusTreeById: id => { selectedTreeId = id; },
+            setFocusTrees: () => undefined, applyFocusTreePatches: () => undefined,
+            setFocusTemplates: () => undefined, patchFocusTemplates: () => undefined,
+            setRenderedInlayWindows: () => undefined, patchRenderedInlayWindows: () => undefined,
+            refreshFocusTreeSelectorOptions: () => undefined, refreshWarningsButtonVisibility: () => undefined,
+            setGridBox: () => undefined, setGridSizeX: () => undefined, setGridSizeY: () => undefined,
+            replaceDynamicStyleCss: () => undefined,
+        };
+        assert.strictEqual(applyFocusTreeContentUpdate(merged, consumer), true);
+        assert.strictEqual(selectedTreeId, 'A', 'Late hydration must not override a cached client-local switch');
+        // The client changes back to A without a second host request.
+        const updated = createDocument(63);
+        fixture.changeFirstIcon();
+        fixture.latestDocument.current = updated;
+        await fixture.session.refreshDocument(updated, { assetLoadMode: 'full' });
+        const refreshed = fixture.postMessages.at(-1);
+        if (refreshed.focusTrees) {
+            assert.deepStrictEqual(refreshed.focusTrees.map((tree: { id: string }) => tree.id), ['A', 'B']);
+        }
+        assert.strictEqual(applyFocusTreeContentUpdate(refreshed, consumer), true);
+        assert.strictEqual(selectedTreeId, 'A', 'Invalidation must preserve the current client selection');
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.focusTrees.find(tree => tree.id === 'A')?.focuses.FOCUS_A.icon[0].icon, 'GFX_A_EDITED');
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.focusTemplates.FOCUS_B, '<div>FOCUS_B</div>');
+        fixture.session.dispose();
+    });
+    it('hydrates already visible deferred scenes when switching before initial assets are ready', async () => {
+        const fixture = await createScopedConsumerSession(65);
+        const cache = fixture.runtimeState.lastRenderCache;
+        assert.ok(cache);
+        cache.deferredAssetLoad = true;
+        cache.focusTemplates = {};
+        cache.focusTemplateKeyById = {};
+        await fixture.session.handleSceneRequest('B');
+        assert.deepStrictEqual(fixture.assetRequests.at(-1), ['B', 'A']);
+        const scene = fixture.postMessages.at(-1);
+        assert.deepStrictEqual(scene.focusTrees.map((tree: { id: string }) => tree.id), ['A', 'B']);
+        assert.strictEqual(scene.focusTemplates.FOCUS_A, '<div>FOCUS_A</div>');
+        assert.strictEqual(scene.focusTemplates.FOCUS_B, '<div>FOCUS_B</div>');
+        fixture.session.dispose();
+    });
+
+
+    it('does not publish or cache a stale lazy hydration after a rapid switch back', async () => {
+        const fixture = await createScopedConsumerSession(64);
+        let releaseSecond: () => void = () => undefined;
+        fixture.blockSecondTree(new Promise<void>(resolve => { releaseSecond = resolve; }));
+        const request = fixture.session.handleSceneRequest('B');
+        await fixture.session.handleSceneRequest('A');
+        assert.strictEqual(fixture.isSecondTreeCancelled(), true);
+        const messageCount = fixture.postMessages.length;
+        releaseSecond();
+        await request;
+        assert.strictEqual(fixture.postMessages.length, messageCount);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.selectedTreeId, 'A');
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.assetTreeIds, ['A']);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.focusTemplates.FOCUS_B, undefined);
+        fixture.session.dispose();
+    });
+
     beforeEach(() => {
         (localisationIndex as any).isLocalisationIndexReady = () => false;
         (localisationIndex as any).whenLocalisationIndexReady = () => pendingLocalisationReady;
@@ -289,6 +484,10 @@ describe('focustree preview session', () => {
         const document = createDocument(42);
         const firstTree = createTreeView('first_tree', 'FIRST');
         const secondTree = createTreeView('second_tree', 'SECOND');
+        const sourceTrees = getFocusTree(parseHoi4File(`
+            focus_tree = { id = first_tree focus = { id = FIRST x = 0 y = 0 } }
+            focus_tree = { id = second_tree focus = { id = SECOND x = 0 y = 0 } }
+        `), [], 'common/national_focus/test.txt');
         const { session, postMessages } = createSession({
             deferredHydrationDelayMs: 10_000,
             createFullSnapshot: async baseState => ({
@@ -311,32 +510,19 @@ describe('focustree preview session', () => {
                     xGridSize: 96,
                     yGridSize: 130,
                 },
-                cache: {
-                    snapshotVersion: 1,
-                    selectedTreeId: 'first_tree',
+                cache: createFocusTreeRenderCache({
+                    ...baseState,
                     focusTrees: [firstTree, secondTree],
+                    sourceFocusTrees: sourceTrees,
+                    selectedTreeId: 'first_tree',
                     focusTemplates: { first: '<div>first</div>', second: '<div>second</div>' },
                     focusTemplateKeyById: { FIRST: 'first', SECOND: 'second' },
                     renderedInlayWindows: {},
-                    focusIconGfxFileByName: {},
-                    focusIconStyleSignature: '',
-                    gridBox: baseState.gridBox,
                     dynamicStyleCss: '',
-                    xGridSize: 96,
-                    yGridSize: 130,
-                    focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
-                    focusPositionActiveFile: baseState.focusPositionActiveFile,
                     hasFocusSelector: true,
-                    hasWarningsButton: false,
-                    deferredAssetLoad: true,
-                    localisationIndexReady: false,
-                    treePatchSignatures: {},
-                    treeStructureSignatures: {},
-                    focusRenderSignatures: {},
-                    inlayRenderSignatures: {},
-                    styleDependencySignature: '',
-                },
-                metrics: { focusCount: 2, inlayCount: 0, deferredAssetLoad: true },
+                    deferredAssetLoad: baseState.deferredAssetLoad,
+                } as unknown as FocusTreeRenderPayload),
+                metrics: { focusCount: 2, inlayCount: 0, deferredAssetLoad: baseState.deferredAssetLoad },
             }) as any,
         });
 

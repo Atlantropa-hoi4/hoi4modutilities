@@ -14,8 +14,11 @@ The later focus tree preview refactor is described in
   longer consume the JavaScript call stack; missing and cyclic anchors retain their prior
   zero-origin behavior. Relative-position validation uses disjoint sets and walks only
   detected cycles, preserving warning paths and navigation ranges.
-- Scene geometry retains an adjacency index. Measuring one focus only revisits its
-  incident edges. Identical bounds and identical paths do not request SVG updates.
+- Scene geometry retains adjacency and shared prerequisite route indexes. Measuring one
+  focus revisits its incident exclusive links and the prerequisite rails connected to it,
+  including other branches that share a rail. Identical bounds and identical paths do not
+  request SVG updates. Caption/frame bounds determine outgoing ports independently of
+  decorative overlays and transparent symbol padding.
 - SVG elements are indexed by edge ID. Hover checks use endpoint IDs instead of repeatedly
   searching CSS classes for every related focus.
 - Measurements requested during mounting, hydration, or visibility changes are deduplicated

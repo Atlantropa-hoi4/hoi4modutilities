@@ -1,5 +1,9 @@
 import * as assert from 'assert';
 import Module = require('module');
+import type { FocusTreeRenderBaseState } from '../../src/previewdef/focustree/contentbuilder';
+import type * as FocusSchema from '../../src/previewdef/focustree/schema';
+import type * as HoiParser from '../../src/hoiformat/hoiparser';
+import type * as FocusIconAssets from '../../src/previewdef/focustree/focusicongfx';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -70,6 +74,8 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
                 resolvedFileCalls.push({ name, gfxFiles });
                 return name === 'GFX_FOCUS_A'
                     ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
+                    : name === 'GFX_FOCUS_B'
+                        ? { image: { width: 64, height: 64, uri: 'second-icon.png' } }
                     : name === 'GFX_INLAY'
                         ? {
                             image: { width: 48, height: 48, uri: 'inlay-icon.png' },
@@ -93,6 +99,9 @@ nodeModule._load = mockLoad;
 const {
     buildFocusTreeRenderPayloadFromBaseState,
 } = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof FocusSchema;
+const { parseHoi4File } = require('../../src/hoiformat/hoiparser') as typeof HoiParser;
+const { createEmptyFocusIconAssetResolution } = require('../../src/previewdef/focustree/focusicongfx') as typeof FocusIconAssets;
 
 describe('focustree contentbuilder', () => {
     beforeEach(() => {
@@ -105,6 +114,46 @@ describe('focustree contentbuilder', () => {
 
     after(() => {
         nodeModule._load = originalLoad;
+    });
+
+    it('retains the complete source catalog but decodes and styles only the selected tree', async () => {
+        const trees = getFocusTree(parseHoi4File(`
+            focus_tree = { id = tree_a focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 } }
+            focus_tree = { id = tree_b focus = { id = FOCUS_B icon = GFX_FOCUS_B x = 1 y = 0 } }
+        `), [], 'common/national_focus/test.txt');
+        const allFocuses = trees.flatMap(tree => Object.values(tree.focuses));
+        const resolution = {
+            ...createEmptyFocusIconAssetResolution(),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            gfxFileByIconName: { GFX_FOCUS_A: 'interface/custom_icons.gfx', GFX_FOCUS_B: 'interface/custom_icons.gfx' },
+        };
+        // Match the existing simplified grid fixture used by this suite.
+        const base = {
+            focusTrees: trees, allFocuses, allInlays: [],
+            focusById: Object.fromEntries(allFocuses.map(focus => [focus.id, focus])),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            focusIconGfxFileByName: {}, focusIconAssetResolution: resolution,
+            focusIconStyleSignature: resolution.styleSignature,
+            gridBox: { position: { x: 0, y: 0 } }, xGridSize: 96, yGridSize: 130,
+            focusPositionDocumentVersion: 1, focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {}, hasFocusSelector: true, hasWarningsButton: false,
+            loadDurationMs: 0, deferredAssetLoad: false, localisationIndexReady: false,
+        } as unknown as FocusTreeRenderBaseState;
+        const first = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_a'] });
+        assert.deepStrictEqual(first.payload.focusTrees.map(tree => tree.id), ['tree_a', 'tree_b']);
+        assert.deepStrictEqual(first.payload.sourceFocusTrees, trees);
+        assert.strictEqual(first.metrics.focusCount, 2);
+        assert.strictEqual(first.metrics.renderedFocusCount, 1);
+        assert.match(first.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_A/);
+        assert.match(first.payload.dynamicStyleCss, /test-icon\.png/);
+        assert.doesNotMatch(first.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_B|second-icon\.png/);
+        resolvedFileCalls.length = 0;
+        const second = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_b'] });
+        assert.strictEqual(second.payload.selectedTreeId, 'tree_b');
+        assert.strictEqual(second.metrics.renderedFocusCount, 1);
+        assert.match(second.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_B/);
+        assert.match(second.payload.dynamicStyleCss, /second-icon\.png/);
+        assert.doesNotMatch(second.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_A|test-icon\.png/);
     });
 
     it('keeps deferred focus icon styles lightweight while using ready localisation', async () => {
@@ -610,9 +659,9 @@ describe('focustree contentbuilder', () => {
         };
         let cancelled = false;
         const isCancelled = () => cancelled;
-        setTimeout(() => {
+        const cancellation = setImmediate(() => {
             cancelled = true;
-        }, 0);
+        });
 
         await assert.rejects(
             buildFocusTreeRenderPayloadFromBaseState({
@@ -635,7 +684,7 @@ describe('focustree contentbuilder', () => {
                 localisationIndexReady: true,
             } as any, isCancelled),
             /Focus tree render cancelled/,
-        );
+        ).finally(() => clearImmediate(cancellation));
 
         assert.ok(localisationCalls.length < focuses.length);
     });
@@ -669,9 +718,9 @@ describe('focustree contentbuilder', () => {
             warnings: [],
         };
         let cancelled = false;
-        setTimeout(() => {
+        const cancellation = setImmediate(() => {
             cancelled = true;
-        }, 0);
+        });
 
         await assert.rejects(
             buildFocusTreeRenderPayloadFromBaseState({
@@ -704,7 +753,7 @@ describe('focustree contentbuilder', () => {
                 localisationIndexReady: false,
             } as any, () => cancelled),
             /Focus tree render cancelled/,
-        );
+        ).finally(() => clearImmediate(cancellation));
 
         assert.strictEqual(resolvedFileCalls.length, 32);
     });
@@ -739,9 +788,9 @@ describe('focustree contentbuilder', () => {
             warnings: [],
         };
         let cancelled = false;
-        setTimeout(() => {
+        const cancellation = setImmediate(() => {
             cancelled = true;
-        }, 0);
+        });
 
         await assert.rejects(
             buildFocusTreeRenderPayloadFromBaseState({
@@ -774,7 +823,7 @@ describe('focustree contentbuilder', () => {
                 localisationIndexReady: false,
             } as any, () => cancelled),
             /Focus tree render cancelled/,
-        );
+        ).finally(() => clearImmediate(cancellation));
 
         assert.strictEqual(resolvedFileCalls.length, 32);
     });

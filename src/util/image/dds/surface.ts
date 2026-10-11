@@ -13,6 +13,10 @@ export class Surface {
     ) {
     }
 
+    public getPixelData(): Uint8Array {
+        return new Uint8Array(this.buffer, this.offset, this.length);
+    }
+
     public getFullRgba(): Uint8Array {
         if (!this.pixelFormat.compressed) {
             return this.getFullRgbaFromRawPixels(this.pixelFormat);

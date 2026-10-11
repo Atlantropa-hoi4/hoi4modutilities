@@ -36,6 +36,8 @@ const fileReadConcurrencyLimit = 12;
 let activeFileReadCount = 0;
 const queuedFileReads: Array<() => void> = [];
 const selectedModRootCacheFreshnessMs = 5 * 1000;
+const openedDocumentIds = new WeakMap<vscode.TextDocument, number>();
+let nextOpenedDocumentId = 0;
 
 interface SelectedModRootCacheEntry {
     candidates: vscode.Uri[];
@@ -254,7 +256,18 @@ export async function expiryToken(realPath: vscode.Uri | undefined): Promise<str
     }
 
     if (isHoiFileOpened(realPath)) {
-        return realPath.toString() + '@' + Date.now();
+        const originalUri = getHoiOpenedFileOriginalUri(realPath);
+        const document = getDocumentByUri(originalUri);
+        if (document) {
+            let documentId = openedDocumentIds.get(document);
+            if (documentId === undefined) {
+                documentId = ++nextOpenedDocumentId;
+                openedDocumentIds.set(document, documentId);
+            }
+            return realPath.toString() + '@document:' + documentId + ':' + document.version;
+        }
+
+        realPath = originalUri;
     } else if (isHoiFileFromDlc(realPath)) {
         return realPath.with({ fragment: '' }).toString() + '@' + await getLastModifiedAsync(realPath);
     }

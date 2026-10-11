@@ -11,7 +11,7 @@ import {
     FocusTreeRenderCache,
     FocusTreeRenderPreparation,
 } from "./renderpayloadpatch";
-import { FocusTreeAssetLoadMode } from "./loader";
+import { FocusTreeAssetLoadMode, FocusTreeAssetScope } from "./loader";
 import { FocusTreeSnapshot } from "./runtime";
 import { FocusTreeInvalidation } from './invalidation';
 
@@ -48,6 +48,7 @@ export class FocusTreeSnapshotBuilder {
         document: vscode.TextDocument,
         assetLoadMode: FocusTreeAssetLoadMode,
         isCancelled?: () => boolean,
+        assetScope?: FocusTreeAssetScope,
     ): Promise<FocusTreeRenderBaseState> {
         return this.loaderAdapter.buildBaseState(
             document.getText(),
@@ -55,6 +56,7 @@ export class FocusTreeSnapshotBuilder {
             this.getConditionPresetsByTree(),
             assetLoadMode,
             isCancelled,
+            assetScope,
         );
     }
 

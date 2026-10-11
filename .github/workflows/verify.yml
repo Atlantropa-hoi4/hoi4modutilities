@@ -24,6 +24,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Use Rust with WASM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Verify Rust compute kernels
+        run: cargo test --manifest-path rust/hoi4-compute/Cargo.toml --offline --locked
+
       - name: Install dependencies
         run: npm ci
 

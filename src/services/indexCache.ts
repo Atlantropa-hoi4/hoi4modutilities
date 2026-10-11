@@ -7,6 +7,13 @@ export interface IndexCacheSpec {
     folder: string;
     extension: string;
     layer: 'global' | 'workspace' | 'all';
+    /**
+     * Filters paths relative to folder before URI resolution and version reads.
+     * Must match the builder's inputs. A getter can capture a configuration snapshot;
+     * it is read once per fingerprint. The predicate itself is not serialized, so
+     * selector settings must be covered by the cache namespace/fingerprint config.
+     */
+    includeFile?: (file: string) => boolean;
 }
 
 export const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
@@ -14,13 +21,14 @@ export const digest = (text: string): string => createHash('sha256').update(text
 export async function indexFingerprint(spec: IndexCacheSpec, signal: AbortSignal): Promise<string> {
     const { getFilePathFromModOrHOI4, listFilesFromModOrHOI4, expiryToken, readFileFromPath, isHoiFileOpened } = require('../util/fileloader') as typeof import('../util/fileloader');
     const config = vscode.workspace.getConfiguration('hoi4ModUtilities');
+    const { includeFile, ...fingerprintSpec } = spec;
     const layers = spec.layer === 'global' ? [{ mod: false, hoi4: true, dlc: false }, { mod: false, hoi4: false, dlc: true }]
         : spec.layer === 'workspace' ? [{ mod: true, hoi4: false, dlc: false }] : [{}];
     const entries: string[] = [];
     for (const options of layers) {
         signal.throwIfAborted();
         const files = (await listFilesFromModOrHOI4(spec.folder, { ...options, recursively: true }))
-            .filter(file => file.toLowerCase().endsWith(spec.extension)).sort();
+            .filter(file => file.toLowerCase().endsWith(spec.extension) && (!includeFile || includeFile(file))).sort();
         entries.push(...await mapWithConcurrency(files, 8, async file => {
             signal.throwIfAborted();
             const uri = await getFilePathFromModOrHOI4(`${spec.folder}/${file}`, options);
@@ -28,7 +36,7 @@ export async function indexFingerprint(spec: IndexCacheSpec, signal: AbortSignal
             return JSON.stringify([options, file, uri?.toString(), version]);
         }));
     }
-    return digest(JSON.stringify([spec, config.installPath, config.loadDlcContents, config.modFile, config.previewLocalisation,
+    return digest(JSON.stringify([fingerprintSpec, config.installPath, config.loadDlcContents, config.modFile, config.previewLocalisation,
         vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString()), entries]));
 }
 

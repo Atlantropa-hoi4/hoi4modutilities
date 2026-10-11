@@ -16,6 +16,7 @@ const mockReadCounts = new Map<string, number>();
 const mockDirectoryReadCounts = new Map<string, number>();
 const mockModifiedTimes = new Map<string, number>();
 const mockDirectoryEntries = new Map<string, Array<[string, number]>>();
+const mockTextDocuments: Array<{ uri: ReturnType<typeof createMockUri>; version: number; getText: () => string }> = [];
 let mockReadDelayMs = 0;
 let mockDirectoryReadDelayMs = 0;
 let mockConfigurationModFile = '';
@@ -26,12 +27,14 @@ function normalizeMockPath(value: string): string {
     return path.normalize(value).toLowerCase();
 }
 
-function createMockUri(value: string) {
+function createMockUri(value: string, fragment = '') {
     return {
         fsPath: value,
         path: value,
         scheme: 'file',
-        toString: () => `file:///${value}`,
+        fragment,
+        toString: () => `file:///${value}${fragment ? '#' + fragment : ''}`,
+        with: (change: { fragment: string }) => createMockUri(value, change.fragment),
     };
 }
 
@@ -52,17 +55,13 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                         toString: () => value,
                     };
                 },
-                file: (value: string) => ({ fsPath: value, path: value, scheme: 'file', toString: () => `file:///${value}` }),
-                joinPath: (base: { fsPath?: string; path?: string }, ...segments: string[]) => ({
-                    fsPath: path.join(base.fsPath ?? base.path ?? '', ...segments),
-                    path: path.join(base.path ?? base.fsPath ?? '', ...segments),
-                    scheme: 'file',
-                    toString: () => `file:///${path.join(base.path ?? base.fsPath ?? '', ...segments)}`,
-                }),
+                file: createMockUri,
+                joinPath: (base: { fsPath?: string; path?: string }, ...segments: string[]) =>
+                    createMockUri(path.join(base.fsPath ?? base.path ?? '', ...segments)),
             },
             workspace: {
                 workspaceFolders: mockWorkspaceFolders,
-                textDocuments: [],
+                textDocuments: mockTextDocuments,
                 getConfiguration: () => ({
                     installPath: mockConfigurationInstallPath,
                     loadDlcContents: mockConfigurationLoadDlcContents,
@@ -116,11 +115,13 @@ const {
     clearDlcZipCache,
     createFileLoaderCacheKey,
     createSelectedModSourceCacheKey,
+    expiryToken,
     getModRootCandidatePaths,
     isPathCoveredByReplacePath,
     listFilesInDlcZipEntries,
     listFilesFromModOrHOI4,
     readFileFromModOrHOI4,
+    readFileFromPath,
     refreshFileContentSource,
 } = require('../../src/util/fileloader') as typeof import('../../src/util/fileloader');
 const {
@@ -136,6 +137,7 @@ for (const moduleId of Object.keys(require.cache)) {
 describe('fileloader mod root helpers', () => {
     beforeEach(() => {
         mockWorkspaceFolders.length = 0;
+        mockTextDocuments.length = 0;
         mockFiles.clear();
         mockDirectories.clear();
         mockReadContents.clear();
@@ -149,6 +151,77 @@ describe('fileloader mod root helpers', () => {
         mockConfigurationLoadDlcContents = false;
         mockConfigurationInstallPath = '';
         clearDlcZipCache();
+    });
+
+    it('keeps open-document expiry stable until an unsaved edit changes its version', async () => {
+        const root = path.join('C:', 'workspace-open-expiry');
+        const relativePath = 'common/dependency.txt';
+        const uri = createMockUri(path.join(root, relativePath));
+        let text = 'unsaved initial';
+        let textReads = 0;
+        const document = { uri, version: 1, getText: () => { textReads++; return text; } };
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockFiles.add(normalizeMockPath(uri.fsPath));
+        mockTextDocuments.push(document);
+        const openedUri = uri.with({ fragment: ':opened' });
+        const originalNow = Date.now;
+        let now = 1000;
+        Date.now = () => now++;
+
+        try {
+            const initial = await expiryToken(openedUri as any);
+            assert.strictEqual(await expiryToken(openedUri as any), initial);
+            assert.strictEqual(textReads, 0);
+            const [buffer, resolvedUri] = await readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false });
+            assert.strictEqual(buffer.toString(), text);
+            assert.strictEqual(resolvedUri.toString(), openedUri.toString());
+            assert.strictEqual(mockReadCounts.size, 0);
+
+            text = 'unsaved changed';
+            document.version++;
+            const edited = await expiryToken(openedUri as any);
+            assert.notStrictEqual(edited, initial);
+            assert.strictEqual(await expiryToken(openedUri as any), edited);
+            assert.strictEqual((await readFileFromPath(openedUri as any))[0].toString(), text);
+        } finally {
+            Date.now = originalNow;
+        }
+    });
+
+    it('invalidates open-document expiry on close and reopen at the same URI and version', async () => {
+        const uri = createMockUri(path.join('C:', 'workspace-reopened', 'common', 'dependency.txt'));
+        const openedUri = uri.with({ fragment: ':opened' });
+        mockFiles.add(normalizeMockPath(uri.fsPath));
+        mockReadContents.set(normalizeMockPath(uri.fsPath), 'disk contents');
+        mockTextDocuments.push({ uri, version: 1, getText: () => 'first unsaved contents' });
+        const initial = await expiryToken(openedUri as any);
+
+        mockTextDocuments.length = 0;
+        const closed = await expiryToken(openedUri as any);
+        assert.notStrictEqual(closed, initial);
+        assert.strictEqual(closed, await expiryToken(uri as any));
+        const [buffer, resolvedUri] = await readFileFromPath(openedUri as any);
+        assert.strictEqual(buffer.toString(), 'disk contents');
+        assert.strictEqual(resolvedUri.toString(), uri.toString());
+
+        mockTextDocuments.push({ uri: createMockUri(uri.fsPath), version: 1, getText: () => 'reopened unsaved contents' });
+        const reopened = await expiryToken(openedUri as any);
+        assert.notStrictEqual(reopened, initial);
+        assert.notStrictEqual(reopened, closed);
+        assert.strictEqual(await expiryToken(openedUri as any), reopened);
+        assert.strictEqual((await readFileFromPath(openedUri as any))[0].toString(), 'reopened unsaved contents');
+    });
+
+    it('preserves missing, disk and DLC expiry tokens', async () => {
+        const uri = createMockUri(path.join('C:', 'expiry', 'archive.zip'));
+        mockFiles.add(normalizeMockPath(uri.fsPath));
+        mockModifiedTimes.set(normalizeMockPath(uri.fsPath), 42);
+
+        assert.strictEqual(await expiryToken(undefined), '');
+        assert.strictEqual(await expiryToken(uri as any), uri.toString() + '@42');
+        assert.strictEqual(await expiryToken(uri.with({ fragment: 'common/example.txt' }) as any), uri.toString() + '@42');
+        mockModifiedTimes.set(normalizeMockPath(uri.fsPath), 43);
+        assert.strictEqual(await expiryToken(uri as any), uri.toString() + '@43');
     });
 
     it('uses descriptor.mod parent directory as a mod content root', () => {

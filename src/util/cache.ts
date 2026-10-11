@@ -13,6 +13,8 @@ export interface CacheOptions<V> {
 
 export interface PromiseCacheOptions<V> extends Omit<CacheOptions<Promise<V>>, 'weigher'> {
     expireWhenChange?(key: string, cachedValue: Promise<V>): Promise<any> | any;
+    // Opt in only when the initial token does not depend on the factory result.
+    initialExpiryToken?(key: string): Promise<any> | any;
     weigher?(value: V): number;
 }
 
@@ -142,18 +144,21 @@ export class Cache<V> {
 
 export class PromiseCache<V> extends Cache<Promise<V>> {
     private readonly promiseWeigher?: (value: V) => number;
+    private readonly initialExpiryToken?: PromiseCacheOptions<V>['initialExpiryToken'];
+    private readonly initialEntries = new WeakSet<CacheEntry<Promise<V>>>();
     private readonly validations = new Map<string, {
         entry: CacheEntry<Promise<V>>;
         promise: Promise<V>;
     }>();
 
     constructor(options: PromiseCacheOptions<V>) {
-        const { weigher, ...rest } = options;
+        const { weigher, initialExpiryToken, ...rest } = options;
         super({
             ...rest,
             factory: options.factory,
         });
         this.promiseWeigher = weigher;
+        this.initialExpiryToken = initialExpiryToken;
     }
 
     public remove(key: string = ''): void {
@@ -178,7 +183,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
         if (!cacheEntry) {
             return this.createEntry(key);
         }
-        if (now - cacheEntry.lastAccess < this.options.nonExpireLife!) {
+        if (this.initialEntries.has(cacheEntry) || now - cacheEntry.lastAccess < this.options.nonExpireLife!) {
             this.touch(key, cacheEntry, now);
             incrementPerfCounter('cache.hit', { cache: cacheName });
             return cacheEntry.value;
@@ -222,16 +227,37 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
         incrementPerfCounter(expiryToken ? 'cache.expired' : 'cache.miss', {
             cache: this.options.name ?? this.constructor.name,
         });
-        const value = this.options.factory(key);
+        const initialToken = !expiryToken && this.initialExpiryToken
+            ? Promise.resolve().then(() => this.initialExpiryToken!(key))
+            : undefined;
+        const value = initialToken ? initialToken.then(() => this.options.factory(key)) : this.options.factory(key);
+        let entryExpiryToken: Promise<any>;
+        try {
+            entryExpiryToken = expiryToken ?? initialToken ?? Promise.resolve(this.options.expireWhenChange!(key, value));
+        } catch (error) {
+            // A synchronous token failure must not orphan an already-started factory rejection.
+            value.catch(() => undefined);
+            throw error;
+        }
         const newEntry = {
             lastAccess: Date.now(),
-            expiryToken: expiryToken ?? Promise.resolve(this.options.expireWhenChange!(key, value)),
+            expiryToken: entryExpiryToken,
             value,
             weight: 0,
         };
 
+        if (initialToken) {
+            this.initialEntries.add(newEntry);
+        }
         this.setEntry(key, newEntry);
+        // Result-dependent tokens can reject with the factory, even if nobody validates the entry.
+        newEntry.expiryToken.catch(() => {
+            if (this._cache.get(key) === newEntry) {
+                this.remove(key);
+            }
+        });
         value.then(resolved => {
+            this.initialEntries.delete(newEntry);
             if (this._cache.get(key) !== newEntry) {
                 return;
             }
@@ -245,6 +271,7 @@ export class PromiseCache<V> extends Cache<Promise<V>> {
                 this.setWeight(newEntry, this.promiseWeigher(resolved) ?? 0);
             }
         }, () => {
+            this.initialEntries.delete(newEntry);
             if (this._cache.get(key) === newEntry) {
                 this.remove(key);
             }

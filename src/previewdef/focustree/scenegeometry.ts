@@ -1,6 +1,8 @@
 import type { Format } from '../../hoiformat/gui';
 import type { NumberPosition, NumberSize } from '../../util/common';
 import type { GridBoxConnection, GridBoxItem } from '../../util/hoi4gui/gridboxcommon';
+import { buildFocusPrerequisiteRoutes, routeFocusPrerequisiteGroup } from './prerequisiterouting';
+import type { FocusPrerequisiteRouteGroup } from './prerequisiterouting';
 
 export interface FocusSceneRect extends NumberPosition, NumberSize {}
 
@@ -15,6 +17,7 @@ export interface FocusNodeGeometry {
     id: string;
     slot: FocusSceneRect;
     visual: FocusSceneRect;
+    connectionVisual: FocusSceneRect;
     exclusiveVisual: FocusSceneRect;
     anchors: FocusNodeAnchors;
 }
@@ -43,6 +46,7 @@ export interface FocusSceneGeometry {
     nodes: Record<string, FocusNodeGeometry>;
     edges: FocusEdgeGeometry[];
     edgesByNode: ReadonlyMap<string, readonly FocusEdgeGeometry[]>;
+    prerequisiteRoutes: ReadonlyMap<FocusEdgeGeometry, FocusPrerequisiteRouteGroup>;
 }
 
 export interface FocusSceneGeometryOptions {
@@ -89,12 +93,15 @@ export function buildFocusSceneGeometry(
             const dx = slot.x - previous.slot.x;
             const dy = slot.y - previous.slot.y;
             const visual = translateRect(previous.visual, dx, dy);
+            const connectionVisual = translateRect(previous.connectionVisual, dx, dy);
+            const exclusiveVisual = translateRect(previous.exclusiveVisual, dx, dy);
             nodes[item.id] = {
                 id: item.id,
                 slot,
                 visual,
-                exclusiveVisual: translateRect(previous.exclusiveVisual, dx, dy),
-                anchors: createAnchors(visual, anchorGap),
+                connectionVisual,
+                exclusiveVisual,
+                anchors: createFocusAnchors(connectionVisual, exclusiveVisual, anchorGap),
             };
             continue;
         }
@@ -109,6 +116,7 @@ export function buildFocusSceneGeometry(
             id: item.id,
             slot,
             visual,
+            connectionVisual: visual,
             exclusiveVisual: visual,
             anchors: createAnchors(visual, anchorGap),
         };
@@ -143,9 +151,7 @@ export function buildFocusSceneGeometry(
 
             const source = nodes[sourceId];
             const destination = nodes[targetId];
-            const points = kind === 'exclusive'
-                ? routeExclusive(source, destination)
-                : routePrerequisite(source, destination, format);
+            const points = kind === 'exclusive' ? routeExclusive(source, destination) : [];
             const stroke = parseStroke(connection);
             const edge: FocusEdgeGeometry = {
                 id: `${kind}:${sourceId}->${targetId}:${connectionIndex}`,
@@ -168,6 +174,13 @@ export function buildFocusSceneGeometry(
         }
     }
 
+    const prerequisiteRoutes = buildFocusPrerequisiteRoutes(nodes, edges, format);
+    for (const group of new Set(prerequisiteRoutes.values())) {
+        for (const { edge, points } of routeFocusPrerequisiteGroup(group, nodes)) {
+            edge.points = points;
+            edge.path = pointsToPath(points);
+        }
+    }
     return {
         width: layout.width,
         height: layout.height,
@@ -177,6 +190,7 @@ export function buildFocusSceneGeometry(
         nodes,
         edges,
         edgesByNode,
+        prerequisiteRoutes,
     };
 }
 
@@ -188,6 +202,7 @@ export function updateFocusScenePositions(
     const layout = layoutFocusSlots(options, geometry.format);
     const visuals: Record<string, FocusSceneRect> = {};
     const exclusiveVisuals: Record<string, FocusSceneRect> = {};
+    const connectionVisuals: Record<string, FocusSceneRect> = {};
     for (const [focusId, slot] of Object.entries(layout.slots)) {
         const node = geometry.nodes[focusId];
         if (!node) {
@@ -201,13 +216,19 @@ export function updateFocusScenePositions(
         node.slot = slot;
         visuals[focusId] = { ...node.visual, x: node.visual.x + dx, y: node.visual.y + dy };
         exclusiveVisuals[focusId] = { ...node.exclusiveVisual, x: node.exclusiveVisual.x + dx, y: node.exclusiveVisual.y + dy };
+        connectionVisuals[focusId] = translateRect(node.connectionVisual, dx, dy);
     }
     geometry.origin = layout.origin;
     geometry.width = layout.width;
     geometry.height = layout.height;
+    const changedFocusIds = applyFocusSceneNodeVisuals(geometry, visuals, exclusiveVisuals, connectionVisuals);
+    const previousRoutes = geometry.prerequisiteRoutes;
+    if (changedFocusIds.size > 0) {
+        geometry.prerequisiteRoutes = buildFocusPrerequisiteRoutes(geometry.nodes, geometry.edges, geometry.format);
+    }
     return {
         movedFocusIds: Object.keys(visuals),
-        changedEdges: updateFocusSceneNodeVisuals(geometry, visuals, exclusiveVisuals),
+        changedEdges: updateFocusSceneEdges(geometry, changedFocusIds, previousRoutes),
     };
 }
 
@@ -242,7 +263,18 @@ export function updateFocusSceneNodeVisuals(
     geometry: FocusSceneGeometry,
     visualByFocusId: Readonly<Record<string, FocusSceneRect>>,
     exclusiveVisualByFocusId: Readonly<Record<string, FocusSceneRect>> = visualByFocusId,
+    connectionVisualByFocusId: Readonly<Record<string, FocusSceneRect>> = visualByFocusId,
 ): FocusEdgeGeometry[] {
+    return updateFocusSceneEdges(geometry,
+        applyFocusSceneNodeVisuals(geometry, visualByFocusId, exclusiveVisualByFocusId, connectionVisualByFocusId));
+}
+
+function applyFocusSceneNodeVisuals(
+    geometry: FocusSceneGeometry,
+    visualByFocusId: Readonly<Record<string, FocusSceneRect>>,
+    exclusiveVisualByFocusId: Readonly<Record<string, FocusSceneRect>>,
+    connectionVisualByFocusId: Readonly<Record<string, FocusSceneRect>>,
+): Set<string> {
     const changedFocusIds = new Set<string>();
     for (const [focusId, visual] of Object.entries(visualByFocusId)) {
         const node = geometry.nodes[focusId];
@@ -250,36 +282,63 @@ export function updateFocusSceneNodeVisuals(
             continue;
         }
         const exclusiveVisual = exclusiveVisualByFocusId[focusId] ?? visual;
-        if (rectEquals(node.visual, visual) && rectEquals(node.exclusiveVisual, exclusiveVisual)) {
+        const connectionVisual = connectionVisualByFocusId[focusId] ?? visual;
+        if (rectEquals(node.visual, visual) && rectEquals(node.exclusiveVisual, exclusiveVisual)
+            && rectEquals(node.connectionVisual, connectionVisual)) {
             continue;
         }
         node.visual = { ...visual };
         node.exclusiveVisual = { ...exclusiveVisual };
-        node.anchors = createAnchors(node.visual, geometry.anchorGap);
+        node.connectionVisual = { ...connectionVisual };
+        node.anchors = createFocusAnchors(node.connectionVisual, node.exclusiveVisual, geometry.anchorGap);
         changedFocusIds.add(focusId);
     }
 
+    return changedFocusIds;
+}
+
+function updateFocusSceneEdges(
+    geometry: FocusSceneGeometry,
+    changedFocusIds: ReadonlySet<string>,
+    previousRoutes?: ReadonlyMap<FocusEdgeGeometry, FocusPrerequisiteRouteGroup>,
+): FocusEdgeGeometry[] {
     if (changedFocusIds.size === 0) {
         return [];
     }
 
     const adjacentEdges = new Set<FocusEdgeGeometry>();
+    const groups = new Set<FocusPrerequisiteRouteGroup>();
+    const addGroup = (edge: FocusEdgeGeometry) => {
+        const group = geometry.prerequisiteRoutes.get(edge);
+        if (group) { groups.add(group); }
+    };
     for (const focusId of changedFocusIds) {
         for (const edge of geometry.edgesByNode.get(focusId) ?? []) {
             adjacentEdges.add(edge);
+            addGroup(edge);
+            previousRoutes?.get(edge)?.edges.forEach(addGroup);
         }
     }
     const changedEdges: FocusEdgeGeometry[] = [];
-    for (const edge of adjacentEdges) {
-        const source = geometry.nodes[edge.sourceId];
-        const target = geometry.nodes[edge.targetId];
-        edge.points = edge.kind === 'exclusive'
-            ? routeExclusive(source, target)
-            : routePrerequisite(source, target, geometry.format);
-        const path = pointsToPath(edge.points);
+    const applyPath = (edge: FocusEdgeGeometry, points: NumberPosition[]) => {
+        edge.points = points;
+        const path = pointsToPath(points);
         if (path !== edge.path) {
             edge.path = path;
             changedEdges.push(edge);
+        }
+    };
+    for (const edge of adjacentEdges) {
+        if (edge.kind !== 'exclusive') {
+            continue;
+        }
+        const source = geometry.nodes[edge.sourceId];
+        const target = geometry.nodes[edge.targetId];
+        applyPath(edge, routeExclusive(source, target));
+    }
+    for (const group of groups) {
+        for (const { edge, points } of routeFocusPrerequisiteGroup(group, geometry.nodes)) {
+            applyPath(edge, points);
         }
     }
     return changedEdges;
@@ -316,24 +375,14 @@ function createAnchors(rect: FocusSceneRect, gap: number): FocusNodeAnchors {
     };
 }
 
-function routePrerequisite(
-    source: FocusNodeGeometry,
-    target: FocusNodeGeometry,
-    format: Format['_name'],
-): NumberPosition[] {
-    if (format === 'left' || format === 'right') {
-        const forward = target.visual.x >= source.visual.x;
-        const start = forward ? source.anchors.right : source.anchors.left;
-        const end = forward ? target.anchors.left : target.anchors.right;
-        const corridorX = (start.x + end.x) / 2;
-        return compactPoints([start, { x: corridorX, y: start.y }, { x: corridorX, y: end.y }, end]);
-    }
-
-    const forward = target.visual.y >= source.visual.y;
-    const start = forward ? source.anchors.bottom : source.anchors.top;
-    const end = forward ? target.anchors.top : target.anchors.bottom;
-    const corridorY = (start.y + end.y) / 2;
-    return compactPoints([start, { x: start.x, y: corridorY }, { x: end.x, y: corridorY }, end]);
+function createFocusAnchors(visual: FocusSceneRect, icon: FocusSceneRect, gap: number): FocusNodeAnchors {
+    const iconCenter = center(icon);
+    return {
+        top: { x: iconCenter.x, y: visual.y - gap },
+        right: { x: visual.x + visual.width + gap, y: iconCenter.y },
+        bottom: { x: iconCenter.x, y: visual.y + visual.height + gap },
+        left: { x: visual.x - gap, y: iconCenter.y },
+    };
 }
 
 function routeExclusive(source: FocusNodeGeometry, target: FocusNodeGeometry): NumberPosition[] {
@@ -343,18 +392,35 @@ function routeExclusive(source: FocusNodeGeometry, target: FocusNodeGeometry): N
     const sourceAnchors = createAnchors(source.exclusiveVisual, 0);
     const targetAnchors = createAnchors(target.exclusiveVisual, 0);
     if (Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y)) {
+        const top = Math.max(source.exclusiveVisual.y, target.exclusiveVisual.y);
+        const bottom = Math.min(source.exclusiveVisual.y + source.exclusiveVisual.height,
+            target.exclusiveVisual.y + target.exclusiveVisual.height);
+        if (top <= bottom) {
+            const y = (top + bottom) / 2;
+            // Edges paint behind cards, so extend under the icons to bridge transparent padding.
+            return compactPoints([{ x: sourceCenter.x, y }, { x: targetCenter.x, y }]);
+        }
+
         const forward = targetCenter.x >= sourceCenter.x;
         const start = forward ? sourceAnchors.right : sourceAnchors.left;
         const end = forward ? targetAnchors.left : targetAnchors.right;
         const corridorX = (start.x + end.x) / 2;
-        return compactPoints([start, { x: corridorX, y: start.y }, { x: corridorX, y: end.y }, end]);
+        return compactPoints([sourceCenter, { x: corridorX, y: start.y }, { x: corridorX, y: end.y }, targetCenter]);
+    }
+
+    const left = Math.max(source.exclusiveVisual.x, target.exclusiveVisual.x);
+    const right = Math.min(source.exclusiveVisual.x + source.exclusiveVisual.width,
+        target.exclusiveVisual.x + target.exclusiveVisual.width);
+    if (left <= right) {
+        const x = (left + right) / 2;
+        return compactPoints([{ x, y: sourceCenter.y }, { x, y: targetCenter.y }]);
     }
 
     const forward = targetCenter.y >= sourceCenter.y;
     const start = forward ? sourceAnchors.bottom : sourceAnchors.top;
     const end = forward ? targetAnchors.top : targetAnchors.bottom;
     const corridorY = (start.y + end.y) / 2;
-    return compactPoints([start, { x: start.x, y: corridorY }, { x: end.x, y: corridorY }, end]);
+    return compactPoints([sourceCenter, { x: start.x, y: corridorY }, { x: end.x, y: corridorY }, targetCenter]);
 }
 
 function compactPoints(points: NumberPosition[]): NumberPosition[] {

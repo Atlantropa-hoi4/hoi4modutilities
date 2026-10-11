@@ -25,6 +25,7 @@ loader/**
 scripts/**
 webviewsrc/**
 resource/**
+rust/**
 prod/**
 test/**
 test-ui/**

@@ -93,7 +93,7 @@ export abstract class Loader<T, E = {}> {
 
     protected async fireOnProgressEvent(progress: string): Promise<void> {
         this.onProgressEmitter.fire(progress);
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise<void>(resolve => setImmediate(resolve));
     }
 
     protected extraMesurements(result: LoadResult<T, E>): Record<string, number> {

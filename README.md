@@ -36,12 +36,17 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - Activation is contextual now: the extension waits for HOI4-relevant files, custom editors, or preview panels instead of activating broadly at startup.
 - Focus tree previews keep their webview context while hidden, so re-opening the same preview should avoid a full bootstrap.
 - Focus Tree preview posts a lightweight structural snapshot first, then hydrates localisation, icons, and inlay data after first paint.
+- Focus Tree asset hydration prepares the selected tree first, then loads other trees on demand. The full tree catalog and source ranges remain available; already-loaded scenes are refreshed together after source or asset edits.
 - Focus Tree refreshes coalesce dependency bursts and cancel stale work early, so rapid document edits and asset updates should stay more responsive.
 - Focus inlay windows, scripted GUI windows, and interface GFX fallback data are lazy and cache-backed to keep repeated preview loads cheaper than the cold path.
 - Shared indexes for GFX, localisation, and shared focuses limit file-read pressure while they build in the background.
 - GFX, localisation, shared-focus, and event indexes reuse disk snapshots after checking their source files and selected mod. Unsaved document changes invalidate stale snapshots. Use `HOI4 Mod Utilities: Show index build status` or `Cancel index build` to inspect or cancel active builds; a later preview request can retry a cancelled build.
 - GFX previews share embedded texture data across sprites and render at most eight cards concurrently. DLC ZIP files retain bounded directory metadata and read/decompress only the requested entry.
-- Set `HOI4MU_PERF_TRACE=1` when launching the extension host to mirror local performance trace entries to debug logs.
+- DDS decoding, province BMP colors, and province boundaries/validation use dependency-free Rust/WASM in a lazy, bounded worker. DDS PNG encoding also runs off the extension-host thread. Bulk icon hydration can offload small DDS jobs; individual small images and unsupported formats retain the original decoder. Installed users do not need Rust.
+- Vanilla/DLC localisation indexes load the selected preview language plus English, while workspace indexes retain all languages. Open-document caches use stable document/version tokens, and lint diagnostics debounce edits and reuse current-version results.
+- See [actual TNO performance measurements](docs/architecture/tno-performance.md) for measured preview and editing improvements, first-paint results, and measurement limitations.
+- Set `HOI4MU_PERF_TRACE=1` when launching the extension host to mirror local performance trace entries to debug logs. For comparisons, `HOI4MU_COMPUTE_BACKEND=typescript` disables the worker accelerator for that launch.
+- See [Rust compute architecture and measurements](docs/architecture/rust-compute.md) for the migrated scope and performance limits.
 
 ## Settings
 
@@ -66,6 +71,7 @@ Recommended environment:
 
 - Node.js 20 LTS
 - npm 10+
+- Stable Rust with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - Windows for the closest match to the packaged release workflow
 
 Common commands:
@@ -78,6 +84,8 @@ npm run lint
 npm run test
 npm run test-ui
 npm run package
+npm run test:rust
+npm run bench:compute
 ```
 
 Role-specific TypeScript configs:

@@ -12,3 +12,4 @@ out/
 /.vscode-test
 Plan.md
 .vscode-test-web
+/rust/**/target/

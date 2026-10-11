@@ -42,7 +42,12 @@ let workspaceLocalisationFileIndexes: Record<string, LocalisationData> = {};
 const workspaceLocalisationUpdates = new LatestUpdateCoordinator<string>();
 const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
     global: {
-        cache: { folder: 'localisation', extension: '.yml', layer: 'global' },
+        cache: {
+            folder: 'localisation', extension: '.yml', layer: 'global',
+            get includeFile() {
+                return createGlobalLocalisationFileFilter(getConfiguration().previewLocalisation);
+            },
+        },
         build: (estimatedSize, signal) => buildGlobalLocalisationIndex(estimatedSize, signal),
         commit: snapshot => {
             globalLocalisationIndex = snapshot.index;
@@ -271,6 +276,7 @@ function resolveLocalisedTextFromAvailableWorkspaceLanguage(
 }
 
 async function buildGlobalLocalisationIndex(estimatedSize: [number], signal?: AbortSignal): Promise<LocalisationIndexSnapshot> {
+    const includeFile = createGlobalLocalisationFileFilter(getConfiguration().previewLocalisation);
     const baseOptions = { mod: false, hoi4: true, dlc: false, recursively: true };
     const dlcOptions = { mod: false, hoi4: false, dlc: true, recursively: true };
     const [baseFiles, dlcFiles] = await Promise.all([
@@ -278,7 +284,7 @@ async function buildGlobalLocalisationIndex(estimatedSize: [number], signal?: Ab
         listFilesFromModOrHOI4('localisation', dlcOptions),
     ]);
     const loadFileIndexes = (files: string[], options: typeof baseOptions) => mapWithConcurrency(
-        files.filter(isLocalisationIndexFilePath),
+        files.filter(includeFile),
         localisationIndexBuildConcurrency,
         async f => {
             signal?.throwIfAborted();
@@ -399,7 +405,8 @@ function onChangeWorkspaceFolders(_: vscode.WorkspaceFoldersChangeEvent) {
 
 function onChangeIndexConfiguration(e: vscode.ConfigurationChangeEvent): void {
     if (e.affectsConfiguration(`${ConfigurationKey}.installPath`)
-        || e.affectsConfiguration(`${ConfigurationKey}.loadDlcContents`)) {
+        || e.affectsConfiguration(`${ConfigurationKey}.loadDlcContents`)
+        || e.affectsConfiguration(`${ConfigurationKey}.previewLocalisation`)) {
         rebuildActiveLocalisationIndex('global');
     }
 }
@@ -569,6 +576,22 @@ export function mergeLocalisationIndexes(indexes: readonly LocalisationData[]): 
 
 export function isLocalisationIndexFilePath(filePath: string): boolean {
     return localisationIndexFilePattern.test(filePath);
+}
+
+export function createGlobalLocalisationFileFilter(
+    previewLocalisation: string | undefined,
+    environmentLanguage: string = vscode.env.language,
+): (filePath: string) => boolean {
+    const language = (previewLocalisation && localeISOMapping[previewLocalisation]) || environmentLanguage;
+    const langKey = localeMapping[language.toLowerCase()] || 'l_english';
+    // Workspace indexes retain every supported language for the available-language fallback.
+    return filePath => {
+        if (!isLocalisationIndexFilePath(filePath)) {
+            return false;
+        }
+        const fileLangKey = getLocalisationIndexLangKeyFromPath(filePath);
+        return fileLangKey === 'l_english' || fileLangKey === langKey;
+    };
 }
 
 export function getLocalisationIndexLangKeyFromPath(filePath: string): string {
