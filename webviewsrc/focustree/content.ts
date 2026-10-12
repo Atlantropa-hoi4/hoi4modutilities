@@ -7,6 +7,7 @@ import type { FocusSceneGeometryOptions, FocusSceneRect } from '../../src/previe
 import { getFocusTreeViewportAnchorId } from '../../src/previewdef/focustree/viewanchor';
 import type { FocusTreeView } from '../../src/previewdef/focustree/viewmodel';
 import { currentScale, getState, runSafely, scrollToState, setState, tryRun } from '../util/common';
+import { onFocusSceneRendered, scheduleFocusAssetDemandCheck } from './assetloading';
 import { setFocusCardChecked } from './cards';
 import {
     clearSelectedExprs,
@@ -296,6 +297,8 @@ function revealCurrentFocusTreeAnchorIfNeeded(): void {
         }
         const target = getFocusViewportScrollTarget(anchorPosition);
         window.scrollTo({ left: target.left, top: target.top, behavior: 'auto' });
+        // The revealed focuses are the first actually on screen; load them without the scroll debounce.
+        scheduleFocusAssetDemandCheck(true);
     }));
 }
 
@@ -309,6 +312,7 @@ export const rebuildContentSafely = tryRun(async (options?: BuildContentOptions)
     }
     revealCurrentFocusTreeAnchorIfNeeded();
     retriggerSearch();
+    onFocusSceneRendered();
 });
 
 /** Toggles completion checkboxes, which change `has_completed_focus` conditions. */
@@ -383,5 +387,7 @@ export function subscribeFocusCheckboxDelegation(root: HTMLElement): void {
             window.scrollBy(nextRect.left - rect.left, nextRect.top - rect.top);
         }
         retriggerSearch();
+        // Completed focuses change conditions, which can reveal focuses without loaded icons.
+        scheduleFocusAssetDemandCheck(true);
     }));
 }

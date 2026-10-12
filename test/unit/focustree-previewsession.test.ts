@@ -2,12 +2,18 @@ import * as assert from 'assert';
 import Module = require('module');
 import * as vscode from 'vscode';
 import type { FocusTreeAssetScope } from '../../src/previewdef/focustree/loader';
-import type { FocusTreeRenderBaseState, FocusTreeRenderPayload } from '../../src/previewdef/focustree/contentbuilder';
+import type {
+    FocusTreeAssetStylePatch,
+    FocusTreeAssetStylePatchOptions,
+    FocusTreeRenderBaseState,
+    FocusTreeRenderPayload,
+} from '../../src/previewdef/focustree/contentbuilder';
 import type * as FocusSchemaModule from '../../src/previewdef/focustree/schema';
 import type * as HoiParserModule from '../../src/hoiformat/hoiparser';
 import type * as RenderPatchModule from '../../src/previewdef/focustree/renderpayloadpatch';
 import type * as FocusViewModule from '../../src/previewdef/focustree/viewmodel';
 import type * as FocusIconAssetsModule from '../../src/previewdef/focustree/focusicongfx';
+import type { FocusTreeAssetRequestMessage } from '../../src/previewdef/focustree/webviewupdate';
 import { applyFocusTreeContentUpdate } from '../../webviewsrc/focustree/messageapply';
 import type { FocusTreeMessageApplyContext } from '../../webviewsrc/focustree/messageapply';
 
@@ -124,7 +130,16 @@ async function waitForCondition(predicate: () => boolean, message: string): Prom
 function createSession(overrides?: {
     runtimeState?: ReturnType<typeof createFocusTreeRuntimeState>;
     buildBaseState?: (document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean, assetScope?: FocusTreeAssetScope) => Promise<FocusTreeRenderBaseState>;
-    createFullSnapshot?: (baseState: any, previousCache: any, isCancelled?: () => boolean) => Promise<any>;
+    createFullSnapshot?: (
+        baseState: any,
+        previousCache: any,
+        isCancelled?: () => boolean,
+        onAssetStyleBatch?: unknown,
+        prepared?: unknown,
+        materializedFocusIds?: readonly string[],
+        existingStyleRules?: ReadonlyMap<string, string>,
+    ) => Promise<any>;
+    renderAssetPatch?: (focuses: readonly any[], options: FocusTreeAssetStylePatchOptions) => Promise<FocusTreeAssetStylePatch>;
     renderShell?: (documentVersion: number) => string;
     latestDocument?: vscode.TextDocument | undefined;
     deferredHydrationDelayMs?: number;
@@ -151,6 +166,7 @@ function createSession(overrides?: {
         deferredHydrationDelayMs: overrides?.deferredHydrationDelayMs ?? 0,
         isInitialFullLoadReady: overrides?.isInitialFullLoadReady,
         snapshotBuilder: {
+            renderAssetPatch: overrides?.renderAssetPatch,
             renderShell: overrides?.renderShell ?? (documentVersion => `shell:${documentVersion}`),
             buildBaseState: overrides?.buildBaseState ?? (async (document, assetLoadMode) => (
                 createBaseState(document.version, assetLoadMode === 'deferred')
@@ -1058,5 +1074,591 @@ describe('focustree preview session', () => {
         assert.ok(contentUpdates.some(message => (message as any).documentVersion === 17));
         assert.ok(contentUpdates.some(message => (message as any).documentVersion === 18));
         assert.strictEqual((contentUpdates.at(-1) as any).documentVersion, 18);
+    });
+});
+
+const { FocusTreeInvalidation } = require('../../src/previewdef/focustree/invalidation') as typeof import('../../src/previewdef/focustree/invalidation');
+const { FocusAssetMaterializationState } = require('../../webviewsrc/focustree/assetdemand') as typeof import('../../webviewsrc/focustree/assetdemand');
+
+function serializeRules(rules: Iterable<readonly [string, string]>): string {
+    return Array.from(rules).map(([key, content]) => `.${key} { ${content} }\n`).join('');
+}
+
+function countOccurrences(text: string, value: string): number {
+    return text.split(value).length - 1;
+}
+
+/** The content of the last rule for `key` in a stylesheet, which wins the cascade. */
+function getCascadedRule(css: string, key: string): string | undefined {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+    const pattern = new RegExp(`\\.${escapedKey} \\{\\s*([^}]*?)\\s*\\}`, 'g');
+    let content: string | undefined;
+    for (const match of css.matchAll(pattern)) {
+        content = match[1];
+    }
+    return content;
+}
+
+/**
+ * What the webview holds after the posted messages, applied like `hostsync`: scene and full
+ * updates replace the stylesheet and the materialized set; patches append rules and focuses.
+ */
+function getWebviewAssetState(messages: readonly any[]): { css: string; materialization: InstanceType<typeof FocusAssetMaterializationState> } {
+    let css = '';
+    const materialization = new FocusAssetMaterializationState();
+    for (const message of messages) {
+        if (message.command === 'focusTreeSceneAssets') {
+            if (message.status === 'applied') {
+                css += message.dynamicStyleCssPatch ?? '';
+                materialization.add(message.materializedFocusIds ?? []);
+            }
+            continue;
+        }
+        if (message.changedSlots?.includes('styleDeps')) {
+            css = message.dynamicStyleCss !== undefined ? message.dynamicStyleCss : css + (message.dynamicStyleCssPatch ?? '');
+        }
+        if (message.assetMaterialization) {
+            materialization.replace(message.assetMaterialization);
+        }
+    }
+    return { css, materialization };
+}
+
+/**
+ * A session whose snapshots render each materialized focus as a real icon rule and every other
+ * focus of the asset trees as a placeholder rule. Like the real style table, rules are keyed by
+ * icon name, real rules win over placeholders of the same name, and placeholders skip names the
+ * merged scenes already have. D1 of tree D shares A1's icon.
+ */
+function createAssetFixture(version: number) {
+    const trees = getFocusTree(parseHoi4File(`
+        focus_tree = { id = A
+            focus = { id = A1 icon = GFX_A1 x = 0 y = 0 }
+            focus = { id = A2 icon = GFX_A2 x = 1 y = 0 }
+            focus = { id = A3 icon = GFX_A3 x = 2 y = 0 }
+        }
+        focus_tree = { id = B
+            focus = { id = B1 icon = GFX_B1 x = 0 y = 0 }
+            focus = { id = B2 icon = GFX_B2 x = 1 y = 0 }
+        }
+        focus_tree = { id = C focus = { id = C1 icon = GFX_C1 x = 0 y = 0 } }
+        focus_tree = { id = D
+            focus = { id = D1 icon = GFX_A1 x = 0 y = 0 }
+            focus = { id = D2 icon = GFX_D2 x = 1 y = 0 }
+        }
+    `), [], 'common/national_focus/test.txt');
+    const allFocuses = trees.flatMap(tree => Object.values(tree.focuses));
+    const focusById = Object.fromEntries(allFocuses.map(focus => [focus.id, focus]));
+    const document = createDocument(version);
+    const fullSnapshotCalls: Array<{ treeIds: string[]; materializedFocusIds: readonly string[] | undefined; deferred: boolean }> = [];
+    const patchCalls: Array<{ focusIds: string[]; resend: string[] }> = [];
+    const gates: { fullBaseState?: Promise<void>; assetPatch?: Promise<void> } = {};
+    let fullBaseStateCalls = 0;
+    let iconStyleSignature = 'icons-1';
+    /** Whether a base state finishing now was built with the localisation index ready. */
+    let baseStateLocalised = false;
+    const iconName = (focusId: string) => focusById[focusId].icon[0].icon!;
+    const iconRuleKey = (focusId: string) => `st-focus-icon-${iconName(focusId)}`;
+    const realRule = (focusId: string) => `real:${iconName(focusId).replace(/^GFX_/, '')};`;
+    const fixture = createSession({
+        latestDocument: document,
+        deferredHydrationDelayMs: 10_000,
+        buildBaseState: async (currentDocument, mode, _isCancelled, scope) => {
+            if (mode === 'full') {
+                fullBaseStateCalls += 1;
+                await gates.fullBaseState;
+            }
+            const assetTreeIds = Array.from(new Set([scope?.treeId ?? 'A', ...scope?.treeIds ?? []]));
+            const assetFocuses = trees.filter(tree => assetTreeIds.includes(tree.id)).flatMap(tree => Object.values(tree.focuses));
+            return {
+                ...createBaseState(currentDocument.version, mode === 'deferred'),
+                focusTrees: trees,
+                allFocuses,
+                focusById: Object.fromEntries(allFocuses.map(focus => [focus.id, focus])),
+                assetTreeIds,
+                hasFocusSelector: true,
+                focusIconAssetResolution: {
+                    ...createEmptyFocusIconAssetResolution(),
+                    gfxFileByIconName: mode === 'full'
+                        ? Object.fromEntries(assetFocuses.map(focus => [`GFX_${focus.id}`, 'interface/goals.gfx']))
+                        : {},
+                },
+                focusIconStyleSignature: mode === 'full' ? iconStyleSignature : '',
+                localisationIndexReady: baseStateLocalised,
+            };
+        },
+        createFullSnapshot: async (baseState, previousCache, _isCancelled, _onAssetStyleBatch, _prepared, materializedFocusIds, existingStyleRules) => {
+            const assetTreeIds: string[] = baseState.assetTreeIds;
+            const assetFocusIds = trees.filter(tree => assetTreeIds.includes(tree.id)).flatMap(tree => Object.keys(tree.focuses));
+            fullSnapshotCalls.push({ treeIds: assetTreeIds, materializedFocusIds, deferred: baseState.deferredAssetLoad });
+            const materialized = baseState.deferredAssetLoad
+                ? []
+                : Array.from(new Set(materializedFocusIds ?? assetFocusIds)).filter(focusId => assetFocusIds.includes(focusId));
+            const rules = new Map<string, string>();
+            materialized.forEach(focusId => {
+                if (!rules.has(iconRuleKey(focusId))) {
+                    rules.set(iconRuleKey(focusId), realRule(focusId));
+                }
+            });
+            assetFocusIds.filter(focusId => !materialized.includes(focusId)).forEach(focusId => {
+                if (!rules.has(iconRuleKey(focusId)) && !existingStyleRules?.has(iconRuleKey(focusId))) {
+                    rules.set(iconRuleKey(focusId), 'placeholder;');
+                }
+            });
+            const payload = {
+                ...baseState,
+                focusTrees: toFocusTreeViews(trees),
+                sourceFocusTrees: trees,
+                selectedTreeId: assetTreeIds[0],
+                materializedFocusIds: materialized,
+                focusTemplates: {},
+                focusTemplateKeyById: {},
+                renderedInlayWindows: {},
+                dynamicStyleCss: serializeRules(rules),
+                dynamicStyleRules: rules,
+            } as unknown as FocusTreeRenderPayload;
+            const { update, cache } = createFullFocusTreeRenderUpdate(payload, previousCache);
+            return {
+                payload,
+                update,
+                cache,
+                metrics: { renderedFocusCount: assetFocusIds.length, materializedFocusCount: materialized.length },
+            };
+        },
+        renderAssetPatch: async (focuses, options) => {
+            patchCalls.push({ focusIds: focuses.map(focus => focus.id), resend: Array.from(options.resendFocusIds ?? []) });
+            await gates.assetPatch;
+            const rules = new Map<string, string>();
+            focuses
+                .filter(focus => options.resendFocusIds?.has(focus.id)
+                    || options.existingStyleRules.get(iconRuleKey(focus.id)) !== realRule(focus.id))
+                .forEach(focus => rules.set(iconRuleKey(focus.id), realRule(focus.id)));
+            return { css: serializeRules(rules), rules: Array.from(rules) };
+        },
+    });
+    const sceneAssets = (assetRequestId?: number) => fixture.postMessages
+        .filter(message => message.command === 'focusTreeSceneAssets'
+            && (assetRequestId === undefined || message.assetRequestId === assetRequestId));
+    const request = (assetRequestId: number, visibleFocusIds: string[], nearbyFocusIds: string[] = [], overrides: Partial<FocusTreeAssetRequestMessage> = {}) =>
+        fixture.session.handleAssetRequest({
+            command: 'focusTreeAssetRequest',
+            protocolVersion: focusTreeProtocolVersion,
+            assetRequestId,
+            treeId: 'A',
+            snapshotVersion: fixture.runtimeState.lastRenderCache?.snapshotVersion ?? 0,
+            documentVersion: document.version,
+            visibleFocusIds,
+            nearbyFocusIds,
+            ...overrides,
+        });
+    const finalResponse = async (assetRequestId: number) => {
+        await waitForCondition(() => sceneAssets(assetRequestId).some(message => message.final), `Expected a final answer to asset request ${assetRequestId}.`);
+        return sceneAssets(assetRequestId);
+    };
+    const paintStructure = async () => {
+        await fixture.session.initializePanel(document);
+        fixture.session.handleWebviewReady('A');
+        await waitForCondition(() => fixture.postMessages.some(message => message.command === 'focusTreeScene'), 'Expected the structural scene.');
+        return fixture.postMessages.find(message => message.command === 'focusTreeScene');
+    };
+    const hydrate = async (visibleFocusIds: string[]) => {
+        const structural = await paintStructure();
+        fixture.session.handleContentApplied(structural.snapshotVersion, structural.documentVersion, 'firstScenePainted', visibleFocusIds);
+        await waitForCondition(() => fixture.runtimeState.lastRenderCache?.deferredAssetLoad === false, 'Expected visible-first hydration.');
+        return { structural, hydrated: fixture.postMessages.at(-1) };
+    };
+    return {
+        ...fixture,
+        document,
+        fullSnapshotCalls,
+        patchCalls,
+        gates,
+        sceneAssets,
+        request,
+        finalResponse,
+        paintStructure,
+        hydrate,
+        iconRuleKey,
+        realRule,
+        getFullBaseStateCalls: () => fullBaseStateCalls,
+        setIconStyleSignature: (value: string) => { iconStyleSignature = value; },
+        setBaseStateLocalised: (value: boolean) => { baseStateLocalised = value; },
+    };
+}
+
+describe('focustree preview session visible-first assets', () => {
+    beforeEach(() => {
+        (localisationIndex as any).isLocalisationIndexReady = () => false;
+        (localisationIndex as any).whenLocalisationIndexReady = () => pendingLocalisationReady;
+        (featureFlags as any).isLocalisationIndexEnabled = () => true;
+    });
+
+    afterEach(() => {
+        (localisationIndex as any).isLocalisationIndexReady = originalIsLocalisationIndexReady;
+        (localisationIndex as any).whenLocalisationIndexReady = originalWhenLocalisationIndexReady;
+        (featureFlags as any).isLocalisationIndexEnabled = originalIsLocalisationIndexEnabled;
+    });
+
+    it('hydrates the selected scene with only the focuses the first paint showed', async () => {
+        const fixture = createAssetFixture(100);
+        const structural = await fixture.paintStructure();
+        assert.deepStrictEqual(structural.assetMaterialization, { deferred: true, focusIds: [] });
+        await fixture.request(1, ['A1']);
+        const beforeHydration = await fixture.finalResponse(1);
+        assert.deepStrictEqual(beforeHydration.map(message => message.status), ['stale'], 'structural scenes have no assets to extend');
+
+        fixture.session.handleContentApplied(structural.snapshotVersion, structural.documentVersion, 'firstScenePainted', ['A2', 'A1']);
+        await waitForCondition(() => fixture.runtimeState.lastRenderCache?.deferredAssetLoad === false, 'Expected visible-first hydration.');
+        const hydrated = fixture.postMessages.at(-1);
+        assert.deepStrictEqual(fixture.fullSnapshotCalls.at(-1), { treeIds: ['A'], materializedFocusIds: ['A2', 'A1'], deferred: false });
+        assert.deepStrictEqual(hydrated.assetMaterialization, { deferred: false, focusIds: ['A2', 'A1'] });
+        assert.strictEqual(hydrated.perf.assetLoadMode, 'full');
+        assert.strictEqual(hydrated.perf.materializedFocusCount, 2);
+        const rules = fixture.runtimeState.lastRenderCache?.dynamicStyleRules;
+        assert.strictEqual(rules?.get('st-focus-icon-GFX_A1'), 'real:A1;');
+        assert.strictEqual(rules?.get('st-focus-icon-GFX_A3'), 'placeholder;', 'off-screen focuses keep placeholders');
+        fixture.session.dispose();
+    });
+
+    it('loads focuses that scrolling reveals, visible ones first, without resending rules in transit', async () => {
+        const fixture = createAssetFixture(101);
+        await fixture.hydrate(['A1']);
+        const base = fixture.runtimeState.lastRenderCache!.snapshotVersion;
+        await fixture.request(1, ['A2'], ['A3', 'B1']);
+        const revealed = await fixture.finalResponse(1);
+        assert.deepStrictEqual(revealed.map(message => [message.tier, message.materializedFocusIds, message.baseSnapshotVersion, message.snapshotVersion, message.final]), [
+            ['visible', ['A2'], base, base + 1, false],
+            ['nearby', ['A3'], base + 1, base + 2, true],
+        ], 'B1 belongs to an unloaded tree and is ignored');
+        assert.match(revealed[0].dynamicStyleCssPatch, /real:A2;/);
+        assert.doesNotMatch(revealed[0].dynamicStyleCssPatch, /real:A1;/);
+        const cache = fixture.runtimeState.lastRenderCache!;
+        assert.deepStrictEqual(cache.materializedFocusIds, ['A1', 'A2', 'A3']);
+        assert.strictEqual(cache.snapshotVersion, base + 2);
+        assert.strictEqual(cache.dynamicStyleRules.get('st-focus-icon-GFX_A2'), 'real:A2;');
+        assert.strictEqual(countOccurrences(cache.dynamicStyleCss, 'real:A2;'), 1);
+
+        // A request computed before the webview saw A2's patch must not receive it again.
+        await fixture.request(2, ['A2'], [], { snapshotVersion: base });
+        assert.deepStrictEqual((await fixture.finalResponse(2)).map(message => message.status), ['empty']);
+        // A webview that saw the patch and still asks lacks the rule; it is sent again.
+        await fixture.request(3, ['A2'], [], { snapshotVersion: base + 2 });
+        const resent = await fixture.finalResponse(3);
+        assert.strictEqual(resent[0].status, 'applied');
+        assert.match(resent[0].dynamicStyleCssPatch, /real:A2;/);
+        assert.deepStrictEqual(fixture.patchCalls.at(-1), { focusIds: ['A2'], resend: ['A2'] });
+        fixture.session.dispose();
+    });
+
+    it('rejects stale requests and drops asset work that a scheduled refresh supersedes', async () => {
+        const fixture = createAssetFixture(102);
+        await fixture.hydrate(['A1']);
+        const cache = fixture.runtimeState.lastRenderCache;
+        await fixture.request(1, ['A2'], [], { documentVersion: 101 });
+        assert.deepStrictEqual((await fixture.finalResponse(1)).map(message => message.status), ['stale']);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache, cache);
+
+        let release: () => void = () => undefined;
+        fixture.gates.assetPatch = new Promise<void>(resolve => { release = resolve; });
+        const patchCount = fixture.patchCalls.length;
+        await fixture.request(2, ['A2']);
+        await waitForCondition(() => fixture.patchCalls.length > patchCount, 'Expected the asset patch to start.');
+        // An imported edit keeps the root version; only generation cancellation stops the work.
+        fixture.session.cancelPendingRefresh();
+        release();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepStrictEqual(fixture.sceneAssets(2), []);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache, cache, 'the materialized cache is preserved');
+        assert.deepStrictEqual(cache?.materializedFocusIds, ['A1']);
+        fixture.session.dispose();
+    });
+
+    it('switches trees with placeholders, loads the shown tree on demand, and keeps revisited scenes', async () => {
+        const fixture = createAssetFixture(103);
+        await fixture.hydrate(['A1']);
+        await fixture.request(1, ['A2']);
+        await fixture.finalResponse(1);
+
+        await fixture.session.handleSceneRequest('B');
+        assert.deepStrictEqual(fixture.fullSnapshotCalls.at(-1)?.treeIds, ['B']);
+        const scene = fixture.postMessages.at(-1);
+        assert.strictEqual(scene.command, 'focusTreeScene');
+        assert.deepStrictEqual(scene.assetMaterialization, { deferred: false, focusIds: ['A1', 'A2'] },
+            'the new tree arrives with placeholders; loaded scenes keep their icons');
+        assert.strictEqual(countOccurrences(scene.dynamicStyleCss, 'real:A1;'), 1, 'merged scenes do not repeat rules');
+        assert.strictEqual(countOccurrences(scene.dynamicStyleCss, 'real:A2;'), 1);
+        assert.match(scene.dynamicStyleCss, /st-focus-icon-GFX_B1 \{ placeholder; \}/);
+
+        await fixture.request(2, ['B1'], ['B2'], { treeId: 'B' });
+        const shown = await fixture.finalResponse(2);
+        assert.deepStrictEqual(shown.map(message => message.materializedFocusIds), [['B1'], ['B2']]);
+        // Returning to A is a client-side switch; its scrolled-to focuses still load.
+        await fixture.request(3, ['A3'], [], { treeId: 'A' });
+        const revisited = await fixture.finalResponse(3);
+        assert.deepStrictEqual(revisited.map(message => [message.status, message.materializedFocusIds]), [['applied', ['A3']]]);
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.materializedFocusIds, ['A1', 'A2', 'B1', 'B2', 'A3']);
+        fixture.session.dispose();
+    });
+
+    it('keeps a first-painted icon real while a tree sharing its asset hydrates, edits refresh, and full syncs replace styles', async () => {
+        const fixture = createAssetFixture(111);
+        const sharedKey = fixture.iconRuleKey('A1');
+        assert.strictEqual(fixture.iconRuleKey('D1'), sharedKey, 'D1 shares the icon of A1');
+        const focusIds = ['A1', 'A2', 'A3', 'D1', 'D2'];
+        /** Focuses the webview counts as materialized, each rendering its real icon rule. */
+        const assertWebviewRendersMaterializedIcons = (step: string, materializedFocusIds: string[]) => {
+            const { css, materialization } = getWebviewAssetState(fixture.postMessages);
+            assert.deepStrictEqual(focusIds.filter(focusId => !materialization.isPending(focusId)), materializedFocusIds,
+                `${step}: materialized focuses`);
+            for (const focusId of materializedFocusIds) {
+                assert.strictEqual(getCascadedRule(css, fixture.iconRuleKey(focusId)), fixture.realRule(focusId),
+                    `${step}: ${focusId} renders its real icon, not a placeholder`);
+            }
+            assert.strictEqual(fixture.runtimeState.lastRenderCache?.dynamicStyleRules.get(sharedKey), 'real:A1;',
+                `${step}: the host's rule index agrees with the webview`);
+        };
+
+        await fixture.hydrate(['A1']);
+        assertWebviewRendersMaterializedIcons('first paint', ['A1']);
+
+        // D joins the loaded scenes with nothing materialized. Its unseen D1 must not turn the
+        // shared icon back into a placeholder; its own icons do arrive as placeholders.
+        await fixture.session.handleSceneRequest('D');
+        const scene = fixture.postMessages.at(-1);
+        assert.strictEqual(scene.command, 'focusTreeScene');
+        assert.strictEqual(scene.treeId, 'D');
+        assert.strictEqual(getCascadedRule(scene.dynamicStyleCss, fixture.iconRuleKey('D2')), 'placeholder;');
+        assertWebviewRendersMaterializedIcons('other tree hydrated', ['A1']);
+
+        await fixture.request(1, ['D2'], [], { treeId: 'D' });
+        await fixture.finalResponse(1);
+        // Returning to A is a client-side switch: no message arrives, so A1 must already render
+        // for real; it is materialized and is therefore never requested again.
+        assertWebviewRendersMaterializedIcons('cached revisit', ['A1', 'D2']);
+
+        // Edits that keep every focus refresh the loaded scenes, rebuilt or patched in place.
+        for (let edit = 1; edit <= 3; edit++) {
+            const edited = createDocument(111 + edit);
+            fixture.latestDocument.current = edited;
+            await fixture.session.refreshDocument(edited);
+            assertWebviewRendersMaterializedIcons(`edit ${edit}`, ['A1', 'D2']);
+        }
+
+        // A dependency change rebuilds every materialized rule of every loaded scene and replaces
+        // the webview's stylesheet with it.
+        const latest = fixture.latestDocument.current!;
+        const fullSnapshotCount = fixture.fullSnapshotCalls.length;
+        fixture.setIconStyleSignature('icons-2');
+        await fixture.session.refreshDocument(latest, {
+            source: 'dependency',
+            invalidation: FocusTreeInvalidation.Assets,
+            assetLoadMode: 'full',
+        });
+        assert.strictEqual(fixture.fullSnapshotCalls.length, fullSnapshotCount + 1);
+        const fullSync = fixture.fullSnapshotCalls.at(-1)!;
+        assert.deepStrictEqual([...fullSync.treeIds].sort(), ['A', 'D'], 'the full sync covers every loaded scene');
+        assert.deepStrictEqual([...fullSync.materializedFocusIds ?? []].sort(), ['A1', 'D2']);
+        assertWebviewRendersMaterializedIcons('full sync', ['A1', 'D2']);
+
+        // Revealing D1 later only extends the bookkeeping: its icon is already real.
+        await fixture.request(2, ['D1'], [], { treeId: 'D', documentVersion: latest.version });
+        const revealed = await fixture.finalResponse(2);
+        assert.deepStrictEqual(revealed.map(message => [message.status, message.materializedFocusIds, message.dynamicStyleCssPatch]),
+            [['applied', ['D1'], undefined]]);
+        assertWebviewRendersMaterializedIcons('shared icon revealed', ['A1', 'D1', 'D2']);
+        fixture.session.dispose();
+    });
+
+    it('publishes only the latest of rapid scene requests and builds on a scene still in transit', async () => {
+        const fixture = createAssetFixture(108);
+        await fixture.hydrate(['A1']);
+        const sceneMessages = () => fixture.postMessages
+            .filter(message => message.command === 'focusTreeScene' && message.sceneMode === 'merge');
+
+        // B is still loading when C is selected; only C's scene may be published.
+        let releaseB: () => void = () => undefined;
+        fixture.gates.fullBaseState = new Promise<void>(resolve => { releaseB = resolve; });
+        const baseStateCalls = fixture.getFullBaseStateCalls();
+        const toB = fixture.session.handleSceneRequest('B');
+        await waitForCondition(() => fixture.getFullBaseStateCalls() > baseStateCalls, 'Expected B to start loading.');
+        fixture.gates.fullBaseState = undefined;
+        const toC = fixture.session.handleSceneRequest('C');
+        releaseB();
+        await Promise.all([toB, toC]);
+        assert.deepStrictEqual(sceneMessages().map(message => message.treeId), ['C']);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.selectedTreeId, 'C');
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.assetTreeIds, ['A', 'C']);
+
+        // A request arriving while B's scene is in transit builds on B instead of dropping it.
+        let releasePost: () => void = () => undefined;
+        const postGate = new Promise<void>(resolve => { releasePost = resolve; });
+        fixture.webview.postMessage = async (message: any) => {
+            fixture.postMessages.push(message);
+            if (message.command === 'focusTreeScene' && message.treeId === 'B') {
+                await postGate;
+            }
+            return true;
+        };
+        const toB2 = fixture.session.handleSceneRequest('B');
+        await waitForCondition(() => sceneMessages().some(message => message.treeId === 'B'), 'Expected B in transit.');
+        const toA = fixture.session.handleSceneRequest('A');
+        releasePost();
+        await Promise.all([toB2, toA]);
+        const last = sceneMessages().at(-1);
+        assert.strictEqual(last.treeId, 'A');
+        assert.deepStrictEqual(last.focusTrees.map((tree: { id: string }) => tree.id).sort(), ['A', 'B', 'C'],
+            'the webview keeps B selectable without another request');
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.assetTreeIds, ['A', 'C', 'B']);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache?.selectedTreeId, 'A');
+        fixture.session.dispose();
+    });
+
+    it('refreshes every materialized icon after an asset dependency change and serves queued requests afterwards', async () => {
+        const fixture = createAssetFixture(104);
+        await fixture.hydrate(['A1']);
+        await fixture.request(1, ['A2']);
+        await fixture.finalResponse(1);
+
+        let release: () => void = () => undefined;
+        fixture.gates.fullBaseState = new Promise<void>(resolve => { release = resolve; });
+        fixture.setIconStyleSignature('icons-2');
+        const baseStateCalls = fixture.getFullBaseStateCalls();
+        const refresh = fixture.session.refreshDocument(fixture.document, {
+            source: 'dependency',
+            invalidation: FocusTreeInvalidation.Assets,
+            assetLoadMode: 'full',
+        });
+        await waitForCondition(() => fixture.getFullBaseStateCalls() > baseStateCalls, 'Expected the dependency refresh to start.');
+        await fixture.request(2, ['A3']);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.deepStrictEqual(fixture.sceneAssets(2), [], 'asset requests wait for the refresh');
+
+        release();
+        fixture.gates.fullBaseState = undefined;
+        await refresh;
+        assert.deepStrictEqual(fixture.fullSnapshotCalls.at(-1)?.materializedFocusIds, ['A1', 'A2']);
+        const refreshed = fixture.postMessages.filter(message => message.command !== 'focusTreeSceneAssets').at(-1);
+        assert.strictEqual(refreshed.perf.source, 'dependency');
+        assert.deepStrictEqual(refreshed.assetMaterialization, { deferred: false, focusIds: ['A1', 'A2'] });
+        assert.match(refreshed.dynamicStyleCss, /real:A2;/, 'the full update replaces every materialized rule');
+
+        const queued = await fixture.finalResponse(2);
+        assert.deepStrictEqual(queued.map(message => [message.status, message.materializedFocusIds, message.baseSnapshotVersion]),
+            [['applied', ['A3'], refreshed.snapshotVersion]]);
+        fixture.session.dispose();
+    });
+
+    it('lets an in-flight hydration finish when localisation becomes ready instead of loading twice', async () => {
+        let markIndexReady: () => void = () => undefined;
+        (localisationIndex as any).whenLocalisationIndexReady = () => new Promise<void>(resolve => { markIndexReady = resolve; });
+        const fixture = createAssetFixture(109);
+        const structural = await fixture.paintStructure();
+        let releaseHydration: () => void = () => undefined;
+        fixture.gates.fullBaseState = new Promise<void>(resolve => { releaseHydration = resolve; });
+        fixture.session.handleContentApplied(structural.snapshotVersion, structural.documentVersion, 'firstScenePainted', ['A1']);
+        await waitForCondition(() => fixture.getFullBaseStateCalls() === 1, 'Expected the hydration to start.');
+
+        // The index becomes ready while the hydration loads, so the hydration is built with it.
+        fixture.setBaseStateLocalised(true);
+        markIndexReady();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.strictEqual(fixture.getFullBaseStateCalls(), 1, 'the hydration is neither cancelled nor restarted');
+        releaseHydration();
+        await waitForCondition(() => fixture.runtimeState.lastRenderCache?.deferredAssetLoad === false, 'Expected the hydration to finish.');
+        await new Promise(resolve => setTimeout(resolve, 5));
+
+        assert.strictEqual(fixture.getFullBaseStateCalls(), 1, 'a localised hydration needs no second load');
+        const sources = fixture.postMessages
+            .filter(message => message.command !== 'focusTreeSceneAssets')
+            .map(message => message.perf?.source);
+        assert.strictEqual(sources.at(-1), 'hydration');
+        assert.ok(!sources.includes('dependency'));
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.materializedFocusIds, ['A1']);
+        fixture.session.dispose();
+    });
+
+    it('refreshes localisation after, not instead of, a hydration built before the index was ready', async () => {
+        let markIndexReady: () => void = () => undefined;
+        (localisationIndex as any).whenLocalisationIndexReady = () => new Promise<void>(resolve => { markIndexReady = resolve; });
+        const fixture = createAssetFixture(110);
+        const structural = await fixture.paintStructure();
+        let releaseHydration: () => void = () => undefined;
+        fixture.gates.fullBaseState = new Promise<void>(resolve => { releaseHydration = resolve; });
+        fixture.session.handleContentApplied(structural.snapshotVersion, structural.documentVersion, 'firstScenePainted', ['A1']);
+        await waitForCondition(() => fixture.getFullBaseStateCalls() === 1, 'Expected the hydration to start.');
+
+        markIndexReady();
+        await new Promise(resolve => setTimeout(resolve, 5));
+        fixture.gates.fullBaseState = undefined;
+        releaseHydration();
+        await waitForCondition(() => fixture.postMessages.some(message => message.perf?.source === 'dependency'),
+            'Expected the localisation refresh after the hydration.');
+
+        const sources = fixture.postMessages
+            .filter(message => message.command !== 'focusTreeSceneAssets')
+            .map(message => message.perf?.source);
+        assert.deepStrictEqual(sources.slice(-2), ['hydration', 'dependency'], 'the hydration was applied, not cancelled');
+        assert.strictEqual(fixture.getFullBaseStateCalls(), 2);
+        assert.deepStrictEqual(fixture.runtimeState.lastRenderCache?.materializedFocusIds, ['A1'],
+            'the localisation refresh keeps the hydrated visible icons');
+        fixture.session.dispose();
+    });
+
+    it('cancels a scheduled hydration for a pending refresh and hydrates right after the next one', async () => {
+        const fixture = createAssetFixture(105);
+        const structural = await fixture.paintStructure();
+        const cache = fixture.runtimeState.lastRenderCache;
+        assert.strictEqual(fixture.runtimeState.deferredHydrationDocumentVersion, 105);
+        fixture.session.cancelPendingRefresh();
+        assert.strictEqual(fixture.runtimeState.deferredHydrationDocumentVersion, undefined);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache, cache);
+
+        // The acknowledgement of the cancelled hydration's scene still names the visible focuses.
+        fixture.session.handleContentApplied(structural.snapshotVersion, structural.documentVersion, 'firstScenePainted', ['A3']);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        assert.ok(fixture.fullSnapshotCalls.every(call => call.deferred), 'nothing hydrates before the scheduled refresh');
+
+        await fixture.session.refreshDocument(fixture.document, { source: 'dependency', invalidation: FocusTreeInvalidation.Structure });
+        await waitForCondition(() => fixture.runtimeState.lastRenderCache?.deferredAssetLoad === false,
+            'Expected hydration without waiting for another first paint.');
+        assert.deepStrictEqual(fixture.fullSnapshotCalls.at(-1)?.materializedFocusIds, ['A3']);
+        fixture.session.dispose();
+    });
+
+    it('keeps a pending local-edit refresh when its own change is scheduled', async () => {
+        const fixture = createAssetFixture(106);
+        await fixture.hydrate(['A1']);
+        const requestId = fixture.runtimeState.latestRefreshRequestId;
+        fixture.runtimeState.pendingLocalEditDocumentVersions.add(106);
+        fixture.session.cancelPendingRefresh();
+        assert.strictEqual(fixture.runtimeState.latestRefreshRequestId, requestId,
+            'the scheduled refresh of this version is skipped, so its local-edit refresh must finish');
+        fixture.runtimeState.pendingLocalEditDocumentVersions.delete(106);
+        fixture.session.cancelPendingRefresh();
+        assert.strictEqual(fixture.runtimeState.latestRefreshRequestId, requestId + 1);
+        fixture.session.dispose();
+    });
+
+    it('drops an in-flight refresh of an unchanged root document when an imported edit is scheduled', async () => {
+        const fixture = createAssetFixture(107);
+        await fixture.hydrate(['A1']);
+        const messageCount = fixture.postMessages.length;
+        const cache = fixture.runtimeState.lastRenderCache;
+        let release: () => void = () => undefined;
+        fixture.gates.fullBaseState = new Promise<void>(resolve => { release = resolve; });
+        fixture.setIconStyleSignature('icons-3');
+        const baseStateCalls = fixture.getFullBaseStateCalls();
+        const refresh = fixture.session.refreshDocument(fixture.document, {
+            source: 'dependency',
+            invalidation: FocusTreeInvalidation.Assets,
+            assetLoadMode: 'full',
+        });
+        await waitForCondition(() => fixture.getFullBaseStateCalls() > baseStateCalls, 'Expected the refresh to start.');
+        fixture.session.cancelPendingRefresh();
+        release();
+        await refresh;
+        assert.strictEqual(fixture.postMessages.length, messageCount);
+        assert.strictEqual(fixture.runtimeState.lastRenderCache, cache);
+        fixture.session.dispose();
     });
 });

@@ -46,7 +46,77 @@ export interface FocusTreeContentUpdateMessage {
     dynamicStyleCssPatch?: string;
     xGridSize?: number;
     yGridSize?: number;
+    /** Replaces the webview's materialized focus set; patches omit it and keep the current set. */
+    assetMaterialization?: FocusTreeAssetMaterialization;
     perf?: FocusTreeContentUpdatePerf;
+}
+
+/**
+ * Which focus icon assets a scene renders for real. Other focuses of the loaded scenes render
+ * structural placeholder styles until the webview requests them.
+ */
+export interface FocusTreeAssetMaterialization {
+    /** True while every icon is a structural placeholder (deferred first paint). */
+    deferred: boolean;
+    /** Materialized focus ids; omitted when every focus of the loaded scenes is materialized. */
+    focusIds?: string[];
+}
+
+/**
+ * Custom property every focus icon rule sets, so the webview can tell from an on-screen icon
+ * element what it actually renders: a decoded image (`loaded`, including the game's default
+ * unknown-focus icon for unresolved names), the grey box drawn when not even that could be
+ * decoded (`unavailable`), or a structural placeholder (`placeholder`).
+ */
+export const focusIconStateProperty = '--focus-icon-state';
+export type FocusIconRenderState = 'loaded' | 'unavailable' | 'placeholder';
+
+/** Upper bounds of one asset request, so request and response transport stays bounded. */
+export const focusTreeAssetRequestLimits = {
+    visible: 256,
+    nearby: 128,
+    /** Focuses rendered per asset response chunk. */
+    chunk: 32,
+} as const;
+
+/** Webview → host: focuses on or near the screen whose icon assets are still placeholders. */
+export interface FocusTreeAssetRequestMessage {
+    command: 'focusTreeAssetRequest';
+    protocolVersion: typeof focusTreeProtocolVersion;
+    /** Webview-local, monotonically increasing request number. */
+    assetRequestId: number;
+    treeId: string;
+    snapshotVersion: number;
+    documentVersion: number;
+    /** On screen, condition-visible, and not in a hidden branch; closest to the center first. */
+    visibleFocusIds: string[];
+    /** Within the prefetch margin around the screen; closest first. */
+    nearbyFocusIds: string[];
+}
+
+export type FocusTreeSceneAssetsStatus = 'applied' | 'empty' | 'stale' | 'failed';
+
+/** Host → webview: additive icon asset styles for newly materialized focuses. */
+export interface FocusTreeSceneAssetsMessage {
+    command: 'focusTreeSceneAssets';
+    protocolVersion: typeof focusTreeProtocolVersion;
+    /** Host refresh generation the patch was computed in; asset work never starts a new one. */
+    requestId: number;
+    /** Echo of the webview request, 0 for host-initiated patches. */
+    assetRequestId: number;
+    treeId: string;
+    documentVersion: number;
+    baseSnapshotVersion: number;
+    /** `baseSnapshotVersion + 1` for applied patches, otherwise `baseSnapshotVersion`. */
+    snapshotVersion: number;
+    status: FocusTreeSceneAssetsStatus;
+    tier?: 'visible' | 'nearby';
+    /** Last response for `assetRequestId`. */
+    final: boolean;
+    /** Focuses whose assets this patch adds. */
+    materializedFocusIds?: string[];
+    /** Style rules the webview does not have yet, plus rules it asked for again. */
+    dynamicStyleCssPatch?: string;
 }
 
 export interface FocusTreeCatalogMessage extends FocusTreeContentUpdateMessage {
@@ -98,6 +168,8 @@ export interface FocusTreeContentUpdatePerf {
     inlayCount?: number;
     renderedFocusCount?: number;
     renderedInlayCount?: number;
+    /** Focuses whose icons this update decoded; the remaining rendered focuses use placeholders. */
+    materializedFocusCount?: number;
     deferredAssetLoad?: boolean;
 }
 

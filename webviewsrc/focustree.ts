@@ -1,4 +1,5 @@
 import { enableZoom, runSafely, subscribeNavigatorDelegation, subscribePreviewLabelToggle, subscribeRefreshButton } from './util/common';
+import { installFocusAssetLoading } from './focustree/assetloading';
 import { rebuildContentSafely, subscribeFocusCheckboxDelegation } from './focustree/content';
 import { getFocusNavigationTarget, installFocusEditing } from './focustree/editing';
 import { handleHostMessage } from './focustree/hostsync';
@@ -22,6 +23,7 @@ window.addEventListener('load', runSafely(async function() {
     try {
         installFocusEditing();
         installToolbar();
+        installFocusAssetLoading();
 
         const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
         subscribeNavigatorDelegation(contentElement, navigator => navigator.dataset.focusId !== undefined

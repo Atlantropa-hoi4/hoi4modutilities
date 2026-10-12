@@ -366,7 +366,7 @@ async function fillLocalisationItems(localisationFile: string, localisationIndex
     dlc?: boolean
 }, estimatedSize?: [number]): Promise<void> {
     try {
-        const [fileBuffer] = await readFileFromModOrHOI4(localisationFile, options);
+        const [fileBuffer] = await readFileFromModOrHOI4(localisationFile, { ...options, priority: 'background' });
         const localisations = parseLocalisationFileContent(fileBuffer.toString());
         for (const langKey in localisations) {
             if (!localisationIndex[langKey]) {

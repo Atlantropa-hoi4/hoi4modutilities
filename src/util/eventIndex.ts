@@ -22,7 +22,7 @@ const service = new IndexService<{ index: Record<string, string> }>({
                 signal.throwIfAborted();
                 const file = `events/${relative}`;
                 try {
-                    const [content] = await readFileFromModOrHOI4(file);
+                    const [content] = await readFileFromModOrHOI4(file, { priority: 'background' });
                     size[0] += content.length;
                     return { file, mod: !!await getFilePathFromMod(file), events: Object.values(getEvents(parseHoi4File(content.toString()), file).eventItemsByNamespace).flat() };
                 } catch { return { file, mod: false, events: [] }; }

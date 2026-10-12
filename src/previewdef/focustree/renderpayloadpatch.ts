@@ -3,6 +3,7 @@ import { GridBoxType } from "../../hoiformat/gui";
 import { isPerfTraceEnabled, recordPerf } from "../../util/perf";
 import {
     createFocusTreeStyleTable,
+    prepareDeferredFocusIconStyles,
     prepareFocusIconStyles,
     prepareFocusTreeBaseStateForRender,
     renderFocusCardTemplates,
@@ -16,7 +17,7 @@ import {
     throwIfFocusTreeRenderCancelled,
     yieldToFocusTreeRenderCancellation,
 } from "./rendercancellation";
-import { FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
+import { FocusTreeAssetMaterialization, FocusTreeContentSlot, FocusTreeContentUpdateMessage } from "./webviewupdate";
 import {
     FocusRangeView,
     FocusTreeView,
@@ -49,6 +50,11 @@ export interface FocusTreeRenderCache extends FocusTreeRenderMetadata {
     snapshotVersion: number;
     selectedTreeId?: string;
     assetTreeIds?: string[];
+    /**
+     * Focuses of the asset trees whose icon styles are real; the others use placeholders.
+     * Undefined means every focus of the asset trees.
+     */
+    materializedFocusIds?: string[];
     focusTrees: FocusTreeView[];
     continuousFocusHtml?: string;
     focusTemplates: Record<string, string>;
@@ -115,6 +121,7 @@ export function createFocusTreeRenderCache(
         snapshotVersion: previousVersion + 1,
         selectedTreeId: payload.selectedTreeId ?? payload.focusTrees[0]?.id,
         assetTreeIds: payload.assetTreeIds,
+        materializedFocusIds: payload.materializedFocusIds,
         focusTrees: payload.focusTrees,
         continuousFocusHtml: payload.continuousFocusHtml,
         focusTemplates: payload.focusTemplates ?? {},
@@ -206,6 +213,7 @@ function createFullFocusTreeRenderUpdateWithMetadata(
                 focusTemplateKeyById: payload.focusTemplateKeyById,
                 renderedInlayWindows: payload.renderedInlayWindows,
                 dynamicStyleCss: payload.dynamicStyleCss,
+                assetMaterialization: getFocusTreeAssetMaterialization(cache),
             },
         };
     }
@@ -232,8 +240,46 @@ function createFullFocusTreeRenderUpdateWithMetadata(
             dynamicStyleCss: payload.dynamicStyleCss,
             xGridSize: payload.xGridSize,
             yGridSize: payload.yGridSize,
+            assetMaterialization: getFocusTreeAssetMaterialization(cache),
         },
     };
+}
+
+/** The materialized focus set a webview receives with a scene or full asset update. */
+export function getFocusTreeAssetMaterialization(
+    cache: Pick<FocusTreeRenderCache, 'deferredAssetLoad' | 'materializedFocusIds'>,
+): FocusTreeAssetMaterialization {
+    return cache.deferredAssetLoad
+        ? { deferred: true, focusIds: [] }
+        : { deferred: false, focusIds: cache.materializedFocusIds && [...cache.materializedFocusIds] };
+}
+
+/** Serializes class rules in the format of `StyleTable.toStyleContent`. */
+export function serializeFocusTreeStyleRules(rules: Iterable<readonly [key: string, content: string]>): string {
+    let css = '';
+    for (const [key, content] of rules) {
+        css += `.${key} { ${content.replace(/^\s+/gm, '')} }\n`;
+    }
+    return css;
+}
+
+/**
+ * Appends rules of `nextRules` that `previousRules` lacks or defines differently. Later rules win
+ * the cascade, so the result renders like a full rebuild without repeating unchanged rules.
+ */
+export function mergeFocusTreeStyleRules(
+    previousCss: string,
+    previousRules: ReadonlyMap<string, string>,
+    nextRules: ReadonlyMap<string, string>,
+): { dynamicStyleCss: string; dynamicStyleRules: ReadonlyMap<string, string>; appendedCss: string } {
+    const appended = Array.from(nextRules).filter(([key, content]) => previousRules.get(key) !== content);
+    if (appended.length === 0) {
+        return { dynamicStyleCss: previousCss, dynamicStyleRules: previousRules, appendedCss: '' };
+    }
+    const appendedCss = serializeFocusTreeStyleRules(appended);
+    const dynamicStyleRules = new Map(previousRules);
+    appended.forEach(([key, content]) => dynamicStyleRules.set(key, content));
+    return { dynamicStyleCss: `${previousCss}\n${appendedCss}`, dynamicStyleRules, appendedCss };
 }
 
 export async function createFocusTreeRenderUpdate(
@@ -272,12 +318,16 @@ export async function createFocusTreeRenderUpdate(
     const changedTreeIds = focusTreePatches.map(patch => patch.treeId);
     const structurallyChangedTreeIds = changedTreeIds
         .filter(treeId => previous.treeStructureSignatures[treeId] !== nextMetadata.treeStructureSignatures[treeId]);
+    const materializedFocusIds = previous.deferredAssetLoad
+        ? new Set<string>()
+        : previous.materializedFocusIds && new Set(previous.materializedFocusIds);
     const presentationPatch = await renderChangedFocusPresentation(
         nextBaseState,
         focusSignatureDiff.changedKeys,
         styleDependencyChanged,
         previous.dynamicStyleRules,
         isCancelled,
+        materializedFocusIds,
     );
     const focusTemplatePatch = Object.fromEntries(Object.entries(presentationPatch.templates)
         .filter(([key]) => !(key in previous.focusTemplates)));
@@ -299,6 +349,7 @@ export async function createFocusTreeRenderUpdate(
         snapshotVersion: previous.snapshotVersion + 1,
         selectedTreeId: nextBaseState.assetTreeIds?.[0] ?? nextBaseState.focusTrees[0]?.id,
         assetTreeIds: nextBaseState.assetTreeIds,
+        materializedFocusIds: previous.materializedFocusIds?.filter(focusId => !!nextBaseState.focusById[focusId]),
         focusTrees: nextFocusTrees,
         focusTemplates: { ...previous.focusTemplates, ...focusTemplatePatch },
         focusTemplateKeyById: mergeStringMap(previous.focusTemplateKeyById, focusTemplateKeyPatch, focusSignatureDiff.removedKeys),
@@ -747,12 +798,18 @@ function mergeStringMap(
     return result;
 }
 
+/**
+ * Renders templates and, when icon dependencies changed, icon styles of the changed focuses.
+ * Only materialized focuses decode real icons; the others receive placeholders for icon names
+ * without any rule yet, so a placeholder never overrides a real icon the webview already has.
+ */
 async function renderChangedFocusPresentation(
     baseState: FocusTreeRenderBaseState,
     focusIds: readonly string[],
     includeAssetStyles: boolean,
     existingStyleRules: ReadonlyMap<string, string>,
     isCancelled?: () => boolean,
+    materializedFocusIds?: ReadonlySet<string>,
 ): Promise<FocusCardTemplates & {
     dynamicStyleCssPatch: string;
     dynamicStyleRules: ReadonlyMap<string, string>;
@@ -762,15 +819,29 @@ async function renderChangedFocusPresentation(
         .map(focusId => baseState.focusById[focusId])
         .filter((focus): focus is Focus => !!focus);
     if (includeAssetStyles && focuses.length > 0) {
-        await prepareFocusIconStyles(
-            focuses,
-            styleTable,
-            baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution(),
-            baseState.xGridSize,
-            baseState.yGridSize,
-            isCancelled,
-            !!baseState.presentation?.item,
-        );
+        const realFocuses = materializedFocusIds ? focuses.filter(focus => materializedFocusIds.has(focus.id)) : focuses;
+        const placeholderFocuses = materializedFocusIds ? focuses.filter(focus => !materializedFocusIds.has(focus.id)) : [];
+        if (realFocuses.length > 0) {
+            await prepareFocusIconStyles(
+                realFocuses,
+                styleTable,
+                baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution(),
+                baseState.xGridSize,
+                baseState.yGridSize,
+                isCancelled,
+                !!baseState.presentation?.item,
+            );
+        }
+        if (placeholderFocuses.length > 0) {
+            await prepareDeferredFocusIconStyles(
+                placeholderFocuses,
+                styleTable,
+                baseState.xGridSize,
+                baseState.yGridSize,
+                isCancelled,
+                key => existingStyleRules.has(key),
+            );
+        }
     }
     const cardTemplates = await renderFocusCardTemplates(baseState, focuses, styleTable, isCancelled);
 

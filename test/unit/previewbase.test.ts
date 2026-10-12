@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import Module = require('module');
+import type { TextDocument, Uri, WebviewPanel } from 'vscode';
 
 type MockDocument = {
     version: number;
@@ -206,6 +207,28 @@ describe('PreviewBase navigation', () => {
 });
 
 describe('PreviewBase disposal', () => {
+    it('invalidates an active render before a debounced replacement begins', async () => {
+        const panel = createPanel();
+        // DeferredPreview consumes only the panel event/render surface and document version.
+        const typedPanel = panel as unknown as WebviewPanel;
+        const uri = {} as Uri;
+        const firstDocument = makeDocument(1, '') as unknown as TextDocument;
+        const secondDocument = makeDocument(2, '') as unknown as TextDocument;
+        const preview = new DeferredPreview(uri, typedPanel);
+        const rendering = preview.onDocumentChange(firstDocument);
+        await new Promise(resolve => setImmediate(resolve));
+        preview.cancelPendingRefresh();
+        preview.resolve(1, 'stale');
+        await rendering;
+        assert.strictEqual(panel.webview.html, '');
+        const replacement = preview.onDocumentChange(secondDocument);
+        await new Promise(resolve => setImmediate(resolve));
+        preview.resolve(2, 'latest');
+        await replacement;
+        assert.strictEqual(panel.webview.html, 'latest');
+        preview.dispose();
+    });
+
     it('does not assign a loading page after disposal', async () => {
         const panel = createPanel();
         const preview = new TestPreview({} as any, panel as any);

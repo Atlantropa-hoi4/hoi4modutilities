@@ -1,9 +1,9 @@
 # hoi4-compute
 
 Dependency-free Rust computation for BC1/BC2/BC3 DDS pixels, packed RGB(A)
-bytes, 24-bit BGR province bitmap rows, and province boundaries/validation.
-The safe `decode_bcn`, `decode_rgba8`, `scan_bgr` and `scan_edges` functions
-work on native targets; the pointer ABI is exported only for `wasm32`.
+bytes, 24-bit BGR province bitmap rows, province boundaries/validation, and
+shared-focus/GFX script index names. Safe kernels work on native targets;
+the pointer ABI is exported only for `wasm32`.
 
 ## ABI v1
 
@@ -37,16 +37,22 @@ All arguments, pointers, and return values are `u32`. `abi_version()` returns
   One-pixel records `[color, x, y]` and crossing records `[x, yTop]` follow.
   Per-component neighbor/path order and raster traversal match the old TS code;
   the adapter merges repeated color-neighbor groups and formats warnings.
+- `process_script_index(input_ptr, input_len, mode)` accepts UTF-8 script bytes;
+  `0 = shared/joint focus IDs`, `1 = GFX sprite names`. Unsupported syntax
+  returns `0` so the caller can use the original parser for the whole file.
+  A successful result has its own LE u32 header `[totalBytes, entryCount]`,
+  followed by `[utf8ByteLength, utf8Bytes]` per entry. It has no pixel header.
 
-Edge/RGBA8 exports are additive optional capabilities under ABI v1. Bindings
-can continue using older BCn/BGR modules and decline unsupported kernels.
+Edge/RGBA8/script-index exports are additive optional capabilities under ABI v1.
+Bindings continue using older BCn/BGR modules and decline unsupported kernels.
 
 A successful process call returns an independently owned boxed result. Errors
-return `0`; the input remains owned by the caller. The result starts with three
-little-endian `u32` fields (12 bytes): total byte length, pixel byte length,
-and unique color count. Pixel bytes follow, then unique colors as little-endian
-`u32` values. Input lengths are limited to 128 MiB and complete serialized
-results to 256 MiB. Dimensions must be nonzero. BGR requires `width * 3 <=
+return `0`; the input remains owned by the caller. Image/edge results start with
+three little-endian `u32` fields (12 bytes): total byte length, pixel/payload byte
+length, and unique color count. Pixel bytes follow, then unique colors as
+little-endian `u32` values; script results use the separate header above.
+Input lengths are limited to 128 MiB and complete serialized results to 256 MiB.
+Image dimensions must be nonzero. BGR requires `width * 3 <=
 stride` and at least `stride * height` input bytes. BCN requires all complete
 4x4 blocks, including blocks clipped at image edges. Extra input bytes are
 ignored, but still count toward the input size limit.
@@ -94,6 +100,14 @@ endpoint selection and collinear reduction. The aggregate scratch budget is
 coexist; this is not a total linear-memory ceiling. Growth accounting can
 reject below the serialized output cap. Normal zero-return rejection is a
 per-job accelerator decline, not necessarily a trapped/invalid instance.
+
+Script scanning preserves ordered shared/joint IDs (not local focus IDs) and
+sprite names, duplicates, supported constants, numeric IDs, quoted escapes,
+comments and BOMs. It borrows tokens and allocates the serialized name result
+instead of a full AST. Unsupported aliases, variable blocks, attachment forms,
+unsafe numeric IDs and malformed/unsupported syntax reject the entire job.
+The production adapter then applies the original parser and schema, preserving
+both names and parser errors.
 
 ## Checks
 

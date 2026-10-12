@@ -176,6 +176,85 @@ describe('focustree message apply', () => {
         assert.strictEqual(selectedTreeId, 'tree_beta');
     });
 
+    describe('selection while catalog scenes are requested', () => {
+        const tree = (id: string) => ({ id, focuses: {}, warnings: [], inlayWindows: [] } as any);
+        const catalog = ['GNG_guangdong', 'GNG_yasuda_crisis_tree', 'GNG_morita_silicon_years']
+            .map(id => ({ id, kind: 'focus', focusCount: 1, warningCount: 0 } as const));
+        const applyScene = (
+            selection: { rendered: string | undefined; requested: string | undefined },
+            sceneTreeIds: string[],
+            selectedTreeId: string,
+            sceneCatalog: typeof catalog = catalog,
+        ) => {
+            const state = { ...selection };
+            const result = applyFocusTreeContentUpdate({
+                snapshotVersion: 5,
+                documentVersion: 1,
+                sceneMode: 'merge',
+                changedSlots: ['treeDefinitions', 'selector'],
+                selectedTreeId,
+                catalog: sceneCatalog,
+                focusTrees: sceneTreeIds.map(tree),
+            }, {
+                getSnapshotVersion: () => 4,
+                setSnapshotVersion: () => undefined,
+                getDocumentVersion: () => 1,
+                setDocumentVersion: () => undefined,
+                setFocusPositionActiveFile: () => undefined,
+                getCurrentSelectionTreeId: () => state.rendered ?? state.requested,
+                getRequestedSelectionTreeId: () => state.requested,
+                setSelectedFocusTreeById: treeId => { state.requested = treeId; },
+                setFocusTrees: () => undefined,
+                applyFocusTreePatches: () => undefined,
+                setFocusTemplates: () => undefined,
+                patchFocusTemplates: () => undefined,
+                setRenderedInlayWindows: () => undefined,
+                patchRenderedInlayWindows: () => undefined,
+                refreshFocusTreeSelectorOptions: () => undefined,
+                refreshWarningsButtonVisibility: () => undefined,
+                setGridBox: () => undefined,
+                setGridSizeX: () => undefined,
+                setGridSizeY: () => undefined,
+                replaceDynamicStyleCss: () => undefined,
+            });
+            assert.strictEqual(result, true);
+            return state.requested;
+        };
+
+        it('selects the requested tree although the previously rendered tree is in the merged scene', () => {
+            // Index 1 is still rendered while the scene of the newly selected index 2 arrives.
+            assert.strictEqual(applyScene(
+                { rendered: 'GNG_yasuda_crisis_tree', requested: 'GNG_morita_silicon_years' },
+                ['GNG_guangdong', 'GNG_yasuda_crisis_tree', 'GNG_morita_silicon_years'],
+                'GNG_morita_silicon_years',
+            ), 'GNG_morita_silicon_years');
+        });
+
+        it('keeps the latest of rapid requests selected while an earlier scene arrives', () => {
+            const selection = { rendered: 'GNG_guangdong', requested: 'GNG_morita_silicon_years' };
+            assert.strictEqual(applyScene(selection, ['GNG_guangdong', 'GNG_yasuda_crisis_tree'], 'GNG_yasuda_crisis_tree'),
+                'GNG_morita_silicon_years', 'the yasuda answer must not revert the newer morita selection');
+            assert.strictEqual(applyScene(selection, ['GNG_guangdong', 'GNG_yasuda_crisis_tree', 'GNG_morita_silicon_years'],
+                'GNG_morita_silicon_years'), 'GNG_morita_silicon_years');
+        });
+
+        it('keeps a client-side return to a loaded tree while a requested scene arrives', () => {
+            assert.strictEqual(applyScene(
+                { rendered: 'GNG_guangdong', requested: 'GNG_guangdong' },
+                ['GNG_guangdong', 'GNG_morita_silicon_years'],
+                'GNG_morita_silicon_years',
+            ), 'GNG_guangdong');
+        });
+
+        it('falls back to the host selection when the requested tree left the catalog', () => {
+            assert.strictEqual(applyScene(
+                { rendered: 'GNG_guangdong', requested: 'GNG_removed' },
+                ['GNG_guangdong', 'GNG_morita_silicon_years'],
+                'GNG_morita_silicon_years',
+            ), 'GNG_morita_silicon_years');
+        });
+    });
+
     it('preserves the selected tree during partial tree patch updates', () => {
         let selectedTreeId: string | undefined;
         const result = applyFocusTreeContentUpdate({

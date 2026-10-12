@@ -35,6 +35,7 @@ import {
     yieldToFocusTreeRenderCancellation,
 } from './rendercancellation';
 import { FocusTreeView, toFocusTreeViews } from './viewmodel';
+import { focusIconStateProperty, type FocusIconRenderState } from './webviewupdate';
 
 import { FocusGuiRenderer, FocusPresentation, renderContinuousFocusGui } from './presentation';
 
@@ -57,6 +58,11 @@ export interface FocusTreeRenderPayload {
     selectedTreeId?: string;
     /** Host-only asset scope; omitted by unscoped callers. */
     assetTreeIds?: string[];
+    /**
+     * Focuses of the asset trees rendered with real icon assets; the others use placeholders.
+     * Undefined means every focus of the asset trees.
+     */
+    materializedFocusIds?: string[];
     continuousFocusHtml?: string;
     /** GUI card templates by content key; see `fillFocusCardTemplate`. */
     focusTemplates: Record<string, string>;
@@ -122,6 +128,8 @@ export interface FocusTreeRenderPayloadBuildMetrics {
     deferredAssetLoad: boolean;
     renderedFocusCount?: number;
     renderedInlayCount?: number;
+    /** Focuses whose icons were decoded; the rest of `renderedFocusCount` uses placeholders. */
+    materializedFocusCount?: number;
 }
 
 export function renderFocusTreeShellHtml(
@@ -248,11 +256,22 @@ export async function prepareFocusTreeBaseStateForRender(
     return focusDisplayNameById;
 }
 
+/**
+ * Builds a full payload. `materializedFocusIds` limits icon decoding to those focuses of the
+ * asset trees, in the given order; every other focus keeps its template and gets a placeholder
+ * icon style, so the scene stays complete while unseen icons are not decoded.
+ *
+ * `existingStyleRules` are the rules of loaded scenes this payload is merged into. Icon rules are
+ * keyed by asset name, which focuses of different trees share, so placeholders are registered
+ * only for names without a rule there and never replace an icon another scene materialized.
+ */
 export async function buildFocusTreeRenderPayloadFromBaseState(
     baseState: FocusTreeRenderBaseState,
     isCancelled?: () => boolean,
     onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
     preparedViews?: FocusTreeView[],
+    materializedFocusIds?: readonly string[],
+    existingStyleRules?: ReadonlyMap<string, string>,
 ): Promise<{ payload: FocusTreeRenderPayload; metrics: FocusTreeRenderPayloadBuildMetrics }> {
     const localisationResolveStart = Date.now();
     const focusLocalizationTextById = await prepareFocusTreeBaseStateForRender(baseState, isCancelled);
@@ -269,6 +288,10 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     ensureFocusTemplateStyles(styleTable, maxFocusIconWidth, maxFocusIconHeight);
     const focusRenderStart = Date.now();
     const focusIconStyleStart = Date.now();
+    const materialization = baseState.deferredAssetLoad
+        ? { real: [] as Focus[], placeholders: assetFocuses, focusIds: [] as string[] | undefined }
+        : selectMaterializedFocuses(assetFocuses, materializedFocusIds);
+    const hasExistingStyleKey = existingStyleRules && ((key: string) => existingStyleRules.has(key));
     if (baseState.deferredAssetLoad) {
         await prepareDeferredFocusIconStyles(
             assetFocuses,
@@ -276,10 +299,15 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             baseState.xGridSize,
             baseState.yGridSize,
             isCancelled,
+            hasExistingStyleKey,
         );
     } else {
+        // Search filter icons label toolbar options of the whole tree, so they are always real.
+        const treeSearchFilterIcons = materialization.focusIds
+            ? Array.from(new Set(assetTrees.flatMap(tree => tree.searchFilters ?? []))).map(filter => `GFX_${filter}`)
+            : [];
         await prepareFocusIconStyles(
-            assetFocuses,
+            materialization.real,
             styleTable,
             focusIconAssetResolution,
             baseState.xGridSize,
@@ -287,7 +315,20 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             isCancelled,
             !!baseState.presentation?.item,
             onAssetStyleBatch,
+            treeSearchFilterIcons,
         );
+        if (materialization.placeholders.length > 0) {
+            // Real rules were registered first; placeholders only fill icon names without one,
+            // in this payload or in the scenes it is merged into.
+            await prepareDeferredFocusIconStyles(
+                materialization.placeholders,
+                styleTable,
+                baseState.xGridSize,
+                baseState.yGridSize,
+                isCancelled,
+                hasExistingStyleKey,
+            );
+        }
     }
     throwIfFocusTreeRenderCancelled(isCancelled);
     const focusIconStyleDurationMs = Date.now() - focusIconStyleStart;
@@ -328,6 +369,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             sourceFocusTrees: baseState.focusTrees,
             selectedTreeId: baseState.assetTreeIds?.[0] ?? baseState.focusTrees[0]?.id,
             assetTreeIds: baseState.assetTreeIds,
+            materializedFocusIds: materialization.focusIds,
             focusTemplates: focusCardTemplates.templates,
             focusTemplateKeyById: focusCardTemplates.keyById,
             continuousFocusHtml,
@@ -363,8 +405,103 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             inlayCount: baseState.allInlays.length,
             renderedFocusCount: assetFocuses.length,
             renderedInlayCount: assetInlays.length,
+            materializedFocusCount: materialization.real.length,
             deferredAssetLoad: baseState.deferredAssetLoad,
         },
+    };
+}
+
+/**
+ * Splits asset focuses into those decoded for real, in the requested order, and placeholders.
+ * Without a requested set every focus is real, which keeps unscoped callers unchanged.
+ */
+function selectMaterializedFocuses(
+    assetFocuses: readonly Focus[],
+    materializedFocusIds: readonly string[] | undefined,
+): { real: Focus[]; placeholders: Focus[]; focusIds: string[] | undefined } {
+    if (!materializedFocusIds) {
+        return { real: [...assetFocuses], placeholders: [], focusIds: undefined };
+    }
+    const assetFocusById = new Map<string, Focus>();
+    assetFocuses.forEach(focus => {
+        if (!assetFocusById.has(focus.id)) {
+            assetFocusById.set(focus.id, focus);
+        }
+    });
+    const focusIds = Array.from(new Set(materializedFocusIds)).filter(focusId => assetFocusById.has(focusId));
+    const realIds = new Set(focusIds);
+    return {
+        real: focusIds.map(focusId => assetFocusById.get(focusId)!),
+        placeholders: assetFocuses.filter(focus => !realIds.has(focus.id)),
+        focusIds,
+    };
+}
+
+/** Class key of a focus icon rule as stored in style rule maps. */
+export function getFocusIconStyleKey(iconName: string): string {
+    return `st-focus-icon-${normalizeForStyle(iconName)}`;
+}
+
+/** Class key of a focus overlay rule as stored in style rule maps. */
+export function getFocusOverlayStyleKey(overlayName: string): string {
+    return `st-focus-overlay-${normalizeForStyle(overlayName)}`;
+}
+
+/** Rule keys that a focus's icon, overlay, and search filter assets occupy. */
+export function getFocusAssetStyleKeys(focus: Pick<Focus, 'icon' | 'overlay' | 'searchFilters'>): string[] {
+    return [
+        ...focus.icon.map(option => option.icon).filter((iconName): iconName is string => !!iconName).map(getFocusIconStyleKey),
+        ...(focus.searchFilters ?? []).map(filter => getFocusIconStyleKey(`GFX_${filter}`)),
+        ...(focus.overlay ? [getFocusOverlayStyleKey(focus.overlay)] : []),
+    ];
+}
+
+export interface FocusTreeAssetStylePatchOptions {
+    focusIconAssetResolution: FocusIconAssetResolution;
+    xGridSize: number;
+    yGridSize: number;
+    useNativeSize: boolean;
+    /** Rules the webview already has; identical rules are not sent again. */
+    existingStyleRules: ReadonlyMap<string, string>;
+    /** Focuses the webview asked for again although they were sent; their rules are always included. */
+    resendFocusIds?: ReadonlySet<string>;
+    isCancelled?: () => boolean;
+}
+
+export interface FocusTreeAssetStylePatch {
+    css: string;
+    rules: Array<[key: string, content: string]>;
+}
+
+/**
+ * Decodes the icons and overlays of the given focuses and returns only the rules the webview
+ * still needs. Real rules replace placeholders by appearing later in the cascade.
+ */
+export async function renderFocusAssetStylePatch(
+    focuses: readonly Focus[],
+    options: FocusTreeAssetStylePatchOptions,
+): Promise<FocusTreeAssetStylePatch> {
+    const styleTable = new StyleTable();
+    if (focuses.length > 0) {
+        await prepareFocusIconStyles(
+            focuses,
+            styleTable,
+            options.focusIconAssetResolution,
+            options.xGridSize,
+            options.yGridSize,
+            options.isCancelled,
+            options.useNativeSize,
+        );
+    }
+    throwIfFocusTreeRenderCancelled(options.isCancelled);
+    const resendKeys = new Set(focuses
+        .filter(focus => options.resendFocusIds?.has(focus.id))
+        .flatMap(getFocusAssetStyleKeys));
+    const rules = styleTable.rules()
+        .filter(([key, content]) => resendKeys.has(key) || options.existingStyleRules.get(key) !== content);
+    return {
+        css: rules.map(([key, content]) => `.${key} { ${content.replace(/^\s+/gm, '')} }\n`).join(''),
+        rules,
     };
 }
 
@@ -580,6 +717,20 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw(':where(body[data-focus-hover="true"]) #focustreeplaceholder .focus-connection-layer path.focus-related-edge', 'opacity: 1; filter: saturate(1.1);');
     styleTable.raw('#focustreeplaceholder .focus.focus-search-match', 'outline: 1px solid #E33; background: rgba(255, 0, 0, 0.5);');
     styleTable.raw('#focustreeplaceholder .focus-branch-hidden', 'display: none !important;');
+    // Icons still rendering structural placeholders pulse gently; nothing moves or resizes.
+    const pendingIconSelector = '#focustreeplaceholder [data-focus-id].focus-asset-pending .st-focus-icon-image, '
+        + '#focustreeplaceholder [data-focus-id].focus-asset-pending .focus-gui-symbol';
+    styleTable.raw(pendingIconSelector, 'animation: focus-asset-pending-pulse 1.4s ease-in-out infinite;');
+    styleTable.raw('@keyframes focus-asset-pending-pulse', '0%, 100% { opacity: 0.45; } 50% { opacity: 0.8; }');
+    styleTable.raw('#focus-asset-status', 'position:fixed;left:18px;bottom:18px;z-index:1000;display:flex;align-items:center;gap:6px;'
+        + 'max-width:min(60vw, 420px);padding:4px 8px;box-sizing:border-box;font-size:12px;'
+        + 'background:var(--vscode-editor-background);color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border);');
+    styleTable.raw('#focus-asset-status[hidden], #focus-asset-status [hidden]', 'display:none !important;');
+    styleTable.raw('#focus-asset-status[data-state="failed"]', 'border-color:var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));');
+    styleTable.raw('#focus-asset-status button', 'width:auto;height:20px;padding:0 6px;flex-shrink:0;');
+    styleTable.raw('#focus-asset-status button:focus-visible', 'outline:1px solid var(--vscode-focusBorder);outline-offset:1px;');
+    styleTable.raw('@media (prefers-reduced-motion: reduce)',
+        `${pendingIconSelector} { animation: none; opacity: 0.6; } #focus-asset-status .codicon { animation: none; }`);
 
     const shellMarkup =
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
@@ -595,6 +746,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
+        renderAssetLoadingStatus() +
         renderToolBar(payload, styleTable);
     const shellCss = styleTable.toStyleContent();
 
@@ -603,6 +755,15 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
         `<style id="focus-tree-dynamic-style" nonce="${payload.styleNonce}">${payload.dynamicStyleCss}</style>` +
         shellMarkup
     );
+}
+
+/** Polite live region the webview fills while on-screen focus icons are still loading. */
+function renderAssetLoadingStatus(): string {
+    return `<div id="focus-asset-status" role="status" aria-live="polite" aria-atomic="true" hidden>`
+        + `<i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>`
+        + `<span id="focus-asset-status-text"></span>`
+        + `<button type="button" id="focus-asset-retry" hidden>${htmlEscape(localize('focustree.assets.retry', 'Retry'))}</button>`
+        + `</div>`;
 }
 
 function normalizeFocusSpacingValue(value: number | undefined, fallback: number): number {
@@ -1003,16 +1164,18 @@ export async function prepareFocusIconStyles(
     isCancelled?: () => boolean,
     useNativeSize = false,
     onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
+    additionalIconNames: readonly string[] = [],
 ): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
-    const uniqueIconNames = Array.from(new Set(
-        focuses.flatMap(focus => [
+    const uniqueIconNames = Array.from(new Set([
+        ...focuses.flatMap(focus => [
             ...focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName),
             ...(focus.searchFilters ?? []).map(filter => `GFX_${filter}`),
         ]),
-    ));
+        ...additionalIconNames,
+    ]));
     const unresolvedIconNames = new Set(focusIconAssetResolution.unresolvedIconNames);
     const iconDiagnostics = {
         resolvedFromResolvedFilesCount: 0,
@@ -1043,12 +1206,14 @@ export async function prepareFocusIconStyles(
                 : { width: focusPlaceholderSize, height: focusPlaceholderSize };
 
             const styleName = 'focus-icon-' + normalizeForStyle(iconName);
+            const iconState: FocusIconRenderState = iconResolution.image ? 'loaded' : 'unavailable';
             const styleContent = `
                 width: ${displaySize.width}px;
                 height: ${displaySize.height}px;
                 background-repeat: no-repeat;
                 background-size: contain;
                 ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
+                ${focusIconStateProperty}: ${iconState};
             `;
             styleTable.style(styleName, () => styleContent);
             batchStyleTable.style(styleName, () => styleContent);
@@ -1110,19 +1275,24 @@ export async function prepareFocusIconStyles(
     `);
 }
 
-async function prepareDeferredFocusIconStyles(
+/**
+ * Registers placeholder icon and overlay styles without decoding any image. `hasStyleKey`
+ * skips names that already have a rule, so a placeholder never replaces a real icon.
+ */
+export async function prepareDeferredFocusIconStyles(
     focuses: readonly Focus[],
     styleTable: StyleTable,
     xGridSize: number,
     yGridSize: number,
     isCancelled?: () => boolean,
+    hasStyleKey?: (key: string) => boolean,
 ): Promise<void> {
     const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
     const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
     const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
     const uniqueIconNames = Array.from(new Set(
         focuses.flatMap(focus => focus.icon.map(focusIcon => focusIcon.icon).filter((iconName): iconName is string => !!iconName)),
-    ));
+    )).filter(iconName => !hasStyleKey?.(getFocusIconStyleKey(iconName)));
 
     for (let start = 0; start < uniqueIconNames.length; start += focusTreeRenderCancellationBatchSize) {
         uniqueIconNames
@@ -1132,6 +1302,7 @@ async function prepareDeferredFocusIconStyles(
                     width: ${focusPlaceholderSize}px;
                     height: ${focusPlaceholderSize}px;
                     background: grey;
+                    ${focusIconStateProperty}: placeholder;
                 `);
             });
         if (start + focusTreeRenderCancellationBatchSize < uniqueIconNames.length) {
@@ -1143,7 +1314,7 @@ async function prepareDeferredFocusIconStyles(
 
     const uniqueOverlayNames = Array.from(new Set(
         focuses.map(focus => focus.overlay).filter((overlayName): overlayName is string => !!overlayName),
-    ));
+    )).filter(overlayName => !hasStyleKey?.(getFocusOverlayStyleKey(overlayName)));
     for (let start = 0; start < uniqueOverlayNames.length; start += focusTreeRenderCancellationBatchSize) {
         uniqueOverlayNames
             .slice(start, start + focusTreeRenderCancellationBatchSize)

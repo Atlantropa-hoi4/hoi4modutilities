@@ -11,6 +11,8 @@ const resolvedFileCalls: Array<{ name: string; gfxFiles: string[] }> = [];
 const broadScanCalls: string[] = [];
 const localisationCalls: string[] = [];
 let localisationIndexEnabled = false;
+/** The game's default unknown-focus icon can be decoded. */
+let defaultFocusIconAvailable = true;
 
 function mockLoad(this: unknown, request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -87,7 +89,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
                 broadScanCalls.push(name);
                 return undefined;
             },
-            getImageByPath: async () => ({ width: 64, height: 64, uri: 'default-icon.png' }),
+            getImageByPath: async () => defaultFocusIconAvailable ? { width: 64, height: 64, uri: 'default-icon.png' } : undefined,
         };
     }
 
@@ -110,6 +112,7 @@ describe('focustree contentbuilder', () => {
         broadScanCalls.length = 0;
         localisationCalls.length = 0;
         localisationIndexEnabled = false;
+        defaultFocusIconAvailable = true;
     });
 
     after(() => {
@@ -154,6 +157,171 @@ describe('focustree contentbuilder', () => {
         assert.match(second.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_B/);
         assert.match(second.payload.dynamicStyleCss, /second-icon\.png/);
         assert.doesNotMatch(second.payload.dynamicStyleCss, /st-focus-icon-GFX_FOCUS_A|test-icon\.png/);
+    });
+
+    it('decodes only materialized focuses and keeps every other icon of the scene a placeholder', async () => {
+        const trees = getFocusTree(parseHoi4File(`
+            focus_tree = { id = tree_a
+                focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 }
+                focus = { id = FOCUS_B icon = GFX_FOCUS_B x = 1 y = 0 }
+                focus = { id = FOCUS_C icon = GFX_FOCUS_C x = 2 y = 0 }
+            }
+            focus_tree = { id = tree_b focus = { id = FOCUS_D icon = GFX_FOCUS_D x = 0 y = 0 } }
+        `), [], 'common/national_focus/test.txt');
+        const allFocuses = trees.flatMap(tree => Object.values(tree.focuses));
+        const resolution = {
+            ...createEmptyFocusIconAssetResolution(),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            gfxFileByIconName: Object.fromEntries(['A', 'B', 'C', 'D'].map(id => [`GFX_FOCUS_${id}`, 'interface/custom_icons.gfx'])),
+        };
+        const base = {
+            focusTrees: trees, allFocuses, allInlays: [],
+            focusById: Object.fromEntries(allFocuses.map(focus => [focus.id, focus])),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            focusIconGfxFileByName: {}, focusIconAssetResolution: resolution,
+            focusIconStyleSignature: resolution.styleSignature,
+            gridBox: { position: { x: 0, y: 0 } }, xGridSize: 96, yGridSize: 130,
+            focusPositionDocumentVersion: 1, focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {}, hasFocusSelector: true, hasWarningsButton: false,
+            loadDurationMs: 0, deferredAssetLoad: false, localisationIndexReady: false,
+            assetTreeIds: ['tree_a'],
+        } as unknown as FocusTreeRenderBaseState;
+
+        const result = await buildFocusTreeRenderPayloadFromBaseState(base, undefined, undefined, undefined, ['FOCUS_B', 'FOCUS_D', 'MISSING']);
+        assert.deepStrictEqual(result.payload.materializedFocusIds, ['FOCUS_B'], 'ids outside the asset trees are dropped');
+        assert.deepStrictEqual(resolvedFileCalls.map(call => call.name), ['GFX_FOCUS_B'], 'only the materialized icon is decoded');
+        assert.strictEqual(result.metrics.renderedFocusCount, 3);
+        assert.strictEqual(result.metrics.materializedFocusCount, 1);
+        assert.match(result.payload.dynamicStyleCss, /\.st-focus-icon-GFX_FOCUS_B \{[^}]*second-icon\.png[^}]*--focus-icon-state: loaded/);
+        assert.match(result.payload.dynamicStyleCss, /\.st-focus-icon-GFX_FOCUS_A \{[^}]*background: grey[^}]*--focus-icon-state: placeholder/);
+        assert.match(result.payload.dynamicStyleCss, /\.st-focus-icon-GFX_FOCUS_C \{[^}]*background: grey[^}]*--focus-icon-state: placeholder/);
+        assert.doesNotMatch(result.payload.dynamicStyleCss, /test-icon\.png|GFX_FOCUS_D/);
+    });
+
+    it('keeps an icon that focuses share real when one is materialized, also after merging another scene', async () => {
+        const { mergeFocusTreeStyleRules } = require('../../src/previewdef/focustree/renderpayloadpatch') as typeof import('../../src/previewdef/focustree/renderpayloadpatch');
+        const trees = getFocusTree(parseHoi4File(`
+            focus_tree = { id = tree_a
+                focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 }
+                focus = { id = FOCUS_A_UNSEEN icon = GFX_FOCUS_A x = 1 y = 0 }
+            }
+            focus_tree = { id = tree_b
+                focus = { id = FOCUS_SHARING icon = GFX_FOCUS_A x = 0 y = 0 }
+                focus = { id = FOCUS_B icon = GFX_FOCUS_B x = 1 y = 0 }
+            }
+        `), [], 'common/national_focus/test.txt');
+        const allFocuses = trees.flatMap(tree => Object.values(tree.focuses));
+        const resolution = {
+            ...createEmptyFocusIconAssetResolution(),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            gfxFileByIconName: { GFX_FOCUS_A: 'interface/custom_icons.gfx', GFX_FOCUS_B: 'interface/custom_icons.gfx' },
+        };
+        const base = {
+            focusTrees: trees, allFocuses, allInlays: [],
+            focusById: Object.fromEntries(allFocuses.map(focus => [focus.id, focus])),
+            gfxFiles: ['interface/custom_icons.gfx'],
+            focusIconGfxFileByName: {}, focusIconAssetResolution: resolution,
+            focusIconStyleSignature: resolution.styleSignature,
+            gridBox: { position: { x: 0, y: 0 } }, xGridSize: 96, yGridSize: 130,
+            focusPositionDocumentVersion: 1, focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {}, hasFocusSelector: true, hasWarningsButton: false,
+            loadDurationMs: 0, deferredAssetLoad: false, localisationIndexReady: false,
+        } as unknown as FocusTreeRenderBaseState;
+        const iconKey = 'st-focus-icon-GFX_FOCUS_A';
+        const loaded = /test-icon\.png[\s\S]*--focus-icon-state: loaded/;
+
+        // A full build: the materialized focus's real rule wins over its unseen twin's placeholder.
+        const first = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_a'] }, undefined, undefined, undefined, ['FOCUS_A']);
+        const firstRules = first.payload.dynamicStyleRules!;
+        assert.match(firstRules.get(iconKey) ?? '', loaded);
+
+        // tree_b joins that scene without materialized focuses; FOCUS_SHARING uses the same icon.
+        const second = await buildFocusTreeRenderPayloadFromBaseState(
+            { ...base, assetTreeIds: ['tree_b'] }, undefined, undefined, undefined, ['FOCUS_A'], firstRules);
+        const secondRules = second.payload.dynamicStyleRules!;
+        assert.strictEqual(secondRules.has(iconKey), false, 'no placeholder for an icon the joined scene already has');
+        assert.match(secondRules.get('st-focus-icon-GFX_FOCUS_B') ?? '', /--focus-icon-state: placeholder/);
+        const merged = mergeFocusTreeStyleRules(first.payload.dynamicStyleCss, firstRules, secondRules);
+        assert.strictEqual(merged.dynamicStyleRules.get(iconKey), firstRules.get(iconKey));
+        assert.doesNotMatch(merged.appendedCss, /st-focus-icon-GFX_FOCUS_A/);
+        const cascaded = Array.from(merged.dynamicStyleCss.matchAll(/\.st-focus-icon-GFX_FOCUS_A \{([^}]*)\}/g)).at(-1)?.[1] ?? '';
+        assert.match(cascaded, loaded, 'the merged stylesheet still renders the shared icon for real');
+
+        // A standalone build of tree_b still styles every icon it uses.
+        const standalone = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_b'] }, undefined, undefined, undefined, []);
+        assert.match(standalone.payload.dynamicStyleRules?.get(iconKey) ?? '', /--focus-icon-state: placeholder/);
+    });
+
+    it('marks an icon without any decodable image as unavailable, never as loaded', async () => {
+        const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+        const [tree] = getFocusTree(parseHoi4File(`
+            focus_tree = { id = tree_a
+                focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 }
+                focus = { id = FOCUS_MISSING icon = GFX_MISSING x = 1 y = 0 }
+            }
+        `), [], 'common/national_focus/test.txt');
+        const options = {
+            focusIconAssetResolution: {
+                ...createEmptyFocusIconAssetResolution(),
+                gfxFileByIconName: { GFX_FOCUS_A: 'interface/custom_icons.gfx', GFX_MISSING: 'interface/custom_icons.gfx' },
+            },
+            xGridSize: 96,
+            yGridSize: 130,
+            useNativeSize: false,
+            existingStyleRules: new Map<string, string>(),
+        };
+
+        const withDefault = new Map((await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_MISSING], options)).rules);
+        assert.match(withDefault.get('st-focus-icon-GFX_MISSING') ?? '', /default-icon\.png[\s\S]*--focus-icon-state: loaded/,
+            'an unresolved sprite shows the game default unknown-focus icon, a real decoded image');
+
+        defaultFocusIconAvailable = false;
+        const rules = new Map((await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A, tree.focuses.FOCUS_MISSING], options)).rules);
+        assert.match(rules.get('st-focus-icon-GFX_FOCUS_A') ?? '', /test-icon\.png[\s\S]*--focus-icon-state: loaded/);
+        assert.match(rules.get('st-focus-icon-GFX_MISSING') ?? '', /background: grey;[\s\S]*--focus-icon-state: unavailable/);
+    });
+
+    it('sends only asset rules the webview lacks unless it asks for them again', async () => {
+        const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+        const [tree] = getFocusTree(parseHoi4File(`
+            focus_tree = { id = tree_a
+                focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 }
+                focus = { id = FOCUS_B icon = GFX_FOCUS_B x = 1 y = 0 }
+            }
+        `), [], 'common/national_focus/test.txt');
+        const options = {
+            focusIconAssetResolution: {
+                ...createEmptyFocusIconAssetResolution(),
+                gfxFileByIconName: { GFX_FOCUS_A: 'interface/custom_icons.gfx', GFX_FOCUS_B: 'interface/custom_icons.gfx' },
+            },
+            xGridSize: 96,
+            yGridSize: 130,
+            useNativeSize: false,
+            existingStyleRules: new Map<string, string>(),
+        };
+        const first = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A], options);
+        assert.match(first.css, /\.st-focus-icon-GFX_FOCUS_A \{[^}]*test-icon\.png/);
+
+        // The webview already shows A for real and B as a placeholder.
+        const existingStyleRules = new Map([...first.rules, ['st-focus-icon-GFX_FOCUS_B', 'background: grey;'] as [string, string]]);
+        const second = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A, tree.focuses.FOCUS_B], { ...options, existingStyleRules });
+        assert.deepStrictEqual(second.rules.map(([key]) => key), ['st-focus-icon-GFX_FOCUS_B']);
+        assert.match(second.css, /second-icon\.png/);
+
+        const resent = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A], {
+            ...options,
+            existingStyleRules,
+            resendFocusIds: new Set(['FOCUS_A']),
+        });
+        assert.deepStrictEqual(resent.rules.map(([key]) => key), ['st-focus-icon-GFX_FOCUS_A']);
+    });
+
+    it('renders a hidden polite status region for focus icon loading', () => {
+        const contentbuilder = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
+        const html = contentbuilder.renderFocusTreeShellHtml({ toString: () => 'file:///focus.txt' } as any, {} as any, 1, {});
+        assert.match(html, /<div id="focus-asset-status" role="status" aria-live="polite" aria-atomic="true" hidden>/);
+        assert.match(html, /<button type="button" id="focus-asset-retry" hidden>Retry<\/button>/);
+        assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
     });
 
     it('keeps deferred focus icon styles lightweight while using ready localisation', async () => {

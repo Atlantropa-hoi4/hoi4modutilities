@@ -32,7 +32,7 @@ export async function indexFingerprint(spec: IndexCacheSpec, signal: AbortSignal
         entries.push(...await mapWithConcurrency(files, 8, async file => {
             signal.throwIfAborted();
             const uri = await getFilePathFromModOrHOI4(`${spec.folder}/${file}`, options);
-            const version = uri && isHoiFileOpened(uri) ? digest((await readFileFromPath(uri))[0].toString()) : await expiryToken(uri);
+            const version = uri && isHoiFileOpened(uri) ? digest((await readFileFromPath(uri, undefined, { priority: 'background' }))[0].toString()) : await expiryToken(uri);
             return JSON.stringify([options, file, uri?.toString(), version]);
         }));
     }

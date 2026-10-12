@@ -1,5 +1,5 @@
 import { FocusTreeView, FocusTreeViewPatch } from '../../src/previewdef/focustree/viewmodel';
-import { FocusTreeContentUpdateMessage } from "../../src/previewdef/focustree/webviewupdate";
+import { FocusTreeAssetMaterialization, FocusTreeContentUpdateMessage } from "../../src/previewdef/focustree/webviewupdate";
 
 export interface FocusTreeMessageApplyContext {
     getSnapshotVersion: () => number;
@@ -8,6 +8,11 @@ export interface FocusTreeMessageApplyContext {
     setDocumentVersion: (documentVersion: number) => void;
     setFocusPositionActiveFile: (focusPositionActiveFile: string) => void;
     getCurrentSelectionTreeId: () => string | undefined;
+    /**
+     * The tree the user selected last, rendered or still being requested. It wins over the
+     * rendered tree, so a scene arriving for an earlier request cannot revert a newer selection.
+     */
+    getRequestedSelectionTreeId?: () => string | undefined;
     setSelectedFocusTreeById: (treeId: string | undefined) => void;
     setFocusTrees: (focusTrees: FocusTreeView[]) => void;
     applyFocusTreePatches: (focusTreePatches: FocusTreeViewPatch[] | undefined, baseSnapshotVersion?: number) => void;
@@ -27,6 +32,8 @@ export interface FocusTreeMessageApplyContext {
     setGridSizeY: (yGridSize: number) => void;
     replaceDynamicStyleCss: (dynamicStyleCss: string | undefined) => void;
     appendDynamicStyleCss?: (dynamicStyleCssPatch: string | undefined) => void;
+    /** Replaces the materialized focus set; called before the scene is rebuilt. */
+    setAssetMaterialization?: (materialization: FocusTreeAssetMaterialization) => void;
 }
 
 export function applyFocusTreeContentUpdate(
@@ -48,17 +55,19 @@ export function applyFocusTreeContentUpdate(
     }
 
     const changedSlots = new Set(message.changedSlots ?? []);
-    const previousSelectedTreeId = context.getCurrentSelectionTreeId();
+    const previousSelectedTreeId = context.getRequestedSelectionTreeId?.() ?? context.getCurrentSelectionTreeId();
     if (changedSlots.has('treeDefinitions')) {
         if (message.focusTrees) {
             context.setFocusTrees(message.focusTrees);
         } else if (message.focusTreePatches) {
             context.applyFocusTreePatches(message.focusTreePatches, message.baseSnapshotVersion);
         }
+        // A selected tree whose scene is still requested stays selected while other scenes
+        // arrive; only a tree that left the catalog falls back to the host's choice.
         const previousSelectionStillExists = !!previousSelectedTreeId
-            && (message.focusTrees
-                ? message.focusTrees.some(focusTree => focusTree.id === previousSelectedTreeId)
-                : true);
+            && (!message.focusTrees
+                || message.focusTrees.some(focusTree => focusTree.id === previousSelectedTreeId)
+                || !!message.catalog?.some(entry => entry.id === previousSelectedTreeId));
         context.setSelectedFocusTreeById(
             previousSelectionStillExists
                 ? previousSelectedTreeId
@@ -97,6 +106,9 @@ export function applyFocusTreeContentUpdate(
         } else {
             context.appendDynamicStyleCss?.(message.dynamicStyleCssPatch);
         }
+    }
+    if (message.assetMaterialization) {
+        context.setAssetMaterialization?.(message.assetMaterialization);
     }
 
     context.setSnapshotVersion(message.snapshotVersion);

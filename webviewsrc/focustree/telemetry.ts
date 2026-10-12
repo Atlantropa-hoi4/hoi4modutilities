@@ -8,6 +8,8 @@ import { getCurrentFocusTree } from './selection';
 
 type FocusTreeWebviewTiming = {
     stage: string;
+    /** Rendered tree of per-scene stages (`sceneRendered`, `sceneAssetsReady`). */
+    treeId?: string;
     snapshotVersion?: number;
     documentVersion?: number;
     changedSlots?: string[];
@@ -25,8 +27,23 @@ type FocusTreeWebviewTiming = {
 type ContentTimings = { applyMs: number; rebuildMs: number; rebindMs: number };
 
 const focusTreeWebviewLoadStartedAt = performance.now();
+let assetDiagnosticsProvider: (() => unknown) | undefined;
+
+/** Supplies the asset readiness of the rendered scene to every diagnostics snapshot. */
+export function setFocusTreeAssetDiagnosticsProvider(provider: () => unknown): void {
+    assetDiagnosticsProvider = provider;
+}
+/** The host accepts as many visible focuses from the first-paint acknowledgement. */
+const maxReportedVisibleFocusIds = 512;
 let firstFocusTreeContentApplied = false;
-let firstFocusTreeHydrationApplied = false;
+
+export interface FocusTreeContentAppliedOptions {
+    /**
+     * Claims the one-time `visibleAssetsApplied` stage; it succeeds only when every on-screen
+     * focus renders real assets. Passed for messages that carry assets.
+     */
+    claimVisibleAssetsApplied?: () => boolean;
+}
 
 export function postFocusTreeDiagnostics(
     stage: string,
@@ -56,6 +73,7 @@ export function postFocusTreeDiagnostics(
         currentCanvasHeight: focusScene.currentGeometry?.height ?? 1,
         currentGridLeftPadding: runtime.gridLeftPadding,
         currentGridTopPadding: runtime.gridTopPadding,
+        assets: assetDiagnosticsProvider?.(),
         timestamp: Date.now(),
     };
 
@@ -98,14 +116,13 @@ export function createFocusTreeContentTiming(
     };
 }
 
-function getContentAppliedTimingStage(message: FocusTreeContentUpdateMessage): string {
+function getContentAppliedTimingStage(options: FocusTreeContentAppliedOptions): string {
     if (!firstFocusTreeContentApplied) {
         firstFocusTreeContentApplied = true;
         return 'firstScenePainted';
     }
 
-    if (!firstFocusTreeHydrationApplied && message.perf?.assetLoadMode === 'full') {
-        firstFocusTreeHydrationApplied = true;
+    if (options.claimVisibleAssetsApplied?.()) {
         return 'visibleAssetsApplied';
     }
 
@@ -113,11 +130,16 @@ function getContentAppliedTimingStage(message: FocusTreeContentUpdateMessage): s
 }
 
 /** Reports the painted scene; the first report starts host-side asset hydration. */
-export function postFocusTreeContentApplied(message: FocusTreeContentUpdateMessage, timings: ContentTimings): void {
-    const stage = getContentAppliedTimingStage(message);
+export function postFocusTreeContentApplied(
+    message: FocusTreeContentUpdateMessage,
+    timings: ContentTimings,
+    options: FocusTreeContentAppliedOptions = {},
+): void {
+    const stage = getContentAppliedTimingStage(options);
     const postApplied = () => {
         postFocusTreeWebviewTiming(createFocusTreeContentTiming(stage, message, timings));
-        const visibleFocusIds = focusScene.getVisibleFocusIds();
+        // Laid-out on-screen focuses, mounted or not: the first asset build decodes exactly these.
+        const visibleFocusIds = focusScene.getVisibleFocusIds(false).slice(0, maxReportedVisibleFocusIds);
         const currentTree = getCurrentFocusTree();
         const priorityAssetKeys = new Set<string>();
         for (const focusId of visibleFocusIds) {

@@ -743,6 +743,60 @@ describe('focus tree render payload patching', () => {
         assert.strictEqual(second.cache.dynamicStyleRules.has('st-focus-overlay-GFX_overlay_a'), true);
     });
 
+    it('gives edited unmaterialized focuses placeholders without overriding loaded icons', async () => {
+        const initialTree = createTree('tree_a', 'FOCUS_A') as any;
+        const focusB = {
+            ...initialTree.focuses.FOCUS_A,
+            id: 'FOCUS_B',
+            layoutEditKey: 'focus_b',
+            x: 1,
+            icon: [{ icon: 'GFX_FOCUS_B', condition: { _type: 'and', items: [] } }],
+        };
+        const tree = { ...initialTree, focuses: { ...initialTree.focuses, FOCUS_B: focusB } };
+        const loadedIconRule = 'width: 64px; height: 64px; background-image: url(loaded.png);';
+        const previous = createFocusTreeRenderCache({
+            focusTrees: [tree],
+            focusTemplates: {},
+            focusTemplateKeyById: {},
+            renderedInlayWindows: {},
+            gridBox: { position: { x: 0, y: 0 } },
+            dynamicStyleCss: `.st-focus-icon-GFX_FOCUS_A { ${loadedIconRule} }`,
+            dynamicStyleRules: new Map([['st-focus-icon-GFX_FOCUS_A', loadedIconRule]]),
+            materializedFocusIds: ['FOCUS_A'],
+            xGridSize: 96,
+            yGridSize: 130,
+            focusPositionDocumentVersion: 1,
+            focusPositionActiveFile: 'common/national_focus/test.txt',
+            conditionPresetsByTree: {},
+            hasFocusSelector: false,
+            hasWarningsButton: false,
+            deferredAssetLoad: false,
+            localisationIndexReady: false,
+            styleNonce: 'nonce',
+            focusToolbarHeight: 68,
+        } as any);
+        // FOCUS_B, which the webview never showed, now uses A's loaded icon or a brand-new one.
+        const editedB = {
+            ...focusB,
+            icon: [
+                { icon: 'GFX_FOCUS_A', condition: { _type: 'and', items: [] } },
+                { icon: 'GFX_FOCUS_NEW', condition: { _type: 'and', items: [] } },
+            ],
+        };
+        const nextTree = { ...tree, focuses: { FOCUS_A: tree.focuses.FOCUS_A, FOCUS_B: editedB } };
+        const result = await createFocusTreeRenderUpdate(previous, { ...createBaseState(nextTree, 2), hasWarningsButton: false });
+
+        assert.strictEqual(result.kind, 'partial');
+        if (result.kind !== 'partial') {
+            return;
+        }
+        assert.deepStrictEqual(result.update.changedFocusIds, ['FOCUS_B']);
+        assert.match(result.update.dynamicStyleCssPatch ?? '', /\.st-focus-icon-GFX_FOCUS_NEW \{[^}]*background: grey/);
+        assert.doesNotMatch(result.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
+        assert.strictEqual(result.cache.dynamicStyleRules.get('st-focus-icon-GFX_FOCUS_A'), loadedIconRule);
+        assert.deepStrictEqual(result.cache.materializedFocusIds, ['FOCUS_A']);
+    });
+
     it('never caches render signatures for unprepared trees and hydrates a newly selected scope', async () => {
         // This local factory intentionally supplies only source fields used by the renderer.
         const trees = [createTree('tree_a', 'FOCUS_A'), createTree('tree_b', 'FOCUS_B')] as unknown as FocusTree[];

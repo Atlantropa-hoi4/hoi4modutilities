@@ -19,6 +19,7 @@ import { shouldRefreshFocusTreeOnExternalFileChange } from './refreshpolicy';
 import { focusTreeProtocolVersion } from './viewmodel';
 import { classifyFocusTreeInvalidation, FocusTreeInvalidation } from './invalidation';
 import type { PreviewDocumentChangeOptions } from '../previewbase';
+import type { FocusTreeAssetRequestMessage } from './webviewupdate';
 
 const focusConditionPresetsStateKeyPrefix = 'focusTree.conditionPresets.v1:';
 const focusTreeLiveRefreshExtensions = new Set(['.txt', '.gfx', '.gui', '.yml', '.dds', '.tga', '.png', '.mod']);
@@ -28,6 +29,7 @@ interface FocusTreeWebviewTimingEvent {
     stage: string;
     snapshotVersion?: number;
     documentVersion?: number;
+    treeId?: string;
     changedSlots?: string[];
     source?: string;
     assetLoadMode?: string;
@@ -97,12 +99,25 @@ export class FocusTreePreview extends PreviewBase {
         await this.session.initializePanel(document);
     }
 
-    public override getDocumentChangeDebounceMs(): number {
-        return 75;
+    public override getDocumentChangeDebounceMs(reason?: vscode.TextDocumentChangeReason): number {
+        return reason === vscode.TextDocumentChangeReason.Undo || reason === vscode.TextDocumentChangeReason.Redo ? 0 : 35;
     }
 
     public override getDependencyChangeDebounceMs(): number {
         return 150;
+    }
+
+    public override getDependencyDocumentChangeDebounceMs(_uri: vscode.Uri, reason?: vscode.TextDocumentChangeReason): number {
+        return this.getDocumentChangeDebounceMs(reason);
+    }
+
+    public override shouldSerializeRefreshes(): boolean {
+        return true;
+    }
+
+    public override cancelPendingRefresh(): void {
+        super.cancelPendingRefresh();
+        this.session.cancelPendingRefresh();
     }
 
     public override async onDocumentChange(
@@ -175,6 +190,14 @@ export class FocusTreePreview extends PreviewBase {
                     applied.visibleFocusIds,
                     applied.priorityAssetKeys,
                 );
+            }
+            return true;
+        }
+
+        if (command === 'focusTreeAssetRequest') {
+            const request = msg as unknown as Partial<FocusTreeAssetRequestMessage>;
+            if (request.protocolVersion === focusTreeProtocolVersion) {
+                await this.session.handleAssetRequest(request);
             }
             return true;
         }

@@ -8,9 +8,19 @@ import {
 } from '../../src/previewdef/focustree/viewmodel';
 import {
     FocusTreeContentUpdateMessage,
+    FocusTreeSceneAssetsMessage,
     getFocusTreeContentUpdateDecision,
 } from '../../src/previewdef/focustree/webviewupdate';
 import { feLocalize } from '../util/i18n';
+import { applyFocusTreeSceneAssets } from './assetdemand';
+import {
+    claimVisibleAssetsApplied,
+    onFocusAssetsMaterialized,
+    onFocusTreeContentApplied,
+    recordFocusAssetResponse,
+    replaceFocusAssetMaterialization,
+    scheduleFocusAssetDemandCheck,
+} from './assetloading';
 import { rebuildContentSafely } from './content';
 import { FocusEditResultMessage, handleFocusEditResult } from './editing';
 import { applyFocusTreeContentUpdate as applyFocusTreeContentUpdateMessage } from './messageapply';
@@ -27,6 +37,7 @@ import {
     refreshFocusTreeSelectorOptions,
     refreshWarningsButtonVisibility,
     requestCurrentFocusTreeScene,
+    requestSelectedFocusTreeSceneIfMissing,
     updateSelectedFocusTree,
 } from './toolbar';
 
@@ -195,6 +206,7 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage): bo
             window.focusPositionActiveFile = activeFile;
         },
         getCurrentSelectionTreeId,
+        getRequestedSelectionTreeId: () => runtime.selectedFocusTreeId,
         setSelectedFocusTreeById,
         setFocusTrees: nextFocusTrees => setFocusTrees(nextFocusTrees, message.sceneMode),
         applyFocusTreePatches,
@@ -246,7 +258,31 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage): bo
         },
         replaceDynamicStyleCss: replaceFocusTreeDynamicStyles,
         appendDynamicStyleCss: appendFocusTreeDynamicStyles,
+        setAssetMaterialization: replaceFocusAssetMaterialization,
     });
+}
+
+/** Adds icon rules of focuses the webview asked for, then looks for further demand. */
+function handleSceneAssets(message: FocusTreeSceneAssetsMessage): void {
+    if (message.protocolVersion !== focusTreeProtocolVersion) {
+        return;
+    }
+    recordFocusAssetResponse(message);
+    const appliedAt = performance.now();
+    const applied = applyFocusTreeSceneAssets(message, {
+        getDocumentVersion: () => runtime.focusPositionDocumentVersion,
+        getSnapshotVersion: () => runtime.snapshotVersion,
+        setSnapshotVersion: snapshotVersion => {
+            runtime.snapshotVersion = snapshotVersion;
+        },
+        getLatestRequestId: () => runtime.latestRequestId,
+        appendDynamicStyleCss: appendFocusTreeDynamicStyles,
+        addMaterializedFocusIds: focusIds => runtime.assetMaterialization.add(focusIds),
+    });
+    if (applied) {
+        onFocusAssetsMaterialized(message, performance.now() - appliedAt);
+    }
+    scheduleFocusAssetDemandCheck(true);
 }
 
 function handleContentUpdate(message: FocusTreeContentUpdateMessage): void {
@@ -266,12 +302,19 @@ function handleContentUpdate(message: FocusTreeContentUpdateMessage): void {
 
     const updateStartedAt = performance.now();
     const previousCurrentTree = getCurrentFocusTree();
+    const previousDocumentVersion = runtime.focusPositionDocumentVersion;
     if (!applyFocusTreeContentUpdate(message)) {
         return;
     }
     runtime.latestRequestId = Math.max(runtime.latestRequestId, message.requestId ?? 0);
     runtime.sceneRevision = Math.max(runtime.sceneRevision, message.sceneRevision ?? 0);
+    onFocusTreeContentApplied(previousDocumentVersion !== runtime.focusPositionDocumentVersion);
+    requestSelectedFocusTreeSceneIfMissing();
     const applyMs = performance.now() - updateStartedAt;
+    // Only updates that carry real assets may complete the visible asset set.
+    const appliedOptions = message.assetMaterialization && !message.assetMaterialization.deferred
+        ? { claimVisibleAssetsApplied }
+        : {};
 
     const nextCurrentTree = getCurrentFocusTree();
     const decision = getFocusTreeContentUpdateDecision(previousCurrentTree, nextCurrentTree, message);
@@ -279,7 +322,7 @@ function handleContentUpdate(message: FocusTreeContentUpdateMessage): void {
         updateSelectedFocusTree(false);
     }
     if (!decision.shouldRebuildContent && !decision.shouldApplyIncrementalUpdate) {
-        postFocusTreeContentApplied(message, { applyMs, rebuildMs: 0, rebindMs: 0 });
+        postFocusTreeContentApplied(message, { applyMs, rebuildMs: 0, rebindMs: 0 }, appliedOptions);
         return;
     }
 
@@ -290,7 +333,7 @@ function handleContentUpdate(message: FocusTreeContentUpdateMessage): void {
             applyMs,
             rebuildMs: performance.now() - rebuildStartedAt,
             rebindMs: 0,
-        });
+        }, appliedOptions);
     });
 }
 
@@ -321,6 +364,9 @@ export function handleHostMessage(event: MessageEvent): void {
         case 'focusTreeScene':
         case 'focusTreeScenePatch':
             handleContentUpdate(message);
+            return;
+        case 'focusTreeSceneAssets':
+            handleSceneAssets(event.data as FocusTreeSceneAssetsMessage);
             return;
         case 'focusConditionPresetNameResolved':
             handleConditionPresetNameResolved(message.name);

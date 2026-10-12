@@ -7,11 +7,13 @@ mod bcn;
 mod bgr;
 mod edges;
 mod rgba8;
+mod script_index;
 
 pub use bcn::decode_bcn;
 pub use bgr::scan_bgr;
 pub use edges::scan_edges;
 pub use rgba8::decode_rgba8;
+pub use script_index::extract_script_index;
 
 pub const MAX_INPUT_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
@@ -83,7 +85,10 @@ fn write_header(result: &mut [u8], pixel_bytes: usize, unique_count: usize) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use abi::{allocate, deallocate, process_bcn, process_bgr, process_edges, process_rgba8};
+pub use abi::{
+    allocate, deallocate, process_bcn, process_bgr, process_edges, process_rgba8,
+    process_script_index,
+};
 
 #[cfg(target_arch = "wasm32")]
 mod abi {
@@ -230,6 +235,26 @@ mod abi {
             return 0;
         };
         match rgba8::decode_with_layout(input, layout) {
+            Ok(result) => into_pointer(result),
+            Err(_) => 0,
+        }
+    }
+
+    /// Extract a complete focus (mode 0) or GFX (mode 1) index, or reject with zero.
+    ///
+    /// # Safety
+    /// Input follows the same live allocated-buffer contract as the pixel kernels.
+    #[no_mangle]
+    pub unsafe extern "C" fn process_script_index(
+        input_ptr: u32,
+        input_len: u32,
+        mode: u32,
+    ) -> u32 {
+        // SAFETY: The caller follows the trusted allocated-buffer contract.
+        let Some(input) = (unsafe { input_slice(input_ptr, input_len) }) else {
+            return 0;
+        };
+        match script_index::extract_script_index(input, mode) {
             Ok(result) => into_pointer(result),
             Err(_) => 0,
         }

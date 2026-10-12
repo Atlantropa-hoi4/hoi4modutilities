@@ -17,6 +17,7 @@ import {
     renderFocusCardHtml,
     updateFocusCardTitles,
 } from './cards';
+import type { FocusAssetDemandNode } from './assetdemand';
 import { FocusSceneMeasurementBatcher } from './measurementbatcher';
 import { measureFocusSceneNodeVisuals } from './scenegeometry';
 
@@ -189,6 +190,44 @@ export class FocusScene {
             }
         }
         return visible;
+    }
+
+    /** Visible page area below the toolbar in scene coordinates; matches `getVisibleFocusIds`. */
+    public getViewportSceneRect(): FocusSceneRect | undefined {
+        const sceneRoot = this.sceneRoot;
+        if (!this.geometry || !sceneRoot) {
+            return undefined;
+        }
+
+        const rect = sceneRoot.getBoundingClientRect();
+        const scale = currentScale();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        return {
+            x: -rect.left / scale,
+            y: (this.toolbarHeight - rect.top) / scale,
+            width: viewportWidth / scale,
+            height: Math.max(viewportHeight - this.toolbarHeight, 0) / scale,
+        };
+    }
+
+    /**
+     * Laid-out nodes for asset demand, mounted or not. Unmounted nodes are hidden when one of
+     * their branch classes satisfies `isHiddenBranchClass`, like mounted nodes' classes.
+     */
+    public getAssetDemandNodes(isHiddenBranchClass: (className: string) => boolean): FocusAssetDemandNode[] {
+        const geometry = this.geometry;
+        if (!geometry) {
+            return [];
+        }
+
+        return Object.values(geometry.nodes).map(node => {
+            const wrapper = this.wrappers.get(node.id);
+            const hidden = wrapper
+                ? wrapper.classList.contains('focus-branch-hidden')
+                : (this.itemsById.get(node.id)?.classNames ?? '').split(/\s+/).some(className => !!className && isHiddenBranchClass(className));
+            return { id: node.id, slot: node.slot, hidden };
+        });
     }
 
     public clear(): void {

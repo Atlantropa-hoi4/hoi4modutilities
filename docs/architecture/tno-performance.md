@@ -264,3 +264,181 @@ node scripts/profile-vscode-mod.mjs --mod "<mod directory>" --game "<game direct
   [이후 2](../../.vscode-test/performance/omp-focus-edits-after-2.json),
   [이후 3](../../.vscode-test/performance/omp-focus-edits-after-3.json)
 - [실제 scene 전환 결과](../../.vscode-test/performance/scene-smoke-session/done.json)
+
+## 2026-10-11: 경량 색인과 표시 영역 우선 로딩
+
+### 경량 색인 동등성
+
+이번 경량 scanner는 전체 parser를 대체하지 않는다. 실제 TNO의 focus/GFX
+764파일, 28,008,899 bytes에서 기존 parser/schema가 추출한 순서·중복을
+그대로 비교했다. 760파일은 Rust/WASM이 처리했고, 4파일은 전체 parser로
+돌렸다. 두 빈 파일은 같은 빈 결과였으며, `interface/TNO_fonts.gfx`
+(65,21)와 `interface/load_screen_font.gfx` (69,21)는 기존 `< = { 8`
+구문 오류도 그대로 보존했다. 지원하지 않는 파일에서 일부 이름만 성공한
+색인으로 등록하지 않는다. 실제 production worker 경로의 14개 성공 표본과
+두 parser 오류도 별도로 확인했다.
+
+각 종류의 가장 큰 지원 파일 6개를 같은 Node 24.14.0 프로세스에서 예열하고
+3회 반복했다. 아래는 파일별 중앙값을 합한 **직접 kernel wall time**이다.
+파일 읽기·worker 초기화·대기열·왕복·웹뷰 렌더링은 포함하지 않는다.
+
+| 실제 입력 6파일씩 | 기존 parser/schema | Rust/WASM scanner |
+| --- | ---: | ---: |
+| shared/joint focus IDs | 55.43ms | 13.49ms |
+| GFX sprite names | 56.85ms | 16.74ms |
+
+전체 미리보기 배속이나 OS CPU 절감율로 환산하지 않는다. shared-focus 색인은
+local focus를 포함하지 않으며, unsupported aliases/variable blocks/attachment
+syntax/unsafe numeric IDs 등은 기존 parser의 의미와 오류를 유지한다.
+ABI v1의 선택적 `process_script_index` export가 없는 모듈도 같은 TS 경로를
+사용한다. 파일 우선순위, `replace_path`, DLC 정책, 미저장 문서 및 색인
+generation은 TypeScript에 남는다.
+
+원시 입력 해시·이름 수·decline 사유·kernel 표본은
+[색인 동등성 기록](../../.vscode-test/performance/comprehensive-1791691111454/index-parity.json)에 있다.
+이 기록과 프로파일 출력은 로컬 검증 자료이며 VSIX에 포함하지 않는다.
+
+### 실행 계약
+
+- 직접/상대 읽기는 12-slot FIFO priority pool을 공유한다. `interactive`
+  요청은 대기 중인 같은 single-flight 읽기를 승격하고, background 색인은
+  interactive admission 최대 3회 뒤에 실행 기회를 얻는다. 슬롯은 resolver
+  재진입으로 이중 소비하지 않는다. `fileloader.read`의 `waitMs`, `resolveMs`,
+  `contentMs`, `activeMs`로 대기와 실제 작업을 구분한다.
+- 준비된 workspace shared-focus/GFX hit는 base-game/DLC 완료를 기다리지
+  않는다. miss·미준비·무효화·비활성 상태를 완성된 결과로 취급하지 않으며,
+  deferred shared-focus miss의 경고는 전체 레이어가 준비될 때까지 보류한다.
+- root/dependency 편집은 하나의 serialized key에서 실행 중 1개와 최신
+  pending 1개만 유지한다. 일반 문서 변경 35ms, Undo/Redo 0ms, disk 의존
+  변경 150ms. stale generation/document/snapshot 또는 dispose된 결과는
+  적용하지 않으며 의존성 무효화 범위를 합쳐 누락시키지 않는다.
+- UI/UX 및 visible-first 구현은 설치된 Claude CLI의 `claude-design`
+  작성자가 담당했다. 구조·카탈로그를 먼저 보존하고 화면 안→근처 순서로
+  32개씩 요청한다. scroll/zoom/condition/branch 변경도 같은 경로를 사용한다.
+- `sceneRendered`는 구조 화면의 paint 증거이며 자산 완료가 아니다.
+  `sceneAssetsReady`는 트리 전환·재방문 epoch마다 실제 표시 아이콘의
+  loaded CSS를 확인한다. 빈 임시 canvas, 회색 decode 실패, 미검사 아이콘을
+  ready로 취급하지 않는다. 동일 트리의 condition 변경에는 새 tree-switch
+  epoch를 요구하지 않고 실제 현재 viewport와 PNG를 다시 검사한다.
+
+### 최종 코드의 실제 VS Code 전후 비교
+
+이 비교의 이전 버전은 이번 총체적 개선 직전의 보관된 production 번들이다.
+위 단계들의 baseline과 혼합하지 않는다. Windows x64, VS Code 1.141.0 /
+Node 24.21.0, English, DLC off, production/auto Rust에서 양쪽 각 새 프로세스
+3회로 광둥→슈크신 순서와 주석/x/y 편집·각 1회 Undo를 맞췄다. 최초 열기와
+편집은 각 3표본, 재열기는 각 6표본의 중앙값이다.
+
+| 시나리오 | 수정 전 | 최종 수정 후 | 단축 |
+| --- | ---: | ---: | ---: |
+| 광둥 최초 viewport 자산 적용 | 8,900ms | 6,782ms | 23.8% |
+| 광둥 재열기 viewport 자산 적용 | 867ms | 665.5ms | 23.2% |
+| 슈크신 첫 열기(광둥 뒤) | 1,062ms | 709ms | 33.2% |
+| 슈크신 재열기 | 818ms | 623.5ms | 23.8% |
+| 광둥 주석 편집 적용 | 139ms | 104ms | 25.2% |
+| 광둥 주석 Undo | 109ms | 66ms | 39.4% |
+| 광둥 imported shared focus x/y 편집 | 281ms | 134ms | 52.3% |
+| 광둥 x/y Undo | 257ms | 88ms | 65.8% |
+| 슈크신 주석 편집 적용 | 128ms | 77ms | 39.8% |
+| 슈크신 주석 Undo | 93ms | 66ms | 29.0% |
+| 슈크신 imported shared focus x/y 편집 | 235ms | 108ms | 54.0% |
+| 슈크신 x/y Undo | 217ms | 61ms | 71.9% |
+
+광둥 최초 완료 범위는 이전 8,660–9,284ms, 최종 6,778–6,911ms였다.
+`visibleAssetsApplied`의 실제 적용 응답을 썼으며 polling 관측 지연과 구분한다.
+최종 18번의 열기 모두 현재 viewport의 ready, 미렌더 0, unavailable 0을
+확인했다. 편집은 정확한 문서 버전·새 snapshot·시작 뒤 적용 응답을 요구하고,
+shared source 편집은 root 문서를 바꾸지 않는 dependency 응답으로 검사했다.
+모든 cleanup에서 원문·disk bytes 복구 및 save event 0회를 확인했다.
+
+**준비 범위는 같지 않다.** 이전은 선택 트리의 자산을 준비했고, 최종은
+광둥 첫 화면의 3개/슈크신 4개 등 실제 viewport부터 준비한다. 카탈로그
+19트리/827중점은 유지하지만 모든 트리의 모든 자산 완료 시간이 아니다.
+OS 파일 캐시는 비우지 않았다. 슈크신 최초 열기는 이미 광둥 뒤의 예열
+상태다. 표본이 작고 I/O·색인·UI 준비 범위를 함께 바꿨으므로 단축율을
+Rust 단독 효과나 통계적으로 보장된 배속으로 주장하지 않는다.
+
+### 실제 트리·편집·취소 smoke
+
+- 새 VS Code 웹뷰에서 19개 트리를 순서대로 선택하고 각 렌더된 카드로
+  스크롤했다. 표시된 PNG의 `Image.decode()`와 natural dimensions를
+  3,802회 관찰했다(고유 이미지 수가 아니라 반복 관찰 수다).
+- 4회 cached revisit에서 ID·좌표·title·source·icon key를 비교했고,
+  5개 빠른 선택의 마지막 트리가 이기는지 검사했다. 준비가 끝난 네 번의
+  재방문 모두 style element 4개, rules 1,591개, CSS text의 길이
+  24,351,178 UTF-16 code units로 같았다. bytes 또는 전체 메모리 크기가 아니다.
+- native zoom 버튼으로 100%→30%→100%를 실행하고 PNG를 검사했다.
+  `angry_legco` 조건에서 추가 32중점의 reveal과 실제 PNG를 확인했다.
+  조건 기능을 끈 새 preview에서는 branch checkbox가 36중점을 숨겼다가
+  복구했고, 새로 드러난 카드의 PNG도 확인했다.
+- root 주석 edit/Undo와 imported source x/y edit/Undo를 각 20회,
+  총 80회 적용했다. DOM observer는 `(9,1)` 20회 및 원래 `(8,0)`
+  초기 1회+Undo 20회를 기록했다. 12개 변경 burst 뒤 최신 버전 적용과
+  원문 복구도 검사했다. 이후 19트리·4회 재방문에서 geometry/source가
+  같고 실제 표시 아이콘이 유지됐다.
+- 8회 preview open→즉시 미저장 변경→close→single Undo에서 dispose된
+  debug state가 사라지고 원문이 정확히 복구됐다. 마지막 fresh reopen의
+  source/좌표와 실제 PNG 3개를 확인했다. 최종 root/shared disk bytes는
+  변하지 않았고 save event는 0회였다.
+
+수정 전 endurance에서는 다른 트리의 화면 밖 focus가 같은 GFX 이름을
+쓸 때 placeholder CSS가 기존 loaded 규칙을 덮는 회귀를 재현했다.
+focus별 materialized ID는 남아 재요청도 없었다. 실제 shared source의
+`GNG_the_four_companies`와 `GNG_ensure_corporate_interests_are_heard`가
+동일 GFX를 사용하는 것을 확인했다. merge builder가 기존 rule keys를
+참조해 placeholder만 생략하도록 수정했고, 준비 조건 완화·특수 focus 예외·
+전체 자산 reload 없이 위의 동일 cached-revisit 시나리오가 통과했다.
+실제 builder/cascade 및 session transition 회귀 테스트 2개도 추가했다.
+
+| 같은 smoke host의 관측 시점 | heap used | RSS |
+| --- | ---: | ---: |
+| 초기 viewport | 400.9MiB | 707.2MiB |
+| 전체 트리/재방문 뒤 | 469.4MiB | 763.2MiB |
+| 취소/닫기 8회 뒤 | 871.3MiB | 1,220.4MiB |
+| 마지막 fresh ready | 401.6MiB | 626.6MiB |
+
+강제 GC나 retained-heap 분석을 하지 않았다. 색인·이미지 cache·검증 코드도
+포함한 과정 관측이며, 마지막 회수는 영구 leak 없음/고정 RSS 보장이 아니다.
+전체 트리 준비·반복 편집 중 일시적으로 1GiB 이상 RSS를 사용한다.
+
+### 최종 검증·산출물·한계
+
+- 최종 코드에서 `npm run verify`: Rust **54**, unit **1,137**, desktop
+  integration **22** 통과. host/webview typecheck, production build, ESLint,
+  local VSIX packaging을 포함한다.
+- 측정에 사용한 extension SHA-256:
+  `ec6cb4b083bad8b813bf354a663febd84e0ad8b970d69178c743fa92ec726436`.
+  WASM 86,851 bytes / SHA-256:
+  `147d63ebb9c290c0a2cb6a7eaeec1cdacc65bcb9c1eef10b0d1b0fbba6fa0d5a`.
+  worker SHA-256:
+  `fd6ca6618fb08bac2c229a6fda9abc8b20ce71af477cb2c8a64b499c5406ca0e`.
+- cropped 실제 웹뷰도 확인했다. screen reader 낭독, 실제 실패/Retry 상태,
+  한국어·러시아어·중국어 표시, reduced-motion 애니메이션은 별도 실제
+  surface 측정하지 않았다. 번역/상태 경로는 타입·unit 검증에 포함된다.
+- 기존 font GFX 문법·DDS magic 오류는 그대로 남는다. 일반 `.yml` 편집
+  인덱스의 1000ms debounce와 완료 알림 없는 경쟁도 해결했다고 주장하지
+  않는다. 비Windows·standalone Node 20·장시간 endurance는 미실측이다.
+- 초기 구현/임시 하니스의 실패 기록은 보존했으나 최종 중앙값에 섞지
+  않았다. VS Code toast의 native 클릭 차단은 알림을 닫아 해결했고,
+  새 frame 식별은 변경되지 않는 Puppeteer name cache 대신 실제 iframe
+  element로 확인했다. same-tree 조건 변경에 tree-switch marker를
+  요구하던 임시 대기도 실제 viewport 검사로 교정했다.
+
+재현은 위의 `profile-vscode-mod.mjs --samples 3 --edits` 명령을 사용하고,
+이전 번들은 `--extension`으로 보관 root를 지정한다. 한 버전의 별도
+launch 3회를 새로운 `--output` 경로로 실행한다. 모드·게임 파일에는
+저장하지 않는다. 일회성 smoke 프로그램은 검증 뒤 제거했다.
+
+로컬 원시 기록:
+- [이전 1](../../.vscode-test/performance/comprehensive-1791691111454/before-1.json),
+  [이전 2](../../.vscode-test/performance/comprehensive-1791691111454/before-2.json),
+  [이전 3](../../.vscode-test/performance/comprehensive-1791691111454/before-3.json)
+- [최종 1](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-1.json),
+  [최종 2](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-2.json),
+  [최종 3](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-3.json),
+  [중앙값과 전체 표본](../../.vscode-test/performance/comprehensive-1791691111454/corrected-summary.json)
+- [최종 stress/source 안전성](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/stress-results.json),
+  [최초 전체 트리·control](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-first-pass.json),
+  [반복 편집 후 재방문](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-edit-revisits.json),
+  [실제 DOM 좌표 전이](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-position-transitions.json),
+  [cropped 화면](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/corrected-webview.png)

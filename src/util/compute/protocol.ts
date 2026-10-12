@@ -13,6 +13,7 @@ export interface ComputeInput {
 }
 
 export interface ComputeResult {
+    kind?: 'image';
     pixels: Uint8Array;
     colors: Uint32Array;
     pngBytes?: Uint8Array;
@@ -21,18 +22,31 @@ export interface ComputeResult {
     retireWorker?: boolean;
 }
 
-export interface ComputeRequest extends ComputeInput {
-    id: number;
+export interface ScriptIndexInput {
+    kind: 'focus-index' | 'gfx-index';
+    bytes: Uint8Array;
 }
 
-export interface ComputeReply {
+export interface ScriptIndexResult {
+    kind: 'script-index';
+    entries: string[];
+    engine?: 'rust-wasm';
+    retireWorker?: boolean;
+}
+
+export type AnyComputeInput = ComputeInput | ScriptIndexInput;
+export type AnyComputeResult = ComputeResult | ScriptIndexResult;
+export type ComputeRequest = AnyComputeInput & { id: number };
+
+export interface ComputeReply<T extends AnyComputeResult = ComputeResult> {
     id: number;
-    result?: ComputeResult;
+    result?: T;
     error?: string;
     errorKind?: 'input' | 'rejected' | 'infrastructure';
     userError?: boolean;
     retireWorker?: boolean;
     durationMs: number;
+    computeMs?: number;
 }
 
 export const maxComputeInputBytes = 128 * 1024 * 1024;
@@ -44,9 +58,11 @@ function validDimensions(width: number, height: number): boolean {
         && width * height * 4 + 12 <= maxComputeOutputBytes;
 }
 
-export function isComputeInputSupported(input: ComputeInput): boolean {
-    const { width, height, bytes } = input;
+export function isComputeInputSupported(input: AnyComputeInput): boolean {
+    const { bytes } = input;
     if (bytes.byteLength > maxComputeInputBytes) { return false; }
+    if (!('width' in input)) { return bytes.byteLength > 0; }
+    const { width, height } = input;
     if (!validDimensions(width, height)) { return false; }
     if (input.kind === 'dds') {
         return input.pixelFormat !== undefined && bytes.byteLength > 0;

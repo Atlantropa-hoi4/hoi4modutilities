@@ -11,11 +11,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 * Update Focus Tree Preview in place: edits, drags, links, and asset loading now change only the affected focus cards and connections instead of rebuilding the tree, and typing above a focus no longer re-renders it. Updates while editing large trees are sent as small deltas, and hovering, selecting, and filtering restyle only the focuses involved.
 * Parse HOI4 scripts about twice as fast in previews, indexes, and formatting.
-* Hydrate Focus Tree icons, card templates, and inlays for the selected tree first; load other trees on demand while retaining the full tree selector and refreshing already-loaded scenes after edits.
+* Hydrate on-screen Focus Tree icons, card templates, and inlays before nearby or newly selected content; scrolling, zooming, and condition/branch reveals request newly needed assets while retaining the full catalog.
 * Reduce Windows Focus Tree loading and editing delays by yielding render and loader progress batches with `setImmediate` instead of zero-delay timers.
+* Prioritize interactive preview reads over background index reads in a shared bounded pool, while preserving coalescing, file precedence, unsaved content, and background progress.
+* Extract shared-focus IDs and GFX sprite names with a lightweight Rust/WASM scanner; keep the original parser for unsupported syntax and resolve ready workspace hits without waiting for global indexes.
+* Serialize Focus Tree root/dependency refreshes, retain only the latest pending update, and remove the extra Undo/Redo debounce.
 
 ### Fixed
 * Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.
+* Keep the latest requested Focus Tree selected when asynchronous scene loading finishes, and require real on-screen icons before reporting assets ready.
+* Preserve loaded shared-icon styles when merging a newly selected Focus Tree, so an off-screen placeholder cannot erase an already hydrated icon on cached revisits.
 * Restore hidden allow-branch selections in Focus Tree Preview when conditions are disabled.
 * Format blocks that start with content on the opening-brace line and close on a later line: a lone entry closes back into an inline block, such as `traits = { AFR_red_queen_trait }`, and other content moves to its own line. Wrapped lists that close right after their last entry keep their layout.
 * Stop classifying non-script `.txt` files in a Steam game folder (`steamapps/common/<game>`) as HOI4 scripts.

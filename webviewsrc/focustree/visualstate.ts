@@ -30,6 +30,21 @@ export function applyFocusNodeVisualState(focusId: string, wrapper: HTMLElement,
     toggleClass(card, 'focus-filter-miss', !runtime.searchFilterMatchIds.has(focusId));
     toggleClass(wrapper, 'focus-search-match', runtime.searchResultIds.has(focusId));
     toggleClass(wrapper, 'focus-branch-hidden', isInHiddenBranch(wrapper));
+    toggleClass(card, 'focus-asset-pending', runtime.assetMaterialization.isPending(focusId));
+}
+
+/** Marks cards whose icons are still placeholders; `focusIds` limits the update when known. */
+export function updateAssetPendingClasses(focusIds?: Iterable<string>): void {
+    if (!focusIds) {
+        scene?.forEachCard((card, focusId) => toggleClass(card, 'focus-asset-pending', runtime.assetMaterialization.isPending(focusId)));
+        return;
+    }
+    for (const focusId of focusIds) {
+        const card = scene?.getCard(focusId);
+        if (card) {
+            toggleClass(card, 'focus-asset-pending', runtime.assetMaterialization.isPending(focusId));
+        }
+    }
 }
 
 export function applyFocusEdgeVisualState(edge: FocusEdgeGeometry, element: SVGPathElement): void {
@@ -168,6 +183,10 @@ export function isContinuousFocusEditable(focusTree = runtime.renderedFocusTree)
 
 export function getHiddenBranches(): Readonly<Record<string, boolean>> {
     return hiddenBranches;
+}
+
+export function isHiddenBranchClass(className: string): boolean {
+    return !!hiddenBranches[className];
 }
 
 /** Shows or hides every node and edge in an allow-branch class. */

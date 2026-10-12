@@ -1,5 +1,8 @@
 import * as assert from 'assert';
 import Module = require('module');
+import { FakeUpdateClock } from './fake-update-clock';
+import type * as vscode from 'vscode';
+import type { StandardPreviewDescriptor } from '../../src/previewdef/descriptor';
 
 type FakeUri = { scheme?: string; path?: string; toString(): string };
 type FakeDocument = { uri: FakeUri; version: number };
@@ -611,6 +614,201 @@ describe('preview manager', () => {
         assert.deepStrictEqual(scheduled, [{ key: document.uri.toString(), delayMs: 0 }]);
     });
 
+    describe('responsive serialized refreshes', () => {
+        let clock: FakeUpdateClock;
+        let manager: InstanceType<typeof PreviewManager>;
+        let preview: ResponsivePreview;
+        let document: FakeDocument;
+        let sharedDocument: FakeDocument;
+        let secondSharedDocument: FakeDocument;
+        let registration: { dispose(): void };
+
+        beforeEach(async () => {
+            clock = new FakeUpdateClock();
+            clock.install();
+            document = createDocument('file:///common/national_focus/root.txt');
+            sharedDocument = createDocument('file:///common/national_focus/shared.txt');
+            secondSharedDocument = createDocument('file:///common/national_focus/other-shared.txt');
+            manager = new PreviewManager({
+                previewProviders: [createPanelProvider('focus', () => 0, (uri, panel) => {
+                    preview = new ResponsivePreview(uri, panel);
+                    return preview;
+                })],
+            });
+            registration = manager.register();
+            // Unit documents intentionally implement only the manager's document surface.
+            const uri = document.uri as unknown as vscode.Uri;
+            await manager['showPreviewImpl'](uri);
+            preview.emitDependencies(['common/national_focus/shared.txt', 'common/national_focus/other-shared.txt']);
+        });
+        afterEach(() => {
+            preview.dispose();
+            registration.dispose();
+            clock.restore();
+        });
+
+        it('waits for a trailing typing burst and refreshes only its latest document state', async () => {
+            document.version = 2;
+            manager['onChangeTextDocument'](changeEvent(document));
+            await clock.advance(20);
+            document = createDocument(document.uri.toString(), 3);
+            manager['onChangeTextDocument'](changeEvent(document));
+            await clock.advance(34);
+            assert.strictEqual(preview.changeCount, 0);
+            await clock.advance(1);
+            assert.deepStrictEqual(preview.changedVersions, [3]);
+            assert.strictEqual(preview.lastChangeSource, 'document');
+        });
+
+        it('refreshes root Undo and Redo without the ordinary trailing wait', async () => {
+            document.version = 2;
+            manager['onChangeTextDocument'](changeEvent(document));
+            document.version = 3;
+            manager['onChangeTextDocument'](changeEvent(document, 1));
+            await clock.advance();
+            assert.deepStrictEqual(preview.changedVersions, [3]);
+            document.version = 4;
+            manager['onChangeTextDocument'](changeEvent(document, 2));
+            await clock.advance();
+            assert.deepStrictEqual(preview.changedVersions, [3, 4]);
+            await clock.advance(150);
+            assert.strictEqual(preview.changeCount, 2);
+        });
+
+        it('uses the short document deadline for unsaved imported focus edits and immediate Undo/Redo', async () => {
+            sharedDocument.version = 2;
+            manager['onChangeTextDocument'](changeEvent(sharedDocument));
+            await clock.advance(34);
+            assert.strictEqual(preview.changeCount, 0);
+            await clock.advance(1);
+            assert.strictEqual(preview.lastChangeSource, 'dependency');
+            assert.deepStrictEqual(preview.lastChangedDependencies.map(change => change.uri.toString()),
+                [sharedDocument.uri.toString()]);
+            for (const reason of [1, 2]) {
+                sharedDocument.version += 1;
+                manager['onChangeTextDocument'](changeEvent(sharedDocument, reason));
+                await clock.advance();
+            }
+            assert.strictEqual(preview.changeCount, 3);
+        });
+
+        it('retains the longer disk-watcher debounce and merges dependency changes with root edits', async () => {
+            // These URIs need no VS Code implementation beyond their path/string identity.
+            const sharedUri = sharedDocument.uri as unknown as vscode.Uri;
+            manager['onDidChangeWatchedDependency'](sharedUri, 'change');
+            await clock.advance(149);
+            assert.strictEqual(preview.changeCount, 0);
+            await clock.advance(1);
+            assert.strictEqual(preview.changeCount, 1);
+            manager['onDidChangeWatchedDependency'](sharedUri, 'change');
+            manager['onChangeTextDocument'](changeEvent(secondSharedDocument));
+            document.version = 2;
+            manager['onChangeTextDocument'](changeEvent(document));
+            await clock.advance(35);
+            assert.deepStrictEqual(preview.changedVersions, [1, 2]);
+            assert.strictEqual(preview.lastChangeSource, 'dependency');
+            assert.deepStrictEqual(preview.lastChangedDependencies.map(change => change.uri.toString()),
+                [sharedDocument.uri.toString(), secondSharedDocument.uri.toString()]);
+            await clock.advance(150);
+            assert.strictEqual(preview.changeCount, 2);
+        });
+
+        it('serializes root and imported dependency refreshes through one running action', async () => {
+            const gate = createDeferred<void>();
+            preview.refreshGate = gate.promise;
+            manager['onChangeTextDocument'](changeEvent(document));
+            await clock.advance(35);
+            assert.strictEqual(preview.changeCount, 1);
+            manager['onChangeTextDocument'](changeEvent(sharedDocument));
+            await clock.advance(35);
+            document.version = 2;
+            manager['onChangeTextDocument'](changeEvent(document, 1));
+            await clock.advance();
+            manager['onChangeTextDocument'](changeEvent(secondSharedDocument, 2));
+            await clock.advance();
+            assert.strictEqual(preview.changeCount, 1);
+            gate.resolve();
+            await clock.advance();
+            assert.deepStrictEqual(preview.changedVersions, [1, 2]);
+            assert.deepStrictEqual(preview.appliedVersions, [2]);
+            assert.deepStrictEqual(preview.lastChangedDependencies.map(change => change.uri.toString()),
+                [sharedDocument.uri.toString(), secondSharedDocument.uri.toString()]);
+        });
+
+        it('invalidates an active result on an imported edit without changing the root document version', async () => {
+            const gate = createDeferred<void>();
+            preview.refreshGate = gate.promise;
+            manager['onChangeTextDocument'](changeEvent(document));
+            await clock.advance(35);
+            manager['onChangeTextDocument'](changeEvent(sharedDocument));
+            await clock.advance(35);
+            assert.deepStrictEqual(preview.appliedVersions, []);
+            gate.resolve();
+            await clock.advance();
+            assert.deepStrictEqual(preview.changedVersions, [1, 1]);
+            assert.deepStrictEqual(preview.appliedVersions, [1]);
+            assert.strictEqual(preview.lastChangeSource, 'dependency');
+        });
+
+        it('preserves a full source-selection invalidation when a dependency change joins the same batch', async () => {
+            await manager['onDidChangeSelectedModSource'](manager['registrationGeneration']);
+            manager['onChangeTextDocument'](changeEvent(sharedDocument));
+            await clock.advance(35);
+            assert.strictEqual(preview.changeCount, 1);
+            assert.strictEqual(preview.lastChangeSource, 'dependency');
+            assert.deepStrictEqual(preview.lastChangedDependencies, []);
+        });
+
+        it('cannot refresh a disposed preview from an already-fired timer callback', async () => {
+            manager['onChangeTextDocument'](changeEvent(document, 1));
+            clock.fireTimers(0);
+            preview.dispose();
+            await clock.advance();
+            assert.strictEqual(preview.changeCount, 0);
+        });
+
+        it('cannot refresh after registration is disposed even if a timer already fired', async () => {
+            manager['onChangeTextDocument'](changeEvent(sharedDocument, 1));
+            clock.fireTimers(0);
+            registration.dispose();
+            await clock.advance();
+            assert.strictEqual(preview.changeCount, 0);
+        });
+    });
+
+    it('rejects superseded callbacks even when an injected scheduler delivers stale work', async () => {
+        const document = createDocument('file:///common/focus.txt');
+        const actions: Array<() => void | Promise<void>> = [];
+        let preview!: FakePreview;
+        const manager = new PreviewManager({
+            previewProviders: [createPanelProvider('focus', () => 0, (uri, panel) => {
+                preview = new FakePreview(uri, panel);
+                return preview;
+            })],
+            documentUpdateScheduler: {
+                schedule: (_key, _delay, action) => { actions.push(action); },
+                dispose: () => undefined,
+            },
+        });
+        const registration = manager.register();
+        try {
+            // Test documents expose just URI identity and document version.
+            const uri = document.uri as unknown as vscode.Uri;
+            await manager['showPreviewImpl'](uri);
+            manager['onChangeTextDocument'](changeEvent(document));
+            const latest = createDocument(document.uri.toString(), 2);
+            manager['onChangeTextDocument'](changeEvent(latest));
+            await actions[0]();
+            assert.strictEqual(preview.changeCount, 0);
+            await actions[1]();
+            assert.strictEqual(preview.changeCount, 1);
+            assert.strictEqual(preview.lastChangedDocument, latest);
+        } finally {
+            preview.dispose();
+            registration.dispose();
+        }
+    });
+
     it('silently ignores an unsupported preview command and clears stale preview context', async () => {
         const document = createDocument('file:///notes/readme.md');
         const manager = createManager([
@@ -857,13 +1055,13 @@ function createPanelProvider(
     type: string,
     canPreview: (document: FakeDocument) => number | undefined,
     createPreview: (uri: FakeUri, panel: FakePanel) => any = (uri, panel) => new FakePreview(uri, panel),
-) {
+): StandardPreviewDescriptor {
     return {
         type,
         kind: 'panel' as const,
         canPreview,
         createPreview,
-    };
+    } as unknown as StandardPreviewDescriptor;
 }
 
 class FakePreview {
@@ -874,6 +1072,7 @@ class FakePreview {
     public lastChangeSource: string | undefined;
     public lastChangedDependencies: Array<{ uri: FakeUri; changeKind: string }> = [];
     public isDisposed = false;
+    public pendingRefreshGeneration = 0;
 
     constructor(
         public readonly uri: FakeUri,
@@ -896,8 +1095,20 @@ class FakePreview {
         return;
     }
 
-    public getDocumentChangeDebounceMs(): number {
+    public getDocumentChangeDebounceMs(_reason?: number): number {
         return this.documentChangeDebounceMs;
+    }
+
+    public shouldSerializeRefreshes(): boolean {
+        return false;
+    }
+
+    public cancelPendingRefresh(): void {
+        this.pendingRefreshGeneration += 1;
+    }
+
+    public getDependencyDocumentChangeDebounceMs(_uri: FakeUri, _reason?: number): number {
+        return this.getDependencyChangeDebounceMs();
     }
 
     public getDependencyChangeDebounceMs(): number {
@@ -932,6 +1143,49 @@ class FakePreview {
         this.isDisposed = true;
         for (const listener of this.disposeListeners) {
             listener();
+        }
+    }
+}
+
+function changeEvent(document: FakeDocument, reason?: number): vscode.TextDocumentChangeEvent {
+    // The manager only reads the open document and VS Code's explicit Undo/Redo reason.
+    return { document, reason } as unknown as vscode.TextDocumentChangeEvent;
+}
+
+class ResponsivePreview extends FakePreview {
+    public readonly changedVersions: number[] = [];
+    public readonly appliedVersions: number[] = [];
+    public refreshGate: Promise<void> | undefined;
+
+    public override getDocumentChangeDebounceMs(reason?: number): number {
+        return reason === 1 || reason === 2 ? 0 : 35;
+    }
+
+    public override shouldSerializeRefreshes(): boolean {
+        return true;
+    }
+
+    public override getDependencyDocumentChangeDebounceMs(_uri: FakeUri, reason?: number): number {
+        return this.getDocumentChangeDebounceMs(reason);
+    }
+
+    public override getDependencyChangeDebounceMs(): number {
+        return 150;
+    }
+
+    public override async onDocumentChange(
+        document: FakeDocument,
+        options?: { source?: string; changedDependencies?: Array<{ uri: FakeUri; changeKind: string }> },
+    ): Promise<void> {
+        const generation = this.pendingRefreshGeneration;
+        const documentVersion = document.version;
+        this.changedVersions.push(document.version);
+        const gate = this.refreshGate;
+        this.refreshGate = undefined;
+        await super.onDocumentChange(document, options);
+        await gate;
+        if (!this.isDisposed && generation === this.pendingRefreshGeneration) {
+            this.appliedVersions.push(documentVersion);
         }
     }
 }

@@ -168,20 +168,23 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const deferredSharedFocusIds = new Set<string>();
         if (isSharedFocusIndexEnabled()) {
             const dependencyPaths = new Set(dependencies.map(d => d.path));
-            const canResolveSharedFocusImmediately = !deferAssetLoad || isSharedFocusIndexReady();
+            // A deferred load uses whatever a ready index layer already knows, e.g. a complete
+            // workspace layer while global layers still build. A key is reported missing only
+            // once every layer is ready; until then it is deferred to the full load.
+            const canReportMissingSharedFocus = !deferAssetLoad || isSharedFocusIndexReady();
             for (const focusTree of file.focus_tree) {
                 for (const sharedFocus of focusTree.shared_focus) {
                     session.throwIfCancelled();
                     if (!sharedFocus) {
                         continue;
                     }
-                    if (!canResolveSharedFocusImmediately) {
-                        deferredSharedFocusIds.add(sharedFocus);
-                        continue;
-                    }
                     const filePath = deferAssetLoad
                         ? tryFindFileByFocusKey(sharedFocus)
                         : await findFileByFocusKey(sharedFocus);
+                    if (deferAssetLoad && filePath === undefined && !canReportMissingSharedFocus) {
+                        deferredSharedFocusIds.add(sharedFocus);
+                        continue;
+                    }
                     if (filePath && !dependencyPaths.has(filePath)) {
                         dependencyPaths.add(filePath);
                         dependencies.push({ type: 'focus', path: filePath });

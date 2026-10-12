@@ -43,15 +43,22 @@ The feature catalog keeps preview priority stable while allowing `services/previ
 - `src/services/indexService.ts`: reusable cache/index lifecycle
 - `src/util/*`: file loading, localisation, telemetry, config access, HTML helpers, image helpers, and VS Code integration utilities
 
+Direct and relative file reads share `src/util/fileReadScheduler.ts`: at most twelve
+active reads, FIFO within `interactive`/`background`, queued single-flight promotion,
+and a background admission after at most three interactive admissions when both
+queues are waiting. Resolution precedence and open-document reads remain in
+`fileloader.ts`; background indexes use the same scheduler, not a second limiter.
+`fileloader.read` separates `waitMs`, `resolveMs`, `contentMs` and `activeMs`.
+
 ### Preview host side
 
 - `src/previewdef/*`: preview detection, base classes, dependency tracking, focus tree loader/runtime helpers, and world map handling
 
 ### Rust compute worker
 
-- `rust/hoi4-compute/`: dependency-free BC1/BC2/BC3 DDS decoding and 24-bit province BMP color extraction, compiled to portable WebAssembly
+- `rust/hoi4-compute/`: dependency-free DDS pixel decoding, province BMP colors/boundaries/validation, and lightweight shared-focus/GFX script index extraction, compiled to portable WebAssembly
 - `src/util/compute/*`: trusted byte-buffer ABI, lazy bounded worker service, cancellation, lifecycle, and TypeScript fallback
-- Large DDS pixel decoding and PNG encoding run in the worker; raw DDS formats use the existing TypeScript decoder there. VS Code APIs, source editing, file precedence, parser, indexes, map boundary analysis, and browser rendering remain TypeScript.
+- The script scanner extracts shared/joint focus IDs and sprite names without building an AST. Unsupported files use the original parser. VS Code APIs, source editing, file precedence, parser/schema semantics, index lifecycle, and browser rendering remain TypeScript.
 - Build outputs `dist/compute-worker.js` and `dist/hoi4_compute.wasm` ship in the universal VSIX. See [Rust compute details](rust-compute.md).
 
 ### Webview/browser side
@@ -67,17 +74,29 @@ The host keeps the last render cache per preview and plans each refresh against 
 - patches (`focusTreeScenePatch`) with per-tree deltas: changed focus views, focus source
   ranges, warnings or warning navigation ranges, and changed tree fields. Trees whose focus
   ids were added, removed, or reordered are replaced whole;
-- asset updates (`focusTreeAssetBatch`) for hydration, with content-addressed style classes so
-  patches only append rules the webview does not have.
+- asset demand (`focusTreeAssetRequest`) and chunk replies (`focusTreeSceneAssets`) for
+  on-screen and nearby hydration, carrying tree/request/document/snapshot identities,
+  materialized focus IDs and incremental CSS.
 
-Asset preparation is scoped to the selected tree on first open. The complete catalog and
-source graph remain available for selection, navigation, warnings, and editing. Selecting
-an unloaded tree hydrates its icons, card templates, and inlays through the existing
-`focusTreeSceneRequest`/merge path. Already-loaded scenes stay in the render cache and
-are refreshed together after invalidation, so client-local revisits cannot retain stale
-assets. The loader adapter retains only one scoped asset base state, not a source graph
-copy per visited tree; dependency manifests retain paths for every loaded scene and
-replace obsolete paths once a refresh covers that scope.
+The structural catalog and source graph remain complete. The first asset build prepares
+on-screen focuses; the browser then requests visible content before nearby content in
+32-focus chunks, with one latest pending demand. Scroll, zoom, condition and branch
+changes recompute demand. Already materialized focuses are retained; source/asset
+invalidation refreshes the loaded scope rather than leaving cached revisits stale.
+The loader retains one scoped asset base state rather than a source graph copy per
+visited tree, and the dependency manifest covers every loaded scene.
+
+Readiness checks actual displayed icon CSS (`loaded`, `placeholder`, `unavailable`).
+`sceneRendered` follows the scene paint; `sceneAssetsReady` identifies each selected-tree
+epoch, including revisits, only after real on-screen assets are available. An empty
+transient canvas or a failed gray fallback is not asset readiness. Loading status uses
+`role=status`, `aria-live=polite`, delayed display and reduced-motion styling.
+
+Focus root/dependency changes share a serialized refresh key: one running update and
+one latest pending update, preserving the union of invalidated dependencies. Document
+changes wait 35ms, Undo/Redo 0ms and disk dependency events 150ms. Cancellation checks
+scheduled callbacks and render/session generations before committing; other preview
+families keep their existing scheduling defaults.
 
 Host-side render and loader progress checkpoints use `setImmediate` rather than
 zero-delay timers. They still yield to host events and check cancellation before
@@ -101,6 +120,7 @@ re-render it. The webview entry `webviewsrc/focustree.ts` wires these modules un
   body attributes styled by the shell stylesheet
 - `content.ts`: layout plan and scene render for the selected tree
 - `editing.ts`, `toolbar.ts`, `search.ts`, `conditions.ts`, `inlays.ts`: interactions and toolbar
+- `assetdemand.ts`, `assetloading.ts`: viewport-priority demand, materialization requests, real-icon readiness, and accessible loading state
 - `hostsync.ts`, `messageapply.ts`, `telemetry.ts`: host protocol, delta application, and timings
 
 ## Command Surface

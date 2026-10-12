@@ -2,8 +2,12 @@ import * as vscode from 'vscode';
 import {
     buildFocusTreeRenderPayloadFromBaseState,
     FocusTreeAssetStyleBatchHandler,
+    FocusTreeAssetStylePatch,
+    FocusTreeAssetStylePatchOptions,
     FocusTreeRenderBaseState,
+    renderFocusAssetStylePatch,
 } from "./contentbuilder";
+import type { Focus } from './schema';
 import { FocusConditionPresetsByTree } from "./conditionpresets";
 import { FocusTreeLoaderAdapter } from "./loaderadapter";
 import {
@@ -66,12 +70,16 @@ export class FocusTreeSnapshotBuilder {
         isCancelled?: () => boolean,
         onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
         prepared?: FocusTreeRenderPreparation,
+        materializedFocusIds?: readonly string[],
+        existingStyleRules?: ReadonlyMap<string, string>,
     ): Promise<FocusTreeSnapshot> {
         const { payload, metrics } = await buildFocusTreeRenderPayloadFromBaseState(
             baseState,
             isCancelled,
             onAssetStyleBatch,
             prepared?.views,
+            materializedFocusIds,
+            existingStyleRules,
         );
         const { update, cache } = await createFullFocusTreeRenderUpdateWithCancellation(
             payload,
@@ -87,8 +95,15 @@ export class FocusTreeSnapshotBuilder {
         };
     }
 
-    public invalidate(invalidation: FocusTreeInvalidation): void {
-        this.loaderAdapter.invalidate(invalidation);
+    public renderAssetPatch(
+        focuses: readonly Focus[],
+        options: FocusTreeAssetStylePatchOptions,
+    ): Promise<FocusTreeAssetStylePatch> {
+        return renderFocusAssetStylePatch(focuses, options);
+    }
+
+    public invalidate(invalidation: FocusTreeInvalidation, options?: { reuseLoadedStates?: boolean }): void {
+        this.loaderAdapter.invalidate(invalidation, options);
     }
 
     public setPriorityAssetKeys(assetKeys: readonly string[]): void {

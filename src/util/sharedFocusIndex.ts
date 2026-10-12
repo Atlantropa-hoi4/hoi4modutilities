@@ -9,8 +9,8 @@ import {
 } from './fileloader';
 import { localize } from './i18n';
 import { Logger } from "./logger";
-import { extractFocusIds } from "../previewdef/focustree/schema";
-import { parseHoi4File } from "../hoiformat/hoiparser";
+import { extractScriptIndex } from './compute/indexextraction';
+import { measureAsync } from './perf';
 import { isSharedFocusIndexEnabled } from "./featureflags";
 import {
     applyFocusFileToIndex,
@@ -184,6 +184,11 @@ export function isSharedFocusIndexReady(): boolean {
 }
 
 export function tryFindFileByFocusKey(key: string): string | undefined {
+    if (!isSharedFocusIndexEnabled()) { return undefined; }
+    if (sharedFocusIndexService.isReady('workspace')) {
+        const workspaceFile = findFileByFocusKeyInIndex(workspaceFocusIndex, key);
+        if (workspaceFile !== undefined) { return workspaceFile; }
+    }
     if (!isSharedFocusIndexReady()) {
         return undefined;
     }
@@ -200,26 +205,18 @@ async function fillFocusItems(
 ): Promise<void> {
     signal?.throwIfAborted();
     try {
-        const [fileBuffer] = await readFileFromModOrHOI4(focusFile, options);
-        const fileContent = fileBuffer.toString();
-
-        if (!fileContent.includes('focus_tree')
-            && !fileContent.includes('shared_focus')
-            && !fileContent.includes('joint_focus')) {
-            removeFocusFileFromIndex(focusIndex, focusFile);
-            return;
-        }
-
-        applyFocusFileToIndex(
-            focusIndex,
-            focusFile,
-            extractFocusIds(parseHoi4File(fileContent, localize('infile', 'In file {0}:\n', focusFile), { keepTokens: false })),
-        );
+        const [fileBuffer] = await measureAsync('index.read', { kind: 'focus-index', layer: options.mod ? 'workspace' : options.dlc ? 'dlc' : 'global' },
+            () => readFileFromModOrHOI4(focusFile, { ...options, priority: 'background' }));
+        signal?.throwIfAborted();
+        const ids = await extractScriptIndex('focus-index', fileBuffer, localize('infile', 'In file {0}:\n', focusFile), signal);
+        signal?.throwIfAborted();
+        applyFocusFileToIndex(focusIndex, focusFile, ids);
 
         if (estimatedSize) {
             estimatedSize[0] += fileBuffer.length;
         }
     } catch (e) {
+        signal?.throwIfAborted();
         const baseMessage = options.hoi4
             ? localize('sharedFocusIndex.vanilla', '[Vanilla]')
             : localize('sharedFocusIndex.mod', '[Mod]');
@@ -233,7 +230,11 @@ async function fillFocusItems(
 
 // Function to find the file name containing the specified focus key
 export async function findFileByFocusKey(key: string): Promise<string | undefined> {
-    await Promise.all([ensureGlobalFocusIndex(), ensureWorkspaceFocusIndex()]);
+    if (!isSharedFocusIndexEnabled()) { return undefined; }
+    await ensureWorkspaceFocusIndex();
+    const workspaceFile = sharedFocusIndexService.isReady('workspace') ? findFileByFocusKeyInIndex(workspaceFocusIndex, key) : undefined;
+    if (workspaceFile !== undefined) { return workspaceFile; }
+    await ensureGlobalFocusIndex();
     return tryFindFileByFocusKey(key);
 }
 

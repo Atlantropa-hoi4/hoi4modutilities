@@ -5,6 +5,7 @@ import { runSafely, setState } from '../util/common';
 import { DivDropdown } from '../util/dropdown';
 import { feLocalize } from '../util/i18n';
 import { vscode } from '../util/vscode';
+import { scheduleFocusAssetDemandCheck } from './assetloading';
 import {
     conditionItemToExprKey,
     exprKeyToConditionItem,
@@ -218,7 +219,10 @@ export function refreshWarningsButtonVisibility(): void {
     }
 }
 
+let lastSceneRequestKey: string | undefined;
+
 function requestFocusTreeScene(treeId: string): void {
+    lastSceneRequestKey = `${treeId}\u0000${runtime.snapshotVersion}\u0000${runtime.focusPositionDocumentVersion}`;
     vscode.postMessage({
         command: 'focusTreeSceneRequest',
         protocolVersion: focusTreeProtocolVersion,
@@ -236,6 +240,21 @@ export function requestCurrentFocusTreeScene(): void {
     if (treeId) {
         requestFocusTreeScene(treeId);
     }
+}
+
+/**
+ * Requests the selected catalog tree again when host content arrived without it. The host
+ * drops scene requests made while a refresh changes the document; one request per snapshot.
+ */
+export function requestSelectedFocusTreeSceneIfMissing(): void {
+    const treeId = runtime.selectedFocusTreeId;
+    if (!treeId
+        || runtime.focusTrees.some(tree => tree.id === treeId)
+        || !runtime.focusTreeCatalog.some(tree => tree.id === treeId)
+        || lastSceneRequestKey === `${treeId}\u0000${runtime.snapshotVersion}\u0000${runtime.focusPositionDocumentVersion}`) {
+        return;
+    }
+    requestFocusTreeScene(treeId);
 }
 
 function installTreeSelector(): void {
@@ -299,9 +318,14 @@ function installAllowBranchSelector(): void {
     allowBranches.selectedValues$.subscribe(selection => {
         const selected = new Set(selection);
         const previous = new Set(oldSelection);
-        selection.filter(value => !previous.has(value)).forEach(value => setBranchVisibility(true, value));
+        const shown = selection.filter(value => !previous.has(value));
+        shown.forEach(value => setBranchVisibility(true, value));
         oldSelection.filter(value => !selected.has(value)).forEach(value => setBranchVisibility(false, value));
         oldSelection = selection;
+        if (shown.length > 0) {
+            // Shown branches can reveal focuses whose icons are not loaded yet.
+            scheduleFocusAssetDemandCheck(true);
+        }
     });
 }
 

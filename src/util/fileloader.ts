@@ -18,6 +18,8 @@ import { ZipArchive } from './zipArchive';
 import { Hoi4FsSchema } from '../constants';
 import { trimStart } from 'lodash';
 import { incrementPerfCounter, measureAsync, recordPerf } from './perf';
+import { FileReadScheduler } from './fileReadScheduler';
+import type { FileReadPriority, ScheduledFileRead } from './fileReadScheduler';
 
 const dlcZipPathsCache = new PromiseCache({
     factory: getDlcZipPaths,
@@ -30,11 +32,10 @@ const dlcPathsCache = new PromiseCache({
 });
 
 let dlcZipCache: PromiseCache<ZipArchive> | null = null;
-const readFileFromModOrHOI4InFlight = new Map<string, Promise<[Buffer, vscode.Uri]>>();
+const readFileFromModOrHOI4InFlight = new Map<string, ScheduledFileRead<[Buffer, vscode.Uri]>>();
 const listFilesFromModOrHOI4InFlight = new Map<string, Promise<string[]>>();
 const fileReadConcurrencyLimit = 12;
-let activeFileReadCount = 0;
-const queuedFileReads: Array<() => void> = [];
+const fileReadScheduler = new FileReadScheduler(fileReadConcurrencyLimit);
 const selectedModRootCacheFreshnessMs = 5 * 1000;
 const openedDocumentIds = new WeakMap<vscode.TextDocument, number>();
 let nextOpenedDocumentId = 0;
@@ -70,7 +71,20 @@ interface FileLoaderOptions {
     mod?: boolean;
     hoi4?: boolean;
     dlc?: boolean;
+    priority?: FileReadPriority;
 }
+
+type FileReadTags = {
+    path: string;
+    mod?: boolean;
+    hoi4?: boolean;
+    dlc?: boolean;
+    priority: FileReadPriority;
+    waitMs?: number;
+    resolveMs?: number;
+    contentMs?: number;
+    activeMs?: number;
+};
 
 interface ListFilesOptions extends FileLoaderOptions {
     recursively?: boolean;
@@ -275,7 +289,23 @@ export async function expiryToken(realPath: vscode.Uri | undefined): Promise<str
     return realPath.toString() + '@' + await getLastModifiedAsync(realPath);
 }
 
-export async function readFileFromPath(realPath: vscode.Uri, relativePath?: string): Promise<[Buffer, vscode.Uri]> {
+export function readFileFromPath(
+    realPath: vscode.Uri,
+    relativePath?: string,
+    options?: Pick<FileLoaderOptions, 'priority'>,
+): Promise<[Buffer, vscode.Uri]> {
+    const tags: FileReadTags = { path: relativePath ?? realPath.toString(), priority: options?.priority ?? 'interactive' };
+    return scheduleFileRead(tags, tags.priority, async () => {
+        const startedAt = Date.now();
+        try {
+            return await readFileFromPathUnscheduled(realPath, relativePath);
+        } finally {
+            tags.contentMs = Date.now() - startedAt;
+        }
+    }).promise;
+}
+
+async function readFileFromPathUnscheduled(realPath: vscode.Uri, relativePath?: string): Promise<[Buffer, vscode.Uri]> {
     if (isHoiFileOpened(realPath)) {
         const realPathWithoutOpenMark = getHoiOpenedFileOriginalUri(realPath);
         const document = getDocumentByUri(realPathWithoutOpenMark);
@@ -310,29 +340,47 @@ export async function readFileFromModOrHOI4(
     const inFlightKey = createFileLoaderCacheKey(relativePath, options);
     const inFlight = readFileFromModOrHOI4InFlight.get(inFlightKey);
     if (inFlight) {
+        if (options?.priority !== 'background' && inFlight.promote()) {
+            incrementPerfCounter('fileloader.read.promoted', { priority: 'interactive' });
+        }
         incrementPerfCounter('fileloader.read.inflightHit', {
             path: relativePath,
             mod: options?.mod,
             hoi4: options?.hoi4,
             dlc: options?.dlc,
         });
-        return inFlight;
+        return inFlight.promise;
     }
 
-    const tags = { path: relativePath, mod: options?.mod, hoi4: options?.hoi4, dlc: options?.dlc };
-    const promise = measureAsync('fileloader.read', tags, () => runFileReadWithConcurrency(tags, async () => {
-        const realPath = await getFilePathFromModOrHOI4(relativePath, options);
+    const tags: FileReadTags = {
+        path: relativePath, mod: options?.mod, hoi4: options?.hoi4, dlc: options?.dlc,
+        priority: options?.priority ?? 'interactive',
+    };
+    const scheduled = scheduleFileRead(tags, tags.priority, async () => {
+        const resolveStartedAt = Date.now();
+        let realPath: vscode.Uri | undefined;
+        try {
+            realPath = await getFilePathFromModOrHOI4(relativePath, options);
+        } finally {
+            tags.resolveMs = Date.now() - resolveStartedAt;
+        }
 
         if (!realPath) {
             throw new UserError("Can't find file " + relativePath);
         }
 
-        return await readFileFromPath(realPath, relativePath);
-    })).finally(() => {
+        const contentStartedAt = Date.now();
+        try {
+            return await readFileFromPathUnscheduled(realPath, relativePath);
+        } finally {
+            tags.contentMs = Date.now() - contentStartedAt;
+        }
+    });
+    scheduled.promise = scheduled.promise.finally(() => {
         readFileFromModOrHOI4InFlight.delete(inFlightKey);
     });
-    readFileFromModOrHOI4InFlight.set(inFlightKey, promise);
-    return promise;
+    readFileFromModOrHOI4InFlight.set(inFlightKey, scheduled);
+    return scheduled.promise;
 }
 
 export async function readFileFromModOrHOI4AsJson<T>(relativePath: string, schema: SchemaDef<T>): Promise<HOIPartial<T>> {
@@ -481,33 +529,35 @@ function createFileSourceFingerprint(): unknown {
     };
 }
 
-async function runFileReadWithConcurrency<T>(
-    tags: { path: string; mod?: boolean; hoi4?: boolean; dlc?: boolean },
+function scheduleFileRead<T>(
+    tags: FileReadTags,
+    priority: FileReadPriority,
     task: () => Promise<T>,
-): Promise<T> {
-    const waitStart = Date.now();
-    if (activeFileReadCount >= fileReadConcurrencyLimit) {
-        incrementPerfCounter('fileloader.read.queued', tags);
-        await new Promise<void>(resolve => queuedFileReads.push(resolve));
-    } else {
-        activeFileReadCount += 1;
-    }
-
-    const waitDurationMs = Date.now() - waitStart;
-    if (waitDurationMs > 0) {
-        recordPerf('fileloader.read.wait', waitDurationMs, tags);
-    }
-
-    try {
-        return await task();
-    } finally {
-        const nextQueuedRead = queuedFileReads.shift();
-        if (nextQueuedRead) {
-            nextQueuedRead();
-        } else {
-            activeFileReadCount -= 1;
+): ScheduledFileRead<T> {
+    const startedAt = Date.now();
+    const scheduled = fileReadScheduler.schedule(async (effectivePriority, waitDurationMs) => {
+        tags.priority = effectivePriority;
+        tags.waitMs = waitDurationMs;
+        const activeStartedAt = Date.now();
+        let ok = false;
+        let readError: unknown;
+        try {
+            const result = await task();
+            ok = true;
+            return result;
+        } catch (error) {
+            readError = error;
+            throw error;
+        } finally {
+            tags.activeMs = Date.now() - activeStartedAt;
+            // Keep stage attribution without five records and nested measurement promises per read.
+            recordPerf('fileloader.read', Date.now() - startedAt, tags, ok, readError);
         }
+    }, priority);
+    if (scheduled.queued) {
+        incrementPerfCounter('fileloader.read.queued', { priority });
     }
+    return scheduled;
 }
 
 async function getDlcZipPaths(installPath: string): Promise<vscode.Uri[] | null> {

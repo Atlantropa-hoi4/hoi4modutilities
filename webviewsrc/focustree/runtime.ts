@@ -7,6 +7,7 @@ import { LatestOnlyBuildGuard } from '../../src/previewdef/focustree/buildguard'
 import { toFocusTreeCatalogViews } from '../../src/previewdef/focustree/viewmodel';
 import { getState } from '../util/common';
 import type { DivDropdown } from '../util/dropdown';
+import { FocusAssetMaterializationState } from './assetdemand';
 import { createFocusTreeWebviewInitialState } from './state';
 
 declare global {
@@ -80,6 +81,8 @@ export interface FocusTreeWebviewRuntime {
     gridLeftPadding: number;
     gridTopPadding: number;
     pendingPlaceholderFocusIdsByTree: Record<string, Set<string>>;
+    /** Focuses whose icon assets are loaded; the others show placeholders until requested. */
+    readonly assetMaterialization: FocusAssetMaterializationState;
     dropdowns: {
         searchFilters?: DivDropdown;
         allowBranches?: DivDropdown;
@@ -144,6 +147,7 @@ export const runtime: FocusTreeWebviewRuntime = {
     gridLeftPadding: 0,
     gridTopPadding: 0,
     pendingPlaceholderFocusIdsByTree: {},
+    assetMaterialization: new FocusAssetMaterializationState(),
     dropdowns: {},
     suppressConditionSelectionChange: false,
     suppressConditionPresetSelectionChange: false,

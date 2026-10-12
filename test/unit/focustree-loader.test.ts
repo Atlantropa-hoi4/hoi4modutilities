@@ -40,7 +40,10 @@ const gfxIndexLookups: string[] = [];
 const focusIconFallbackLimits: Array<number | undefined> = [];
 const blockingSharedFocusIndexLookups: string[] = [];
 const readySharedFocusIndexLookups: string[] = [];
+/** Every shared focus index layer is ready. */
 let sharedFocusIndexReady = true;
+/** Keys a complete workspace layer resolves while other layers may still be building. */
+const workspaceSharedFocusIds = new Set<string>();
 let iconResolutionBarrier: { started: () => void; released: Promise<void> } | undefined;
 
 nodeModule._load = function(request: string, parent: NodeModule | undefined, isMain: boolean) {
@@ -99,6 +102,9 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
             },
             tryFindFileByFocusKey: (focusId: string) => {
                 readySharedFocusIndexLookups.push(focusId);
+                if (workspaceSharedFocusIds.has(focusId)) {
+                    return sharedFocusFile;
+                }
                 return sharedFocusIndexReady && focusId === 'SHARED_EXT' ? sharedFocusFile : undefined;
             },
             isSharedFocusIndexReady: () => sharedFocusIndexReady,
@@ -185,6 +191,7 @@ describe('focustree loader', () => {
         blockingSharedFocusIndexLookups.length = 0;
         readySharedFocusIndexLookups.length = 0;
         sharedFocusIndexReady = true;
+        workspaceSharedFocusIds.clear();
         iconResolutionBarrier = undefined;
     });
 
@@ -207,9 +214,25 @@ describe('focustree loader', () => {
         assert.strictEqual(result.result.deferredAssetLoad, true);
         assert.ok(!result.dependencies.includes(sharedFocusFile));
         assert.deepStrictEqual(blockingSharedFocusIndexLookups, []);
-        assert.deepStrictEqual(readySharedFocusIndexLookups, []);
+        assert.deepStrictEqual(readySharedFocusIndexLookups, ['SHARED_EXT'], 'only the non-blocking lookup runs');
         assert.ok(result.result.focusTrees.every(tree =>
             tree.warnings.every(warning => warning.code !== 'shared-focus-target-missing')));
+    });
+
+    it('uses complete workspace shared focus hits in the deferred first render while global layers build', async () => {
+        sharedFocusIndexReady = false;
+        workspaceSharedFocusIds.add('SHARED_EXT');
+        const content = fileContents[mainFocusFile].replace('shared_focus = SHARED_EXT', 'shared_focus = SHARED_EXT\n shared_focus = GLOBAL_PENDING');
+        const loader = new FocusTreeLoader(mainFocusFile).createSnapshotLoader(async () => content, 'deferred', 'workspace-hit');
+        const result = await loader.load(new LoaderSession(true));
+
+        const mainTree = result.result.focusTrees.find(tree => tree.id === 'MAIN');
+        assert.ok(mainTree?.focuses.SHARED_EXT, 'the workspace hit is part of the structural scene');
+        assert.ok(result.dependencies.includes(sharedFocusFile), 'its source file is watched');
+        assert.deepStrictEqual(blockingSharedFocusIndexLookups, []);
+        assert.deepStrictEqual(readySharedFocusIndexLookups, ['SHARED_EXT', 'GLOBAL_PENDING']);
+        assert.ok(result.result.focusTrees.every(tree => tree.warnings.every(warning =>
+            warning.code !== 'shared-focus-target-missing')), 'a key global layers may still provide is not reported missing');
     });
 
     it('keeps full asset loading for full shared focus dependency hydration', async () => {
@@ -283,6 +306,35 @@ describe('focustree loader', () => {
         }
         const edited = await adapter.buildBaseState(content + '\n# edit', 11, {}, 'full', undefined, { treeId: 'MAIN' });
         assert.notStrictEqual(edited, first);
+        adapter.dispose();
+    });
+
+    it('re-renders a ready localisation index from the hydrated state without loading it again', async () => {
+        const adapter = new FocusTreeLoaderAdapter({
+            focusTreeLoader: new FocusTreeLoader(mainFocusFile),
+            updateDependencies: () => undefined,
+        });
+        const content = fileContents[mainFocusFile];
+        const hydrated = await adapter.buildBaseState(content, 30, {}, 'full', undefined, { treeId: 'MAIN' });
+        hydrated.focusDisplayNameById = { MAIN_FOCUS: 'unlocalised id' };
+        const resolutionCount = focusIconResolutionCalls.length;
+
+        // After hydration, refreshes name the loaded trees explicitly; that is the same scope.
+        assert.strictEqual(await adapter.buildBaseState(content, 30, {}, 'full', undefined, { treeId: 'MAIN', treeIds: ['MAIN'] }), hydrated);
+        adapter.invalidate(FocusTreeInvalidation.Localisation, { reuseLoadedStates: true });
+        const localised = await adapter.buildBaseState(content, 30, {}, 'full', undefined, { treeId: 'MAIN', treeIds: ['MAIN'] });
+        assert.strictEqual(localised, hydrated, 'trees, icons, and watchers do not depend on localisation');
+        assert.strictEqual(localised.focusDisplayNameById, undefined, 'display names are resolved again when rendering');
+        assert.strictEqual(focusIconResolutionCalls.length, resolutionCount, 'the loader does not run again');
+
+        // An edited localisation file may still be updating the index, so it reloads as before.
+        adapter.invalidate(FocusTreeInvalidation.Localisation);
+        const reloaded = await adapter.buildBaseState(content, 30, {}, 'full', undefined, { treeId: 'MAIN' });
+        assert.notStrictEqual(reloaded, hydrated);
+        adapter.invalidate(FocusTreeInvalidation.Assets, { reuseLoadedStates: true });
+        assert.notStrictEqual(await adapter.buildBaseState(content, 30, {}, 'full', undefined, { treeId: 'MAIN' }), reloaded,
+            'asset changes always reload');
+        assert.ok(focusIconResolutionCalls.length > resolutionCount);
         adapter.dispose();
     });
 

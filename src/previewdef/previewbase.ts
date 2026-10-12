@@ -115,8 +115,16 @@ export abstract class PreviewBase {
         await this.contentRenderQueue;
     }
 
-    public getDocumentChangeDebounceMs(): number {
+    public getDocumentChangeDebounceMs(_reason?: vscode.TextDocumentChangeReason): number {
         return 250;
+    }
+
+    public shouldSerializeRefreshes(): boolean {
+        return false;
+    }
+
+    public cancelPendingRefresh(): void {
+        this.contentRenderGeneration += 1;
     }
 
     public getDependencyChangeDebounceMs(
@@ -124,6 +132,13 @@ export abstract class PreviewBase {
         _changeKind: 'change' | 'create' | 'delete',
     ): number {
         return 1000;
+    }
+
+    public getDependencyDocumentChangeDebounceMs(
+        uri: vscode.Uri,
+        _reason?: vscode.TextDocumentChangeReason,
+    ): number {
+        return this.getDependencyChangeDebounceMs(uri, 'change');
     }
 
     public getDebugState(): unknown {

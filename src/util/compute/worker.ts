@@ -4,7 +4,8 @@ import { performance } from 'node:perf_hooks';
 import { PNG } from 'pngjs';
 import { UserError } from '../common';
 import { Surface } from '../image/dds/surface';
-import { ComputeReply, ComputeRequest, ComputeResult, isComputeInputSupported } from './protocol';
+import { isComputeInputSupported } from './protocol';
+import type { AnyComputeResult, ComputeReply, ComputeRequest, ComputeResult } from './protocol';
 import { ComputeInputRejectedError, RustWasmCompute } from './wasm';
 import { rawRgba8Input } from './rawformat';
 
@@ -23,19 +24,21 @@ port.on('message', (request: ComputeRequest) => {
         let compute: RustWasmCompute | undefined;
         try {
             compute = await runtime;
+            const computeStartedAt = performance.now();
             const result = processRequest(compute, request);
-            const reply: ComputeReply = { id: request.id, result, durationMs: performance.now() - startedAt };
-            const transfers = [result.pixels.buffer as ArrayBuffer, result.colors.buffer as ArrayBuffer];
-            if (result.pngBytes) {
-                transfers.push(result.pngBytes.buffer as ArrayBuffer);
-            }
-            if (result.provinceEdges) {
-                transfers.push(result.provinceEdges.buffer as ArrayBuffer);
+            const reply: ComputeReply<AnyComputeResult> = {
+                id: request.id, result, durationMs: performance.now() - startedAt, computeMs: performance.now() - computeStartedAt,
+            };
+            const transfers: ArrayBuffer[] = [];
+            if (result.kind !== 'script-index') {
+                transfers.push(result.pixels.buffer as ArrayBuffer, result.colors.buffer as ArrayBuffer);
+                if (result.pngBytes) { transfers.push(result.pngBytes.buffer as ArrayBuffer); }
+                if (result.provinceEdges) { transfers.push(result.provinceEdges.buffer as ArrayBuffer); }
             }
             port.postMessage(reply, transfers);
         } catch (error) {
             const rejected = error instanceof ComputeInputRejectedError;
-            const reply: ComputeReply = {
+            const reply: ComputeReply<AnyComputeResult> = {
                 id: request.id, error: error instanceof Error ? error.message : String(error),
                 errorKind: rejected ? 'rejected' : compute && request.kind === 'dds' ? 'input' : 'infrastructure',
                 userError: error instanceof UserError, retireWorker: rejected ? compute?.shouldRetireWorker : undefined,
@@ -46,7 +49,7 @@ port.on('message', (request: ComputeRequest) => {
     });
 });
 
-function processRequest(compute: RustWasmCompute, request: ComputeRequest): ComputeResult {
+function processRequest(compute: RustWasmCompute, request: ComputeRequest): AnyComputeResult {
     if (request.kind !== 'dds') {
         return { ...compute.compute(request), engine: 'rust-wasm' };
     }

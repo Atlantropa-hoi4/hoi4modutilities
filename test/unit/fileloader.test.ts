@@ -1,6 +1,8 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import Module = require('module');
+import type { Uri } from 'vscode';
+import type * as Perf from '../../src/util/perf';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -13,6 +15,8 @@ const mockFiles = new Set<string>();
 const mockDirectories = new Set<string>();
 const mockReadContents = new Map<string, string>();
 const mockReadCounts = new Map<string, number>();
+const mockReadGates = new Map<string, Promise<void>>();
+const mockReadFailures = new Set<string>();
 const mockDirectoryReadCounts = new Map<string, number>();
 const mockModifiedTimes = new Map<string, number>();
 const mockDirectoryEntries = new Map<string, Array<[string, number]>>();
@@ -85,6 +89,13 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                         const normalizedPath = normalizeMockPath(uri.fsPath);
                         const content = mockReadContents.get(normalizedPath) ?? uri.fsPath;
                         mockReadCounts.set(normalizedPath, (mockReadCounts.get(normalizedPath) ?? 0) + 1);
+                        const gate = mockReadGates.get(normalizedPath);
+                        if (gate) {
+                            await gate;
+                        }
+                        if (mockReadFailures.has(normalizedPath)) {
+                            throw new Error(`read failed ${uri.fsPath}`);
+                        }
                         if (mockReadDelayMs > 0) {
                             await new Promise(resolve => setTimeout(resolve, mockReadDelayMs));
                         }
@@ -127,6 +138,7 @@ const {
 const {
     refreshSelectedModSource,
 } = require('../../src/util/modfile') as typeof import('../../src/util/modfile');
+const { getPerfSnapshot, resetPerfMetrics } = require('../../src/util/perf') as typeof Perf;
 nodeModule._load = originalLoad;
 for (const moduleId of Object.keys(require.cache)) {
     if (!moduleCacheBeforeMock.has(moduleId) && moduleId.includes(`${path.sep}src${path.sep}`)) {
@@ -142,6 +154,8 @@ describe('fileloader mod root helpers', () => {
         mockDirectories.clear();
         mockReadContents.clear();
         mockReadCounts.clear();
+        mockReadGates.clear();
+        mockReadFailures.clear();
         mockDirectoryReadCounts.clear();
         mockModifiedTimes.clear();
         mockDirectoryEntries.clear();
@@ -151,6 +165,7 @@ describe('fileloader mod root helpers', () => {
         mockConfigurationLoadDlcContents = false;
         mockConfigurationInstallPath = '';
         clearDlcZipCache();
+        resetPerfMetrics();
     });
 
     it('keeps open-document expiry stable until an unsaved edit changes its version', async () => {
@@ -283,6 +298,9 @@ describe('fileloader mod root helpers', () => {
         assert.strictEqual(resolved[0].toString(), 'dependency-icon');
         assert.strictEqual(resolved[1].fsPath, path.join(dependencyModRoot, relativePath));
         assert.deepStrictEqual(listed, ['dependency-colors.gfx']);
+        const backgroundResolved = await readFileFromModOrHOI4(relativePath, { hoi4: false, priority: 'background' });
+        assert.strictEqual(backgroundResolved[0].toString(), resolved[0].toString());
+        assert.strictEqual(backgroundResolved[1].toString(), resolved[1].toString());
     });
 
     it('keeps selected mod files ahead of dependency mod files', async () => {
@@ -321,6 +339,9 @@ describe('fileloader mod root helpers', () => {
 
         assert.strictEqual(resolved[0].toString(), 'selected');
         assert.strictEqual(resolved[1].fsPath, selectedFile);
+        const backgroundResolved = await readFileFromModOrHOI4(relativePath, { hoi4: false, priority: 'background' });
+        assert.strictEqual(backgroundResolved[0].toString(), 'selected');
+        assert.strictEqual(backgroundResolved[1].fsPath, selectedFile);
     });
 
     it('treats replace_path entries as covering their descendants', () => {
@@ -347,6 +368,18 @@ describe('fileloader mod root helpers', () => {
 
         mockWorkspaceFolders.push({ uri: createMockUri('C:\\workspace-new') });
         assert.notStrictEqual(createFileLoaderCacheKey('events/test.txt', { mod: true, hoi4: true, dlc: true }), initial);
+    });
+
+    it('keeps scheduling priority out of source and resolution identities', () => {
+        const options = { mod: true, hoi4: false, dlc: false };
+        assert.strictEqual(
+            createFileLoaderCacheKey('common/example.txt', { ...options, priority: 'background' }),
+            createFileLoaderCacheKey('common/example.txt', { ...options, priority: 'interactive' }),
+        );
+        assert.strictEqual(
+            createFileLoaderCacheKey('common/example.txt', options),
+            createFileLoaderCacheKey('common/example.txt', { ...options, priority: 'background' }),
+        );
     });
 
     it('includes the selected-mod source generation in loader and root cache keys', () => {
@@ -442,6 +475,12 @@ describe('fileloader mod root helpers', () => {
 
         const dlcOnly = await readFileFromModOrHOI4(relativePath, { mod: false, hoi4: false });
         assert.strictEqual(dlcOnly[0].toString(), 'dlc');
+        const backgroundResolved = await readFileFromModOrHOI4(relativePath, { mod: false, priority: 'background' });
+        const backgroundBase = await readFileFromModOrHOI4(relativePath, { mod: false, dlc: false, priority: 'background' });
+        assert.strictEqual(backgroundResolved[0].toString(), 'dlc');
+        assert.strictEqual(backgroundResolved[1].fsPath, dlcFile);
+        assert.strictEqual(backgroundBase[0].toString(), 'base');
+        assert.strictEqual(backgroundBase[1].fsPath, baseFile);
     });
 
     it('lists DLC files before base files and isolates dlc:false lists', async () => {
@@ -574,6 +613,156 @@ describe('fileloader mod root helpers', () => {
         assert.ok(result[0].toString().endsWith('after-queue.txt'));
     });
 
+    it('shares direct-read slots and promotes a joined background read before pending index work', async () => {
+        const root = path.join('C:', 'workspace-priority-read');
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        const gates = Array.from({ length: 12 }, () => createReadGate());
+        const blockers = gates.map((gate, index) => {
+            const uri = createMockUri(path.join(root, `blocker-${index}.txt`));
+            mockFiles.add(normalizeMockPath(uri.fsPath));
+            mockReadGates.set(normalizeMockPath(uri.fsPath), gate.promise);
+            // The filesystem fixture implements the URI members consumed by this adapter.
+            const readUri = uri as unknown as Uri;
+            return readFileFromPath(readUri, undefined, { priority: 'background' });
+        });
+        const target = 'common/current-preview.txt';
+        const preview = 'common/new-preview.txt';
+        const backgroundPaths = Array.from({ length: 5 }, (_, index) => `common/index-${index}.txt`);
+        for (const relativePath of [target, preview, ...backgroundPaths]) {
+            mockFiles.add(normalizeMockPath(path.join(root, relativePath)));
+        }
+        const targetGate = createReadGate();
+        const targetPath = normalizeMockPath(path.join(root, target));
+        mockReadGates.set(targetPath, targetGate.promise);
+        const background = backgroundPaths.map(relativePath =>
+            readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false, priority: 'background' }),
+        );
+        const targetRead = readFileFromModOrHOI4(target, { hoi4: false, dlc: false, priority: 'background' });
+        const joined = readFileFromModOrHOI4(target, { hoi4: false, dlc: false });
+        const previewRead = readFileFromModOrHOI4(preview, { hoi4: false, dlc: false });
+        const all = [...blockers, ...background, targetRead, joined, previewRead];
+        try {
+            await waitForReadCondition(() => mockReadCounts.size === 12);
+            assert.strictEqual(mockReadCounts.get(targetPath), undefined);
+            const queuedCounters = getPerfSnapshot().counters.filter(counter => counter.label === 'fileloader.read.queued');
+            assert.deepStrictEqual(queuedCounters.map(counter => ({ tags: counter.tags, count: counter.count })), [
+                { tags: { priority: 'background' }, count: 6 },
+                { tags: { priority: 'interactive' }, count: 1 },
+            ]);
+            const promoted = getPerfSnapshot().counters.find(counter => counter.label === 'fileloader.read.promoted');
+            assert.strictEqual(promoted?.count, 1);
+            gates[0].resolve();
+            await waitForReadCondition(() => mockReadCounts.get(targetPath) === 1);
+            assert.strictEqual(mockReadCounts.size, 13);
+            assert.strictEqual(mockReadCounts.get(normalizeMockPath(path.join(root, preview))), undefined);
+            targetGate.resolve();
+            await waitForReadCondition(() => mockReadCounts.has(normalizeMockPath(path.join(root, preview))));
+        } finally {
+            for (const gate of gates) {
+                gate.resolve();
+            }
+            targetGate.resolve();
+            await Promise.all(all);
+        }
+        const targetEntry = getPerfSnapshot().entries.find(entry => entry.label === 'fileloader.read' && entry.tags.path === target);
+        assert.strictEqual(targetEntry?.tags.priority, 'interactive');
+        assert.strictEqual(typeof targetEntry?.tags.waitMs, 'number');
+        const [targetResult, joinedResult] = await Promise.all([targetRead, joined]);
+        assert.strictEqual(targetResult, joinedResult);
+        assert.strictEqual(mockReadCounts.get(targetPath), 1);
+        assert.deepStrictEqual(
+            [...mockReadCounts.keys()].slice(12, 14),
+            [targetPath, normalizeMockPath(path.join(root, preview))],
+        );
+        for (const relativePath of backgroundPaths) {
+            assert.strictEqual(mockReadCounts.get(normalizeMockPath(path.join(root, relativePath))), 1);
+        }
+    });
+
+    it('reads the latest unsaved text when a queued background read is promoted', async () => {
+        const root = path.join('C:', 'workspace-priority-open');
+        const uri = createMockUri(path.join(root, 'common/opened.txt'));
+        let text = 'old unsaved contents';
+        const document = { uri, version: 1, getText: () => text };
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockFiles.add(normalizeMockPath(uri.fsPath));
+        mockTextDocuments.push(document);
+        const gate = createReadGate();
+        const blockers = Array.from({ length: 12 }, (_, index) => {
+            const blockerUri = createMockUri(path.join(root, `blocker-${index}.txt`));
+            mockReadGates.set(normalizeMockPath(blockerUri.fsPath), gate.promise);
+            // The filesystem fixture implements the URI members consumed by this adapter.
+            const readUri = blockerUri as unknown as Uri;
+            return readFileFromPath(readUri, undefined, { priority: 'background' });
+        });
+        const background = readFileFromModOrHOI4('common/opened.txt', { hoi4: false, dlc: false, priority: 'background' });
+        text = 'new unsaved contents';
+        document.version++;
+        const joined = readFileFromModOrHOI4('common/opened.txt', { hoi4: false, dlc: false });
+        gate.resolve();
+        const results = await Promise.all([...blockers, background, joined]);
+        assert.strictEqual(results[12], results[13]);
+        assert.strictEqual(results[12][0].toString(), text);
+        assert.strictEqual(results[12][1].fragment, ':opened');
+        assert.strictEqual(mockReadCounts.has(normalizeMockPath(uri.fsPath)), false);
+    });
+
+    it('cleans failed coalesced reads so a later foreground read can retry', async () => {
+        const root = path.join('C:', 'workspace-priority-failure');
+        const relativePath = 'common/failing.txt';
+        const normalizedPath = normalizeMockPath(path.join(root, relativePath));
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockFiles.add(normalizedPath);
+        mockReadFailures.add(normalizedPath);
+        const failed = readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false, priority: 'background' });
+        const joined = readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false });
+        await Promise.all([
+            assert.rejects(failed, /read failed/),
+            assert.rejects(joined, /read failed/),
+        ]);
+        assert.strictEqual(mockReadCounts.get(normalizedPath), 1);
+        mockReadFailures.clear();
+        const [buffer, uri] = await readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false });
+        assert.strictEqual(buffer.toString(), path.join(root, relativePath));
+        assert.strictEqual(uri.fsPath, path.join(root, relativePath));
+        assert.strictEqual(mockReadCounts.get(normalizedPath), 2);
+    });
+
+    it('attributes queue wait, resolution, content and active read stages locally', async () => {
+        const root = path.join('C:', 'workspace-read-perf');
+        const relativePath = 'common/measured.txt';
+        const normalizedPath = normalizeMockPath(path.join(root, relativePath));
+        mockWorkspaceFolders.push({ uri: createMockUri(root) });
+        mockFiles.add(normalizedPath);
+        await readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false, priority: 'background' });
+        const entries = getPerfSnapshot().entries.filter(value => value.label.startsWith('fileloader.read'));
+        assert.strictEqual(entries.length, 1);
+        const entry = entries[0];
+        assert.strictEqual(entry.label, 'fileloader.read');
+        assert.strictEqual(entry.tags.priority, 'background');
+        assert.strictEqual(entry.tags.path, relativePath);
+        assert.strictEqual(entry.ok, true);
+        for (const stage of ['waitMs', 'resolveMs', 'contentMs', 'activeMs']) {
+            const duration = entry.tags[stage];
+            assert.ok(typeof duration === 'number' && duration >= 0, `missing ${stage} attribution`);
+        }
+        resetPerfMetrics();
+        mockReadFailures.add(normalizedPath);
+        await assert.rejects(
+            readFileFromModOrHOI4(relativePath, { hoi4: false, dlc: false }),
+            /read failed/,
+        );
+        const failedEntries = getPerfSnapshot().entries.filter(value => value.label.startsWith('fileloader.read'));
+        assert.strictEqual(failedEntries.length, 1);
+        assert.strictEqual(failedEntries[0].label, 'fileloader.read');
+        assert.strictEqual(failedEntries[0].ok, false);
+        assert.strictEqual(failedEntries[0].tags.priority, 'interactive');
+        assert.match(failedEntries[0].error ?? '', /read failed/);
+        for (const stage of ['waitMs', 'resolveMs', 'contentMs', 'activeMs']) {
+            assert.strictEqual(typeof failedEntries[0].tags[stage], 'number');
+        }
+    });
+
     it('reuses selected mod root resolution across a file read burst', async () => {
         const modFile = path.join('C:', 'mods', 'burst.mod');
         const modRoot = path.join('C:', 'mods', 'burst-content');
@@ -672,12 +861,18 @@ describe('fileloader mod root helpers', () => {
             readFileFromModOrHOI4(relativePath),
             /Can't find file/,
         );
+        await assert.rejects(
+            readFileFromModOrHOI4(relativePath, { priority: 'background' }),
+            /Can't find file/,
+        );
 
         mockReadContents.set(normalizedModFile, `path = "${modRoot.replace(/\\/g, '/')}"`);
         refreshSelectedModSource();
 
         const resolved = await readFileFromModOrHOI4(relativePath);
         assert.strictEqual(resolved[1].fsPath, baseFile);
+        const backgroundResolved = await readFileFromModOrHOI4(relativePath, { priority: 'background' });
+        assert.strictEqual(backgroundResolved[1].fsPath, baseFile);
     });
 });
 
@@ -693,4 +888,17 @@ async function waitForCount(
         await new Promise(resolve => setTimeout(resolve, 0));
     }
     assert.fail(`Timed out waiting for ${key} read count ${expected}`);
+}
+
+function createReadGate(): { promise: Promise<void>; resolve(): void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>(resolvePromise => { resolve = resolvePromise; });
+    return { promise, resolve };
+}
+
+async function waitForReadCondition(condition: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 1000 && !condition(); attempt++) {
+        await Promise.resolve();
+    }
+    assert.strictEqual(condition(), true, 'read scheduler did not reach the expected state');
 }

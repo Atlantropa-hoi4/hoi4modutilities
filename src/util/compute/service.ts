@@ -3,7 +3,8 @@ import { Worker } from 'node:worker_threads';
 import { performance } from 'node:perf_hooks';
 import { incrementPerfCounter, recordPerf } from '../perf';
 import { UserError } from '../common';
-import { ComputeInput, ComputeReply, ComputeResult, isComputeInputSupported, maxComputeInputBytes, minimumComputePixels } from './protocol';
+import { isComputeInputSupported, maxComputeInputBytes, minimumComputePixels } from './protocol';
+import type { AnyComputeInput, AnyComputeResult, ComputeInput, ComputeReply, ComputeResult, ScriptIndexInput, ScriptIndexResult } from './protocol';
 
 export interface RustComputeOptions {
     workerPath: string;
@@ -15,11 +16,11 @@ export interface RustComputeOptions {
 
 interface Task {
     id: number;
-    input: ComputeInput;
+    input: AnyComputeInput;
     signal?: AbortSignal;
     queuedAt: number;
     startedAt?: number;
-    resolve(result: ComputeResult | undefined): void;
+    resolve(result: AnyComputeResult | undefined): void;
     reject(error: Error): void;
     abort(): void;
     timer?: NodeJS.Timeout;
@@ -38,7 +39,10 @@ export class RustComputeService {
 
     constructor(private readonly options: RustComputeOptions) {}
 
-    public run(input: ComputeInput, signal?: AbortSignal): Promise<ComputeResult | undefined> {
+    public run(input: ComputeInput, signal?: AbortSignal): Promise<ComputeResult | undefined>;
+    public run(input: ScriptIndexInput, signal?: AbortSignal): Promise<ScriptIndexResult | undefined>;
+    public run(input: AnyComputeInput, signal?: AbortSignal): Promise<AnyComputeResult | undefined>;
+    public run(input: AnyComputeInput, signal?: AbortSignal): Promise<AnyComputeResult | undefined> {
         if (signal?.aborted) {
             return Promise.reject(abortError());
         }
@@ -47,7 +51,7 @@ export class RustComputeService {
         }
         if (this.failed || process.env.HOI4MU_COMPUTE_BACKEND === 'typescript'
             || !isComputeInputSupported(input)
-            || (!(input.kind === 'dds' && input.offloadSmallImage) && input.width * input.height < (this.options.minimumPixels ?? minimumComputePixels))) {
+            || ('width' in input && !(input.kind === 'dds' && input.offloadSmallImage) && input.width * input.height < (this.options.minimumPixels ?? minimumComputePixels))) {
             incrementPerfCounter('rustcompute.fallback', { kind: input.kind, reason: this.failed ? 'unavailable' : 'policy' });
             return Promise.resolve(undefined);
         }
@@ -121,7 +125,7 @@ export class RustComputeService {
         }
         const worker = new Worker(this.options.workerPath, { workerData: { wasmPath: this.options.wasmPath } });
         this.worker = worker;
-        worker.on('message', (reply: ComputeReply) => {
+        worker.on('message', (reply: ComputeReply<AnyComputeResult>) => {
             if (worker !== this.worker) {
                 return;
             }
@@ -152,17 +156,26 @@ export class RustComputeService {
                 this.fail(new Error(reply.error ?? 'Missing Rust compute result.'));
                 return;
             }
+            if (('width' in task.input) === (reply.result.kind === 'script-index')) {
+                this.fail(new Error('Mismatched Rust compute result kind.'));
+                return;
+            }
             this.active = undefined;
             this.cleanup(task);
             recordPerf('rustcompute.compute', performance.now() - task.queuedAt, {
                 kind: task.input.kind, inputBytes: task.input.bytes.byteLength,
-                pixels: task.input.width * task.input.height, workerMs: reply.durationMs,
+                pixels: 'width' in task.input ? task.input.width * task.input.height : undefined, workerMs: reply.durationMs,
                 engine: reply.result.engine ?? 'rust-wasm',
                 queueMs: (task.startedAt ?? task.queuedAt) - task.queuedAt,
             });
+            if (reply.result.kind === 'script-index') {
+                recordPerf('index.parse.cpu', reply.computeMs ?? reply.durationMs, {
+                    kind: task.input.kind, engine: 'rust-wasm', inputBytes: task.input.bytes.byteLength, entryCount: reply.result.entries.length,
+                });
+            }
             task.resolve(reply.result);
             // WASM memory cannot shrink; release large high-water marks instead of retaining them.
-            if (reply.result.retireWorker || task.input.width * task.input.height * 4 >= 64 * 1024 * 1024) {
+            if (reply.result.retireWorker || ('width' in task.input && task.input.width * task.input.height * 4 >= 64 * 1024 * 1024)) {
                 this.stopWorker();
             }
             this.pump();
@@ -260,7 +273,9 @@ export function registerRustCompute(extensionPath: string): { dispose(): void } 
     };
 }
 
-export function tryRustCompute(input: ComputeInput, signal?: AbortSignal): Promise<ComputeResult | undefined> {
+export function tryRustCompute(input: ComputeInput, signal?: AbortSignal): Promise<ComputeResult | undefined>;
+export function tryRustCompute(input: ScriptIndexInput, signal?: AbortSignal): Promise<ScriptIndexResult | undefined>;
+export function tryRustCompute(input: AnyComputeInput, signal?: AbortSignal): Promise<AnyComputeResult | undefined> {
     if (signal?.aborted) {
         return Promise.reject(abortError());
     }

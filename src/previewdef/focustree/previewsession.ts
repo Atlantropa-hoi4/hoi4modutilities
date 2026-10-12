@@ -1,6 +1,18 @@
 import * as vscode from 'vscode';
-import { FocusTreeAssetStyleBatchHandler, FocusTreeRenderBaseState } from './contentbuilder';
-import type { FocusTreeRenderPreparation } from './renderpayloadpatch';
+import type {
+    FocusTreeAssetStyleBatchHandler,
+    FocusTreeAssetStylePatch,
+    FocusTreeAssetStylePatchOptions,
+    FocusTreeRenderBaseState,
+} from './contentbuilder';
+import {
+    getFocusTreeAssetMaterialization,
+    mergeFocusTreeStyleRules,
+    type FocusTreeRenderCache,
+    type FocusTreeRenderPreparation,
+} from './renderpayloadpatch';
+import { createEmptyFocusIconAssetResolution } from './focusicongfx';
+import type { Focus } from './schema';
 import { getDocumentByUri } from '../../util/vsccommon';
 import { FocusConditionPresetsByTree } from './conditionpresets';
 import { FocusTreeAssetLoadMode, FocusTreeAssetScope, FocusTreeLoader } from './loader';
@@ -28,13 +40,24 @@ import { UserError } from '../../util/common';
 import { isLocalisationIndexReady, whenLocalisationIndexReady } from '../../util/localisationIndex';
 import { focusTreeProtocolVersion, toFocusTreeCatalogViews } from './viewmodel';
 import { FocusTreeInvalidation } from './invalidation';
-import { getFocusTreeHostCommand } from './webviewupdate';
+import {
+    focusTreeAssetRequestLimits,
+    getFocusTreeHostCommand,
+    type FocusTreeAssetRequestMessage,
+    type FocusTreeSceneAssetsMessage,
+    type FocusTreeSceneAssetsStatus,
+} from './webviewupdate';
 
 export interface FocusTreeRefreshOptions {
     ignorePendingLocalEditDocumentVersion?: boolean;
     assetLoadMode?: FocusTreeAssetLoadMode;
     source?: FocusTreeRefreshSource;
     invalidation?: FocusTreeInvalidation;
+    /**
+     * The whole localisation index just became ready. Loaded states are re-rendered with it
+     * instead of loaded again; edited localisation files do not set this.
+     */
+    localisationIndexBecameReady?: boolean;
 }
 
 type FocusTreeRefreshSource = 'document' | 'dependency' | 'hydration' | 'localEdit' | 'initialize' | 'webviewReady';
@@ -54,7 +77,7 @@ export interface FocusTreePreviewSessionOptions {
 
 export interface FocusTreeSnapshotBuilderLike {
     dispose?(): void;
-    invalidate?(invalidation: FocusTreeInvalidation): void;
+    invalidate?(invalidation: FocusTreeInvalidation, options?: { reuseLoadedStates?: boolean }): void;
     setPriorityAssetKeys?(assetKeys: readonly string[]): void;
     renderShell(documentVersion: number): string;
     buildBaseState(document: vscode.TextDocument, assetLoadMode: 'full' | 'deferred', isCancelled?: () => boolean, assetScope?: FocusTreeAssetScope): Promise<FocusTreeRenderBaseState>;
@@ -64,8 +87,38 @@ export interface FocusTreeSnapshotBuilderLike {
         isCancelled?: () => boolean,
         onAssetStyleBatch?: FocusTreeAssetStyleBatchHandler,
         prepared?: FocusTreeRenderPreparation,
+        materializedFocusIds?: readonly string[],
+        /** Rules of the loaded scenes a merged scene joins; its placeholders never replace them. */
+        existingStyleRules?: ReadonlyMap<string, string>,
     ): Promise<FocusTreeSnapshot>;
+    /** Decodes icon assets of focuses that the webview reveals after the scene was sent. */
+    renderAssetPatch?(focuses: readonly Focus[], options: FocusTreeAssetStylePatchOptions): Promise<FocusTreeAssetStylePatch>;
 }
+
+/** Icon resolution of the loaded scenes for one document version, used by asset requests. */
+interface FocusTreeAssetContext {
+    documentVersion: number;
+    /** Trees whose icon names the merged resolution covers. */
+    treeIds: Set<string>;
+    focusById: Record<string, Focus>;
+    xGridSize: number;
+    yGridSize: number;
+    useNativeSize: boolean;
+    gfxFileByIconName: Record<string, string>;
+    unresolvedIconNames: Set<string>;
+}
+
+interface FocusTreeAssetRequest {
+    assetRequestId: number;
+    treeId: string;
+    snapshotVersion: number;
+    documentVersion: number;
+    visibleFocusIds: string[];
+    nearbyFocusIds: string[];
+}
+
+/** Visible focus ids accepted from one first-paint acknowledgement. */
+const maxAcknowledgedVisibleFocusIds = 512;
 
 export class FocusTreePreviewSession {
     private static readonly defaultDeferredHydrationDelayMs = 1_000;
@@ -86,9 +139,22 @@ export class FocusTreePreviewSession {
         snapshotVersion: number;
     } | undefined;
     private pendingLocalisationRefreshDocumentVersion: number | undefined;
+    /** Document whose localisation-ready refresh waits for in-flight hydration or refresh work. */
+    private localisationRefreshAfterRenderWork: number | undefined;
     private preferredTreeId: string | undefined;
     private sceneRevision = 0;
     private disposed = false;
+    /** On-screen focuses reported by the first paint; the next asset build decodes them first. */
+    private pendingVisibleFocusIds: string[] = [];
+    private firstScenePaintAcknowledged = false;
+    private assetContext: FocusTreeAssetContext | undefined;
+    /** Snapshot of the latest message that carried each materialized focus's asset rules. */
+    private readonly materializedAtSnapshot = new Map<string, number>();
+    private assetGeneration = 0;
+    private queuedAssetRequest: FocusTreeAssetRequest | undefined;
+    private assetWorkerRunning = false;
+    /** Refreshes, hydrations, and scene requests in progress; asset requests wait for them. */
+    private activeRenderWork = 0;
 
     constructor(options: FocusTreePreviewSessionOptions) {
         this.uri = options.uri;
@@ -119,12 +185,48 @@ export class FocusTreePreviewSession {
     }
 
     public getDebugState(): unknown {
+        const cache = this.runtimeState.lastRenderCache;
         return {
             latestDocumentVersion: this.latestDocument?.version,
             webviewReady: this.runtimeState.webviewReady,
             latestRefreshRequestId: this.runtimeState.latestRefreshRequestId,
+            assets: {
+                deferred: cache?.deferredAssetLoad,
+                materializedFocusCount: cache?.materializedFocusIds?.length,
+                pendingVisibleFocusCount: this.pendingVisibleFocusIds.length,
+                activeRenderWork: this.activeRenderWork,
+                assetRequestQueued: this.queuedAssetRequest !== undefined,
+                assetWorkerRunning: this.assetWorkerRunning,
+                contextDocumentVersion: this.assetContext?.documentVersion,
+            },
             traces: [...this.traceEvents],
         };
+    }
+
+    /**
+     * Invalidates in-flight refreshes, hydration, scene and asset work when a refresh is scheduled,
+     * including imported edits that keep the previewed document's version. Rendered caches and the
+     * materialized asset set stay, so the following refresh reuses them. When the latest version
+     * is a pending local edit, the scheduled refresh is skipped and its local-edit refresh is kept.
+     */
+    public cancelPendingRefresh(): void {
+        if (this.disposed) {
+            return;
+        }
+
+        const latestDocumentVersion = this.getLatestDocumentVersion();
+        if (latestDocumentVersion !== undefined
+            && this.runtimeState.pendingLocalEditDocumentVersions.has(latestDocumentVersion)) {
+            return;
+        }
+
+        beginFocusTreeRefresh(this.runtimeState);
+        this.cancelDeferredHydrationTimer();
+        // A cancelled hydration of this version must be schedulable again by the next refresh.
+        this.runtimeState.deferredHydrationDocumentVersion = undefined;
+        storePendingReadyBaseState(this.runtimeState, undefined);
+        storePendingReadyBaseStatePromise(this.runtimeState, undefined);
+        this.cancelAssetWork();
     }
 
     public dispose(): void {
@@ -156,10 +258,10 @@ export class FocusTreePreviewSession {
             htmlRefresh: 'shell-only',
             assetLoadMode: initialAssetLoadMode,
         });
-        void this.safeRefreshWithSnapshot(document, requestId, document.version, initialAssetLoadMode, {
+        void this.trackRenderWork(() => this.safeRefreshWithSnapshot(document, requestId, document.version, initialAssetLoadMode, {
             source: 'initialize',
             allowDeferredHydration: initialAssetLoadMode === 'deferred',
-        });
+        }));
     }
 
     public async refreshDocument(
@@ -178,7 +280,14 @@ export class FocusTreePreviewSession {
 
         const requestId = beginFocusTreeRefresh(this.runtimeState);
         const requestDocumentVersion = document.version;
-        this.snapshotBuilder.invalidate?.(options?.invalidation ?? FocusTreeInvalidation.All);
+        const invalidation = options?.invalidation ?? FocusTreeInvalidation.All;
+        this.snapshotBuilder.invalidate?.(invalidation, {
+            reuseLoadedStates: options?.localisationIndexBecameReady === true && invalidation === FocusTreeInvalidation.Localisation,
+        });
+        if ((invalidation & (FocusTreeInvalidation.Layout | FocusTreeInvalidation.Presentation | FocusTreeInvalidation.Assets)) !== 0) {
+            // Icon mappings or textures may have changed; asset requests wait for this refresh.
+            this.assetContext = undefined;
+        }
         const assetLoadMode = options?.assetLoadMode ?? this.resolveDefaultRefreshAssetLoadMode();
         this.trace('refreshDocument', {
             requestId,
@@ -188,10 +297,10 @@ export class FocusTreePreviewSession {
             source: options?.source ?? 'document',
             invalidation: options?.invalidation ?? FocusTreeInvalidation.All,
         });
-        await this.safeRefreshWithSnapshot(document, requestId, requestDocumentVersion, assetLoadMode, {
+        await this.trackRenderWork(() => this.safeRefreshWithSnapshot(document, requestId, requestDocumentVersion, assetLoadMode, {
             source: options?.source ?? 'document',
             allowDeferredHydration: assetLoadMode === 'deferred',
-        });
+        }));
     }
 
     public handleWebviewReady(selectedTreeId?: string): void {
@@ -215,7 +324,7 @@ export class FocusTreePreviewSession {
             return;
         }
 
-        void this.safeApplySnapshotUpdate(
+        void this.trackRenderWork(() => this.safeApplySnapshotUpdate(
             latestDocument,
             pendingBaseState,
             this.runtimeState.latestRefreshRequestId,
@@ -225,17 +334,32 @@ export class FocusTreePreviewSession {
                 source: 'webviewReady',
                 allowDeferredHydration: pendingBaseState.deferredAssetLoad,
             },
-        );
+        ));
     }
 
     public async handleSceneRequest(treeId: string): Promise<void> {
-        let cache = this.runtimeState.lastRenderCache;
-        let tree = cache?.focusTrees.find(candidate => candidate.id === treeId);
+        const cache = this.runtimeState.lastRenderCache;
+        const tree = cache?.focusTrees.find(candidate => candidate.id === treeId);
         const document = this.latestDocument;
         if (this.disposed || !cache || !tree || !document || document.version !== cache.focusPositionDocumentVersion) {
             return;
         }
 
+        await this.trackRenderWork(() => this.loadScene(treeId, cache, document));
+    }
+
+    /**
+     * Sends a catalog scene. A tree without prepared assets gets its templates and placeholder icons;
+     * the webview then requests the icons it shows, so a switch never decodes a whole tree.
+     */
+    private async loadScene(
+        treeId: string,
+        initialCache: FocusTreeRenderCache,
+        document: vscode.TextDocument,
+    ): Promise<void> {
+        let cache = initialCache;
+        let tree = cache.focusTrees.find(candidate => candidate.id === treeId);
+        let builtBaseState: FocusTreeRenderBaseState | undefined;
         this.preferredTreeId = treeId;
         this.cancelDeferredHydrationTimer();
         const requestId = beginFocusTreeRefresh(this.runtimeState);
@@ -246,23 +370,44 @@ export class FocusTreePreviewSession {
                     treeId, treeIds: cache.deferredAssetLoad ? cache.assetTreeIds : undefined,
                 });
                 if (isCancelled()) { return; }
-                const snapshot = await this.snapshotBuilder.createFullSnapshot(baseState, cache, isCancelled);
+                const previousRules = cache.dynamicStyleRules ?? new Map<string, string>();
+                // Focuses of different trees share icon rules by asset name. The new scene's
+                // placeholders only fill names without a rule, so merging it never turns an icon
+                // that a loaded scene materialized back into a placeholder.
+                const snapshot = await this.snapshotBuilder.createFullSnapshot(
+                    baseState,
+                    cache,
+                    isCancelled,
+                    undefined,
+                    undefined,
+                    this.resolveMaterializedFocusIds(cache),
+                    previousRules,
+                );
                 if (isCancelled()) { return; }
                 const previousTrees = new Map(cache.focusTrees.map(value => [value.id, value]));
-                const previousRules = cache.dynamicStyleRules ?? new Map<string, string>();
+                const nextRules = snapshot.cache.dynamicStyleRules ?? new Map<string, string>();
+                // Hydrated scenes already share template, GUI, and icon rules; append only new ones.
+                const styles = cache.deferredAssetLoad
+                    ? {
+                        dynamicStyleCss: `${cache.dynamicStyleCss}\n${snapshot.cache.dynamicStyleCss}`,
+                        dynamicStyleRules: new Map([...previousRules, ...nextRules]),
+                    }
+                    : mergeFocusTreeStyleRules(cache.dynamicStyleCss, previousRules, nextRules);
                 cache = {
                     ...snapshot.cache,
                     focusTrees: snapshot.cache.focusTrees.map(value =>
                         snapshot.cache.assetTreeIds?.includes(value.id) ? value : previousTrees.get(value.id) ?? value),
                     assetTreeIds: Array.from(new Set([...(cache.assetTreeIds ?? []), ...(snapshot.cache.assetTreeIds ?? [treeId])])),
+                    materializedFocusIds: mergeMaterializedFocusIds(cache, snapshot.cache),
                     focusTemplates: { ...cache.focusTemplates, ...snapshot.cache.focusTemplates },
                     focusTemplateKeyById: { ...cache.focusTemplateKeyById, ...snapshot.cache.focusTemplateKeyById },
                     focusRenderSignatures: { ...cache.focusRenderSignatures, ...snapshot.cache.focusRenderSignatures },
                     inlayRenderSignatures: { ...cache.inlayRenderSignatures, ...snapshot.cache.inlayRenderSignatures },
                     renderedInlayWindows: { ...cache.renderedInlayWindows, ...snapshot.cache.renderedInlayWindows },
-                    dynamicStyleCss: `${cache.dynamicStyleCss}\n${snapshot.cache.dynamicStyleCss}`,
-                    dynamicStyleRules: new Map([...previousRules, ...snapshot.cache.dynamicStyleRules]),
+                    dynamicStyleCss: styles.dynamicStyleCss,
+                    dynamicStyleRules: styles.dynamicStyleRules,
                 };
+                builtBaseState = baseState;
                 tree = cache.focusTrees.find(value => value.id === treeId);
                 this.trace('sceneHydrated', { treeId, documentVersion: document.version, renderMetrics: snapshot.metrics });
             } catch (error) {
@@ -277,6 +422,18 @@ export class FocusTreePreviewSession {
         const sceneTrees = loadedTreeIds ? cache.focusTrees.filter(value => loadedTreeIds.includes(value.id)) : [tree];
         const focusIds = new Set(sceneTrees.flatMap(value => Object.keys(value.focuses)));
         const inlayIds = new Set(sceneTrees.flatMap(value => value.inlayWindows.map(inlay => inlay.id)));
+        // Commit before posting, with no await in between: a scene request arriving while this
+        // scene is in transit builds on it instead of dropping a scene the webview has applied.
+        cache.selectedTreeId = treeId;
+        this.runtimeState.lastRenderCache = cache;
+        if (builtBaseState) {
+            this.captureAssetContext(builtBaseState, 'merge');
+        }
+        // The scene message replaces the webview's stylesheet with every materialized rule.
+        this.recordMaterializedSnapshot(cache, true);
+        if (!cache.deferredAssetLoad) {
+            this.pendingVisibleFocusIds = [];
+        }
         await this.webview.postMessage({
             command: 'focusTreeScene',
             protocolVersion: focusTreeProtocolVersion,
@@ -303,11 +460,8 @@ export class FocusTreePreviewSession {
             xGridSize: cache.xGridSize,
             yGridSize: cache.yGridSize,
             focusPositionActiveFile: cache.focusPositionActiveFile,
+            assetMaterialization: getFocusTreeAssetMaterialization(cache),
         });
-        if (!isCancelled()) {
-            cache.selectedTreeId = treeId;
-            this.runtimeState.lastRenderCache = cache;
-        }
     }
 
     public handleContentApplied(
@@ -317,11 +471,25 @@ export class FocusTreePreviewSession {
         visibleFocusIds: readonly string[] = [],
         priorityAssetKeys: readonly string[] = [],
     ): void {
+        if (this.disposed || stage !== 'firstScenePainted') {
+            return;
+        }
+
+        this.firstScenePaintAcknowledged = true;
+        if (documentVersion !== undefined && documentVersion === this.getLatestDocumentVersion()) {
+            // The first asset build decodes exactly these on-screen focuses first; an in-flight
+            // hydration picks them up when it renders its snapshot.
+            this.pendingVisibleFocusIds = Array.from(new Set(
+                (Array.isArray(visibleFocusIds) ? visibleFocusIds : [])
+                    .filter((focusId): focusId is string => typeof focusId === 'string' && focusId.length > 0),
+            )).slice(0, maxAcknowledgedVisibleFocusIds);
+        }
+
+        // A paint of an older structural snapshot of the same document still proves first paint.
         const pending = this.pendingDeferredHydration;
-        if (this.disposed
-            || stage !== 'firstScenePainted'
-            || !pending
-            || snapshotVersion !== pending.snapshotVersion
+        if (!pending
+            || snapshotVersion === undefined
+            || snapshotVersion > pending.snapshotVersion
             || documentVersion !== pending.documentVersion) {
             return;
         }
@@ -329,8 +497,8 @@ export class FocusTreePreviewSession {
         this.trace('deferredHydrationAcknowledged', {
             snapshotVersion,
             documentVersion,
-            visibleFocusIds,
-            priorityAssetKeys,
+            visibleFocusCount: this.pendingVisibleFocusIds.length,
+            priorityAssetKeyCount: priorityAssetKeys.length,
         });
         this.snapshotBuilder.setPriorityAssetKeys?.(priorityAssetKeys);
         this.consumePendingDeferredHydration();
@@ -548,6 +716,7 @@ export class FocusTreePreviewSession {
                 isCancelled,
                 onAssetStyleBatch,
                 patchPlan.prepared,
+                this.resolveMaterializedFocusIds(this.runtimeState.lastRenderCache),
             );
             snapshotBuildDurationMs = Date.now() - snapshotBuildStart;
             recordPerf('focustree.snapshotBuild', snapshotBuildDurationMs, { source: options.source, mode: assetLoadMode });
@@ -629,6 +798,9 @@ export class FocusTreePreviewSession {
                 }
             }
         }
+        if (patchPlan.kind === 'full' && !updateMessage.assetMaterialization) {
+            updateMessage.assetMaterialization = getFocusTreeAssetMaterialization(cache);
+        }
         const payloadBytes = isPerfTraceEnabled() ? getApproximateJsonByteLength(updateMessage) : 0;
         updateMessage.perf = {
             source: options.source,
@@ -643,6 +815,7 @@ export class FocusTreePreviewSession {
             deferredAssetLoad: baseState.deferredAssetLoad,
             renderedFocusCount: snapshotMetrics?.renderedFocusCount,
             renderedInlayCount: snapshotMetrics?.renderedInlayCount,
+            materializedFocusCount: snapshotMetrics?.materializedFocusCount,
         };
         try {
             const postMessageStart = Date.now();
@@ -677,6 +850,14 @@ export class FocusTreePreviewSession {
         }
 
         this.runtimeState.lastRenderCache = cache;
+        if (!cache.deferredAssetLoad && !baseState.deferredAssetLoad) {
+            // The refresh covered every loaded scene, so its icon resolution replaces the context.
+            this.captureAssetContext(baseState, 'replace');
+            this.recordMaterializedSnapshot(cache, patchPlan.kind === 'full');
+            if (patchPlan.kind === 'full') {
+                this.pendingVisibleFocusIds = [];
+            }
+        }
         this.trace('applySnapshotUpdate', {
             requestId,
             requestDocumentVersion,
@@ -727,24 +908,18 @@ export class FocusTreePreviewSession {
             }
 
             this.pendingLocalisationRefreshDocumentVersion = undefined;
-            const latestDocument = this.getLatestDocument(this.uri) ?? this.latestDocument;
-            const latestDocumentVersion = latestDocument?.version;
-            if (!latestDocument || latestDocumentVersion !== requestDocumentVersion) {
-                this.trace('localisationReadyRefreshSkipped', {
+            if (this.activeRenderWork > 0 || this.pendingDeferredHydration) {
+                // Cancelling a hydration or refresh of this document would repeat its whole load.
+                // It resolves names with the ready index when it renders; refresh afterwards only
+                // if the scene it produced was still built without the index.
+                this.localisationRefreshAfterRenderWork = requestDocumentVersion;
+                this.trace('localisationReadyRefreshDeferred', {
                     documentVersion: requestDocumentVersion,
-                    latestDocumentVersion,
+                    activeRenderWork: this.activeRenderWork,
                 });
                 return;
             }
-
-            this.trace('localisationReadyRefresh', {
-                documentVersion: requestDocumentVersion,
-            });
-            void this.refreshDocument(latestDocument, {
-                assetLoadMode: 'full',
-                source: 'dependency',
-                invalidation: FocusTreeInvalidation.Localisation,
-            });
+            this.runLocalisationReadyRefresh(requestDocumentVersion);
         }, error => {
             this.pendingLocalisationRefreshDocumentVersion = undefined;
             this.trace('localisationReadyRefreshFailed', {
@@ -752,6 +927,57 @@ export class FocusTreePreviewSession {
                 message: error instanceof Error ? error.message : String(error),
             });
         });
+    }
+
+    /** Applies the ready localisation index to the shown scene unless it already uses it. */
+    private runLocalisationReadyRefresh(documentVersion: number): void {
+        if (this.disposed) {
+            return;
+        }
+
+        const latestDocument = this.getLatestDocument(this.uri) ?? this.latestDocument;
+        const latestDocumentVersion = latestDocument?.version;
+        if (!latestDocument || latestDocumentVersion !== documentVersion) {
+            this.trace('localisationReadyRefreshSkipped', {
+                documentVersion,
+                latestDocumentVersion,
+            });
+            return;
+        }
+
+        const cache = this.runtimeState.lastRenderCache;
+        if (cache
+            && !cache.deferredAssetLoad
+            && cache.focusPositionDocumentVersion === documentVersion
+            && cache.localisationIndexReady) {
+            this.trace('localisationReadyRefreshSkipped', {
+                documentVersion,
+                latestDocumentVersion,
+                alreadyLocalised: true,
+            });
+            return;
+        }
+
+        this.trace('localisationReadyRefresh', {
+            documentVersion,
+        });
+        void this.refreshDocument(latestDocument, {
+            assetLoadMode: 'full',
+            source: 'dependency',
+            invalidation: FocusTreeInvalidation.Localisation,
+            localisationIndexBecameReady: true,
+        });
+    }
+
+    /** Runs a localisation refresh that waited for in-flight render work of its document. */
+    private flushDeferredLocalisationRefresh(): void {
+        const documentVersion = this.localisationRefreshAfterRenderWork;
+        if (documentVersion === undefined || this.disposed || this.activeRenderWork > 0 || this.pendingDeferredHydration) {
+            return;
+        }
+
+        this.localisationRefreshAfterRenderWork = undefined;
+        this.runLocalisationReadyRefresh(documentVersion);
     }
 
     private scheduleDeferredHydration(
@@ -769,9 +995,12 @@ export class FocusTreePreviewSession {
             documentVersion: requestDocumentVersion,
             snapshotVersion: this.runtimeState.lastRenderCache?.snapshotVersion ?? 0,
         };
+        // The webview acknowledges only its first paint. A hydration rescheduled after a cancelled
+        // or superseded one must not wait for an acknowledgement that never comes again.
+        const delayMs = this.firstScenePaintAcknowledged ? 0 : this.deferredHydrationDelayMs;
         this.trace('deferHydration', {
             documentVersion: requestDocumentVersion,
-            delayMs: this.deferredHydrationDelayMs,
+            delayMs,
         });
 
         this.deferredHydrationTimer = setTimeout(() => {
@@ -791,7 +1020,7 @@ export class FocusTreePreviewSession {
             }
 
             void this.runDeferredHydration(pending.document, pending.documentVersion);
-        }, this.deferredHydrationDelayMs);
+        }, delayMs);
         this.deferredHydrationTimer.unref?.();
     }
 
@@ -803,6 +1032,14 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        await this.trackRenderWork(() => this.hydrateDeferredScene(document, requestDocumentVersion));
+    }
+
+    /** Decodes the selected scene's assets, starting with the on-screen focuses of the first paint. */
+    private async hydrateDeferredScene(
+        document: vscode.TextDocument,
+        requestDocumentVersion: number,
+    ): Promise<void> {
         const hydrationRequestId = beginFocusTreeRefresh(this.runtimeState);
         const pendingBaseStatePromise = consumePendingReadyBaseStatePromise(this.runtimeState, requestDocumentVersion);
         this.trace('scheduleDeferredHydration', {
@@ -857,8 +1094,380 @@ export class FocusTreePreviewSession {
     private resetSessionState(): void {
         this.cancelDeferredHydrationTimer();
         this.pendingLocalisationRefreshDocumentVersion = undefined;
+        this.localisationRefreshAfterRenderWork = undefined;
         this.sceneRevision = 0;
+        this.pendingVisibleFocusIds = [];
+        this.firstScenePaintAcknowledged = false;
+        this.assetContext = undefined;
+        this.materializedAtSnapshot.clear();
+        this.cancelAssetWork();
         resetFocusTreeRuntimeState(this.runtimeState);
+    }
+
+    private getLatestDocumentVersion(): number | undefined {
+        return this.getLatestDocument(this.uri)?.version ?? this.latestDocument?.version;
+    }
+
+    /** Runs a refresh, hydration, or scene request; queued asset requests run once none is active. */
+    private async trackRenderWork<T>(work: () => Promise<T>): Promise<T> {
+        this.activeRenderWork += 1;
+        try {
+            return await work();
+        } finally {
+            this.activeRenderWork -= 1;
+            if (this.activeRenderWork === 0) {
+                // A deferred localisation refresh starts first, so asset requests wait for it.
+                this.flushDeferredLocalisationRefresh();
+                this.drainAssetRequests();
+            }
+        }
+    }
+
+    /**
+     * Focuses whose icons the next full build decodes: the first paint's on-screen focuses first,
+     * then every focus the previous scene had materialized. The builder drops ids outside its trees.
+     */
+    private resolveMaterializedFocusIds(previousCache: FocusTreeRenderCache | undefined): string[] {
+        const carried = previousCache && !previousCache.deferredAssetLoad
+            ? previousCache.materializedFocusIds ?? getAssetTreeFocusIds(previousCache)
+            : [];
+        return Array.from(new Set([...this.pendingVisibleFocusIds, ...carried]));
+    }
+
+    private captureAssetContext(baseState: FocusTreeRenderBaseState, mode: 'replace' | 'merge'): void {
+        if (baseState.deferredAssetLoad) {
+            return;
+        }
+
+        const resolution = baseState.focusIconAssetResolution ?? createEmptyFocusIconAssetResolution();
+        const previous = mode === 'merge' && this.assetContext?.documentVersion === baseState.focusPositionDocumentVersion
+            ? this.assetContext
+            : undefined;
+        const gfxFileByIconName = { ...previous?.gfxFileByIconName, ...resolution.gfxFileByIconName };
+        const unresolvedIconNames = new Set([...previous?.unresolvedIconNames ?? [], ...resolution.unresolvedIconNames]);
+        Object.keys(resolution.gfxFileByIconName).forEach(iconName => unresolvedIconNames.delete(iconName));
+        const treeIds = new Set(previous?.treeIds ?? []);
+        (baseState.assetTreeIds ?? baseState.focusTrees.map(tree => tree.id)).forEach(treeId => treeIds.add(treeId));
+        this.assetContext = {
+            documentVersion: baseState.focusPositionDocumentVersion,
+            treeIds,
+            focusById: baseState.focusById,
+            xGridSize: baseState.xGridSize,
+            yGridSize: baseState.yGridSize,
+            useNativeSize: !!baseState.presentation?.item,
+            gfxFileByIconName,
+            unresolvedIconNames,
+        };
+    }
+
+    /**
+     * Records the snapshot that carried each materialized focus's rules. `replacedAll` marks
+     * messages whose stylesheet contained every materialized rule.
+     */
+    private recordMaterializedSnapshot(cache: FocusTreeRenderCache, replacedAll: boolean): void {
+        const materialized = new Set(cache.materializedFocusIds ?? []);
+        for (const focusId of Array.from(this.materializedAtSnapshot.keys())) {
+            if (!materialized.has(focusId)) {
+                this.materializedAtSnapshot.delete(focusId);
+            }
+        }
+        if (replacedAll) {
+            materialized.forEach(focusId => this.materializedAtSnapshot.set(focusId, cache.snapshotVersion));
+        }
+    }
+
+    private cancelAssetWork(): void {
+        this.assetGeneration += 1;
+        this.queuedAssetRequest = undefined;
+    }
+
+    /**
+     * Queues a webview request for icon assets of focuses it shows with placeholders. Only the
+     * newest request waits; it starts when no refresh, hydration, or scene request is running.
+     */
+    public async handleAssetRequest(request: Partial<FocusTreeAssetRequestMessage>): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
+        const normalized = normalizeFocusTreeAssetRequest(request);
+        if (!normalized) {
+            return;
+        }
+
+        this.queuedAssetRequest = normalized;
+        this.drainAssetRequests();
+    }
+
+    private drainAssetRequests(): void {
+        if (this.assetWorkerRunning || this.disposed || this.activeRenderWork > 0 || !this.queuedAssetRequest) {
+            return;
+        }
+
+        this.assetWorkerRunning = true;
+        void (async () => {
+            try {
+                while (!this.disposed && this.activeRenderWork === 0 && this.queuedAssetRequest) {
+                    const request = this.queuedAssetRequest;
+                    this.queuedAssetRequest = undefined;
+                    try {
+                        await this.processAssetRequest(request);
+                    } catch (error) {
+                        this.trace('assetRequestFailed', {
+                            assetRequestId: request.assetRequestId,
+                            message: error instanceof Error ? error.message : String(error),
+                        });
+                    }
+                }
+            } finally {
+                this.assetWorkerRunning = false;
+            }
+        })();
+    }
+
+    private async processAssetRequest(request: FocusTreeAssetRequest): Promise<void> {
+        const startedAt = Date.now();
+        const generation = this.assetGeneration;
+        const refreshRequestId = this.runtimeState.latestRefreshRequestId;
+        const cache = this.runtimeState.lastRenderCache;
+        const document = this.getLatestDocument(this.uri) ?? this.latestDocument;
+        const tree = cache?.focusTrees.find(candidate => candidate.id === request.treeId);
+        const renderAssetPatch = this.snapshotBuilder.renderAssetPatch?.bind(this.snapshotBuilder);
+        const staleReason = !cache || !tree ? 'scene'
+            : cache.deferredAssetLoad ? 'deferred'
+            : !this.runtimeState.webviewReady ? 'webview'
+            : !document
+                || request.documentVersion !== cache.focusPositionDocumentVersion
+                || document.version !== cache.focusPositionDocumentVersion ? 'document'
+            : cache.assetTreeIds && !cache.assetTreeIds.includes(request.treeId) ? 'tree'
+            : !renderAssetPatch ? 'renderer'
+            : undefined;
+        if (staleReason || !cache || !tree || !document || !renderAssetPatch) {
+            this.trace('assetRequestStale', { assetRequestId: request.assetRequestId, treeId: request.treeId, reason: staleReason });
+            await this.postSceneAssets(request, cache, 'stale', true);
+            return;
+        }
+
+        if (!cache.materializedFocusIds) {
+            // Every focus of the loaded scenes is already real.
+            await this.postSceneAssets(request, cache, 'empty', true);
+            return;
+        }
+
+        let expectedCache = cache;
+        const isCancelled = () => this.disposed
+            || this.assetGeneration !== generation
+            || this.activeRenderWork > 0
+            || this.runtimeState.latestRefreshRequestId !== refreshRequestId
+            || this.runtimeState.lastRenderCache !== expectedCache
+            || this.getLatestDocumentVersion() !== expectedCache.focusPositionDocumentVersion;
+        let ensuredContext: FocusTreeAssetContext | undefined;
+        try {
+            ensuredContext = await this.ensureAssetContext(document, cache, request.treeId, isCancelled);
+        } catch (error) {
+            if (isCancelled()) {
+                return;
+            }
+            this.trace('assetRequestFailed', {
+                assetRequestId: request.assetRequestId,
+                message: error instanceof Error ? error.message : String(error),
+            });
+            await this.postSceneAssets(request, cache, 'failed', true);
+            return;
+        }
+        if (isCancelled()) {
+            return;
+        }
+        if (!ensuredContext) {
+            this.trace('assetRequestStale', { assetRequestId: request.assetRequestId, treeId: request.treeId, reason: 'context' });
+            await this.postSceneAssets(request, cache, 'stale', true);
+            return;
+        }
+
+        const context = ensuredContext;
+        this.preferredTreeId = request.treeId;
+        const materialized = new Set(cache.materializedFocusIds);
+        const planned = new Set<string>();
+        const resend = new Set<string>();
+        const plan = (focusIds: readonly string[]) => focusIds.filter(focusId => {
+            if (planned.has(focusId) || !tree.focuses[focusId] || !context.focusById[focusId]) {
+                return false;
+            }
+            if (materialized.has(focusId)) {
+                // The webview asks again only when it lacks rules a message it saw should have carried.
+                if (request.snapshotVersion < (this.materializedAtSnapshot.get(focusId) ?? 0)) {
+                    return false;
+                }
+                resend.add(focusId);
+            }
+            planned.add(focusId);
+            return true;
+        });
+        const chunks = [
+            ...chunkFocusIds(plan(request.visibleFocusIds), 'visible'),
+            ...chunkFocusIds(plan(request.nearbyFocusIds), 'nearby'),
+        ];
+        if (chunks.length === 0) {
+            await this.postSceneAssets(request, cache, 'empty', true);
+            return;
+        }
+
+        const resolution = {
+            ...createEmptyFocusIconAssetResolution(),
+            gfxFileByIconName: context.gfxFileByIconName,
+            unresolvedIconNames: Array.from(context.unresolvedIconNames),
+        };
+        let appliedChunks = 0;
+        let status: FocusTreeSceneAssetsStatus | 'cancelled' | 'superseded' = 'applied';
+        try {
+            for (let index = 0; index < chunks.length; index++) {
+                const chunk = chunks[index];
+                if (isCancelled()) {
+                    status = 'cancelled';
+                    return;
+                }
+                if (chunk.tier === 'nearby' && this.queuedAssetRequest) {
+                    // A newer request recomputes what is still needed around the new viewport.
+                    status = 'superseded';
+                    return;
+                }
+
+                const patch = await renderAssetPatch(chunk.focusIds.map(focusId => context.focusById[focusId]), {
+                    focusIconAssetResolution: resolution,
+                    xGridSize: context.xGridSize,
+                    yGridSize: context.yGridSize,
+                    useNativeSize: context.useNativeSize,
+                    existingStyleRules: expectedCache.dynamicStyleRules ?? new Map<string, string>(),
+                    resendFocusIds: resend,
+                    isCancelled,
+                });
+                if (isCancelled()) {
+                    status = 'cancelled';
+                    return;
+                }
+
+                // Commit before posting with no await in between, so a refresh that starts later
+                // plans against the cache this patch produced.
+                const base = expectedCache;
+                let dynamicStyleRules = base.dynamicStyleRules;
+                if (patch.rules.length > 0) {
+                    const rules = new Map(base.dynamicStyleRules);
+                    patch.rules.forEach(([key, content]) => rules.set(key, content));
+                    dynamicStyleRules = rules;
+                }
+                const next: FocusTreeRenderCache = {
+                    ...base,
+                    snapshotVersion: base.snapshotVersion + 1,
+                    materializedFocusIds: Array.from(new Set([...base.materializedFocusIds ?? [], ...chunk.focusIds])),
+                    dynamicStyleCss: patch.css ? `${base.dynamicStyleCss}\n${patch.css}` : base.dynamicStyleCss,
+                    dynamicStyleRules,
+                };
+                this.runtimeState.lastRenderCache = next;
+                expectedCache = next;
+                chunk.focusIds.forEach(focusId => this.materializedAtSnapshot.set(focusId, next.snapshotVersion));
+                appliedChunks += 1;
+                await this.postSceneAssets(request, next, 'applied', index === chunks.length - 1, {
+                    baseSnapshotVersion: base.snapshotVersion,
+                    tier: chunk.tier,
+                    materializedFocusIds: chunk.focusIds,
+                    dynamicStyleCssPatch: patch.css || undefined,
+                });
+            }
+        } catch (error) {
+            if (isCancelled()) {
+                status = 'cancelled';
+                return;
+            }
+            status = 'failed';
+            this.trace('assetRequestFailed', {
+                assetRequestId: request.assetRequestId,
+                message: error instanceof Error ? error.message : String(error),
+            });
+            await this.postSceneAssets(request, this.runtimeState.lastRenderCache ?? expectedCache, 'failed', true);
+        } finally {
+            recordPerf('focustree.assetRequest', Date.now() - startedAt, {
+                status,
+                treeId: request.treeId,
+                visibleCount: request.visibleFocusIds.length,
+                nearbyCount: request.nearbyFocusIds.length,
+                plannedCount: planned.size,
+                resendCount: resend.size,
+                appliedChunks,
+            });
+        }
+    }
+
+    /**
+     * Icon resolution covering `treeId` for the cache's document. Refreshes keep it current; when
+     * a cancelled refresh left none, it is rebuilt from the loader for every loaded scene.
+     */
+    private async ensureAssetContext(
+        document: vscode.TextDocument,
+        cache: FocusTreeRenderCache,
+        treeId: string,
+        isCancelled: () => boolean,
+    ): Promise<FocusTreeAssetContext | undefined> {
+        const current = this.assetContext;
+        if (current && current.documentVersion === cache.focusPositionDocumentVersion && current.treeIds.has(treeId)) {
+            return current;
+        }
+
+        try {
+            const baseState = await this.snapshotBuilder.buildBaseState(document, 'full', isCancelled, {
+                treeId,
+                treeIds: cache.assetTreeIds,
+            });
+            if (isCancelled()
+                || baseState.deferredAssetLoad
+                || baseState.focusPositionDocumentVersion !== cache.focusPositionDocumentVersion) {
+                return undefined;
+            }
+            this.captureAssetContext(baseState, 'merge');
+        } catch (error) {
+            if (error instanceof UserError || isCancelled()) {
+                return undefined;
+            }
+            throw error;
+        }
+        const rebuilt = this.assetContext;
+        return rebuilt?.documentVersion === cache.focusPositionDocumentVersion && rebuilt.treeIds.has(treeId)
+            ? rebuilt
+            : undefined;
+    }
+
+    private async postSceneAssets(
+        request: FocusTreeAssetRequest,
+        cache: FocusTreeRenderCache | undefined,
+        status: FocusTreeSceneAssetsStatus,
+        final: boolean,
+        patch?: Pick<FocusTreeSceneAssetsMessage, 'baseSnapshotVersion' | 'tier' | 'materializedFocusIds' | 'dynamicStyleCssPatch'>,
+    ): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+
+        const snapshotVersion = cache?.snapshotVersion ?? 0;
+        const message: FocusTreeSceneAssetsMessage = {
+            command: 'focusTreeSceneAssets',
+            protocolVersion: focusTreeProtocolVersion,
+            requestId: this.runtimeState.latestRefreshRequestId,
+            assetRequestId: request.assetRequestId,
+            treeId: request.treeId,
+            documentVersion: cache?.focusPositionDocumentVersion ?? request.documentVersion,
+            baseSnapshotVersion: patch?.baseSnapshotVersion ?? snapshotVersion,
+            snapshotVersion,
+            status,
+            final,
+            ...patch,
+        };
+        try {
+            await this.webview.postMessage(message);
+        } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            if (!text.toLowerCase().includes('disposed')) {
+                throw error;
+            }
+        }
     }
 
     private cancelDeferredHydrationTimer(): void {
@@ -922,5 +1531,70 @@ function pickFocusTemplates(
     return {
         focusTemplates: pickStringEntries(templates, new Set(Object.values(focusTemplateKeyById))),
         focusTemplateKeyById,
+    };
+}
+
+/** Every focus of the cache's asset trees, the meaning of an undefined materialized set. */
+function getAssetTreeFocusIds(cache: Pick<FocusTreeRenderCache, 'focusTrees' | 'assetTreeIds'>): string[] {
+    const assetTreeIds = cache.assetTreeIds;
+    return cache.focusTrees
+        .filter(tree => !assetTreeIds || assetTreeIds.includes(tree.id))
+        .flatMap(tree => Object.keys(tree.focuses));
+}
+
+/** Materialized focuses after merging a newly loaded scene into the loaded ones. */
+function mergeMaterializedFocusIds(previous: FocusTreeRenderCache, next: FocusTreeRenderCache): string[] | undefined {
+    if (!previous.deferredAssetLoad && !next.deferredAssetLoad
+        && previous.materializedFocusIds === undefined && next.materializedFocusIds === undefined) {
+        return undefined;
+    }
+    const previousIds = previous.deferredAssetLoad ? [] : previous.materializedFocusIds ?? getAssetTreeFocusIds(previous);
+    const nextIds = next.deferredAssetLoad ? [] : next.materializedFocusIds ?? getAssetTreeFocusIds(next);
+    return Array.from(new Set([...previousIds, ...nextIds]));
+}
+
+function chunkFocusIds(focusIds: readonly string[], tier: 'visible' | 'nearby'): Array<{ tier: 'visible' | 'nearby'; focusIds: string[] }> {
+    const chunks: Array<{ tier: 'visible' | 'nearby'; focusIds: string[] }> = [];
+    for (let start = 0; start < focusIds.length; start += focusTreeAssetRequestLimits.chunk) {
+        chunks.push({ tier, focusIds: focusIds.slice(start, start + focusTreeAssetRequestLimits.chunk) });
+    }
+    return chunks;
+}
+
+function normalizeFocusIdList(value: unknown, limit: number): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const result = new Set<string>();
+    for (const item of value) {
+        if (result.size >= limit) {
+            break;
+        }
+        if (typeof item === 'string' && item.length > 0) {
+            result.add(item);
+        }
+    }
+    return Array.from(result);
+}
+
+/** Validates an untrusted webview request and bounds its size. */
+export function normalizeFocusTreeAssetRequest(request: Partial<FocusTreeAssetRequestMessage> | undefined): FocusTreeAssetRequest | undefined {
+    if (!request
+        || typeof request.treeId !== 'string'
+        || typeof request.assetRequestId !== 'number'
+        || typeof request.documentVersion !== 'number'
+        || typeof request.snapshotVersion !== 'number') {
+        return undefined;
+    }
+    const visibleFocusIds = normalizeFocusIdList(request.visibleFocusIds, focusTreeAssetRequestLimits.visible);
+    const visible = new Set(visibleFocusIds);
+    return {
+        assetRequestId: request.assetRequestId,
+        treeId: request.treeId,
+        documentVersion: request.documentVersion,
+        snapshotVersion: request.snapshotVersion,
+        visibleFocusIds,
+        nearbyFocusIds: normalizeFocusIdList(request.nearbyFocusIds, focusTreeAssetRequestLimits.nearby)
+            .filter(focusId => !visible.has(focusId)),
     };
 }

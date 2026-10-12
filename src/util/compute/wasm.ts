@@ -1,4 +1,5 @@
-import { ComputeInput, ComputeResult, isComputeInputSupported, maxComputeOutputBytes } from './protocol';
+import { isComputeInputSupported, maxComputeOutputBytes } from './protocol';
+import type { AnyComputeInput, AnyComputeResult, ComputeInput, ComputeResult, ScriptIndexInput, ScriptIndexResult } from './protocol';
 
 interface ComputeExports {
     memory: { buffer: ArrayBuffer };
@@ -9,6 +10,7 @@ interface ComputeExports {
     process_bgr(pointer: number, length: number, width: number, height: number, stride: number): number;
     process_edges?(pointer: number, length: number, width: number, height: number): number;
     process_rgba8?(pointer: number, length: number, width: number, height: number, pixelStride: number, channelOffsets: number): number;
+    process_script_index?(pointer: number, length: number, mode: number): number;
 }
 
 // The extension host's TypeScript configuration intentionally excludes DOM globals.
@@ -45,16 +47,20 @@ export class RustWasmCompute {
 
     public get shouldRetireWorker(): boolean { return this.retainedMemoryBytes >= 128 * 1024 * 1024; }
 
-    public supports(kind: ComputeInput['kind']): boolean {
+    public supports(kind: AnyComputeInput['kind']): boolean {
         switch (kind) {
             case 'bcn': case 'bgr': return true;
             case 'edges': return typeof this.exports.process_edges === 'function';
             case 'rgba8': return typeof this.exports.process_rgba8 === 'function';
+            case 'focus-index': case 'gfx-index': return typeof this.exports.process_script_index === 'function';
             default: return false;
         }
     }
 
-    public compute(input: ComputeInput): ComputeResult {
+    public compute(input: ComputeInput): ComputeResult;
+    public compute(input: ScriptIndexInput): ScriptIndexResult;
+    public compute(input: AnyComputeInput): AnyComputeResult;
+    public compute(input: AnyComputeInput): AnyComputeResult {
         if (!this.supports(input.kind) || !isComputeInputSupported(input)) {
             throw new ComputeInputRejectedError('Unsupported Rust compute input.');
         }
@@ -67,7 +73,9 @@ export class RustWasmCompute {
         let outputLength = 0;
         try {
             new Uint8Array(this.exports.memory.buffer, inputPointer, inputLength).set(input.bytes);
-            if (input.kind === 'edges') {
+            if (!('width' in input)) {
+                outputPointer = this.exports.process_script_index!(inputPointer, inputLength, input.kind === 'focus-index' ? 0 : 1) >>> 0;
+            } else if (input.kind === 'edges') {
                 outputPointer = this.exports.process_edges!(inputPointer, inputLength, input.width, input.height) >>> 0;
             } else if (input.kind === 'rgba8') {
                 outputPointer = this.exports.process_rgba8!(inputPointer, inputLength, input.width, input.height, input.format!, input.stride!) >>> 0;
@@ -81,6 +89,28 @@ export class RustWasmCompute {
             }
             // Processing may grow memory: never retain a view across an exported call.
             const memory = this.exports.memory.buffer;
+            if (!('width' in input)) {
+                const header = new DataView(memory, outputPointer, 8);
+                outputLength = header.getUint32(0, true);
+                const count = header.getUint32(4, true);
+                if (outputLength < 8 || outputLength > maxComputeOutputBytes || outputPointer + outputLength > memory.byteLength
+                    || count > (outputLength - 8) / 4) {
+                    throw new Error('Invalid Rust script index result.');
+                }
+                const data = new DataView(memory, outputPointer, outputLength);
+                const entries: string[] = [];
+                let offset = 8;
+                for (let index = 0; index < count; index++) {
+                    if (offset + 4 > outputLength) { throw new Error('Truncated Rust script index result.'); }
+                    const length = data.getUint32(offset, true);
+                    offset += 4;
+                    if (offset + length > outputLength) { throw new Error('Truncated Rust script index entry.'); }
+                    entries.push(Buffer.from(memory, outputPointer + offset, length).toString('utf8'));
+                    offset += length;
+                }
+                if (offset !== outputLength) { throw new Error('Trailing Rust script index result.'); }
+                return { kind: 'script-index', entries, retireWorker: this.shouldRetireWorker };
+            }
             const header = new DataView(memory, outputPointer, 12);
             outputLength = header.getUint32(0, true);
             const pixelLength = header.getUint32(4, true);

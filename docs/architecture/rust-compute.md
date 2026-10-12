@@ -3,11 +3,12 @@
 ## Migrated scope
 
 The dependency-free Rust/WASM crate supplies BC1/BC2/BC3 DDS decoding, dense
-24/32-bit unsigned RGB(A) decoding, 24-bit BGR province color extraction, and
-province boundary traversal/concatenation plus one-pixel/X-crossing validation.
-TypeScript retains VS Code integration, source parsing, file resolution,
-index lifecycle, province zones/regions, text edits and Chromium rendering.
-This is an incremental migration, not a wholesale extension rewrite.
+24/32-bit unsigned RGB(A) decoding, 24-bit BGR province color extraction,
+province boundary traversal/concatenation and one-pixel/X-crossing validation,
+plus lightweight shared-focus ID and GFX sprite-name extraction.
+TypeScript retains VS Code integration, full parser/schema semantics, file
+resolution, index lifecycle, province zones/regions, text edits and Chromium
+rendering. This is an incremental migration, not a wholesale extension rewrite.
 
 - [Rust crate and ABI](../../rust/hoi4-compute/README.md)
 - [Compute service](../../src/util/compute/service.ts),
@@ -16,12 +17,21 @@ This is an incremental migration, not a wholesale extension rewrite.
   [validated edge decoder](../../src/util/compute/provinceedges.ts)
 - [Image cache](../../src/util/image/imagecache.ts) and
   [province adapter](../../src/previewdef/worldmap/loader/provincebmp.ts)
+- [Script index extraction and parser fallback](../../src/util/compute/indexextraction.ts)
 
 PNG encoding remains TypeScript but runs in the worker for eligible DDS jobs.
 Float, signed, sRGB, non-eight-bit and leading-padding raw layouts use the
 existing Surface decoder. In particular, XRGB/XBGR retain its legacy compact
 reader behavior rather than silently changing pixels. TGA and flag resizing
 remain on their existing paths.
+
+Script indexing uses a streaming borrowed-token scanner, not a second full parser.
+It preserves the original shared/joint-focus and sprite-name ordering, duplicates,
+supported constants, quoting and BOM behavior. Local focuses are not shared-focus
+index entries. Unsupported syntax rejects the whole file and uses the original
+parser rather than accepting a partial index. A separate string-array result keeps
+the image result contract image-only. Workspace-ready hits preserve precedence
+without waiting for global indexes; misses still wait for all relevant layers.
 
 Phase 2 also narrows the vanilla/DLC localisation index to the selected preview
 language plus English; workspace localisation retains all languages and its
@@ -58,7 +68,7 @@ The per-active-job timeout is 30 seconds.
 Input is copied into dedicated transferable storage without detaching pooled
 Buffers, cached arrays or offset source views. WASM views are recreated after
 memory growth; owned output is copied and exact allocations are freed once.
-ABI v1 still requires BCn/BGR exports; edge/RGBA8 exports are optional capabilities.
+ABI v1 still requires BCn/BGR exports; edge/RGBA8/script-index exports are optional capabilities.
 
 Missing optional kernels and a normal zero-pointer kernel rejection decline
 only that job. They do not permanently disable unrelated acceleration. DDS
@@ -79,6 +89,12 @@ job may finish its shared worker stage before being discarded. Shared image
 jobs are not tied to one consumer's cancellation. Editor jobs have their own
 abort signal and cannot update disposed panels.
 
+Script jobs use the same bounded worker queue, cancellation and ownership rules.
+Missing optional index exports, normal scanner rejection and a disabled compute
+backend use the real TypeScript extraction path. Malformed files retain parser
+errors. The result is validated before names enter an index; it is not an image
+payload with fabricated dimensions or pixels.
+
 ## Building and observing
 
 Installed VSIX users do not need Rust. Developers need stable Rust and
@@ -95,19 +111,23 @@ npm run verify
 and an explicit Cargo target directory. CI installs the target and runs native
 tests. Rust source, Cargo outputs and profiling inputs/reports are excluded
 from the universal VSIX. Worker code has no runtime VS Code dependency; browser
-CSP and map/focus payload protocols are unchanged.
+CSP and the map payload protocol are unchanged; focus viewport requests remain on protocol v4.
 
 The watcher watches worker TypeScript, not Rust. After Rust edits rebuild compute
 artifacts and reload the Extension Development Host. Existing instances do not
 hot-reload.
 
 `HOI4MU_PERF_TRACE=1` mirrors local entries to debug logs.
-`rustcompute.compute` reports queue/end-to-end/worker time, bytes, pixels and
-actual engine. `rustcompute.unavailable` reports infrastructure failures.
+`rustcompute.compute` reports queue/end-to-end/worker time, bytes and actual engine
+(image jobs additionally report pixels). `rustcompute.unavailable` reports infrastructure failures.
 `worldmap.provinceEdges.backend` confirms actual Rust or TS traversal;
 `worldmap.provinceEdges` now includes edge validation. Zones remain separately
 measured. `HOI4MU_COMPUTE_BACKEND=typescript` disables acceleration for that
 launch; unset it for tests requiring actual worker execution.
+`index.read`, `index.parse` and `index.parse.cpu` separate index I/O, parse wall
+time including queueing, and kernel wall time/engine. Kernel wall time is not an
+OS CPU counter. `fileloader.read` carries `waitMs`, `resolveMs`, `contentMs`,
+`activeMs` and priority, separating admission delays from actual read work.
 
 Map debug polling can pass `{ includeRetainedSize: false, performanceLimit: 200 }`.
 The default retained-size query is memoized per loaded graph and reports UTF-8
@@ -126,14 +146,14 @@ Windows/Node 24 it measured BC3 2048² at 73.7 ms TS versus 22.3 ms worker, and
 not whole-preview gains. A 64² BC3 worker job was slower (0.191 versus 0.090 ms),
 which motivated preserving the single-image threshold.
 
-Native tests cover exact decoder arithmetic, limits and thousands of legacy
-edge-oracle rasters. TS tests compare actual WASM/worker pixels/PNG bytes and
-edge graphs/warnings against the original TS algorithms, including malformed
-payloads, queue/cancellation/ownership, old ABI capabilities and nonfatal
-rejection. Cache and localisation tests cover version/language races. Desktop
-integration checks the shipped worker inside VS Code.
+Native tests cover exact decoder arithmetic, limits, legacy edge-oracle rasters
+and script scanner/parser compatibility. TS tests compare actual WASM/worker
+pixels/PNG bytes, edge graphs/warnings and ordered script names against the
+original TS algorithms, including malformed payloads, queue/cancellation/ownership,
+old ABI capabilities and nonfatal rejection. Cache and localisation tests cover
+version/language races. Desktop integration checks the shipped worker inside VS Code.
 
 Remaining work includes map zones/large payload retention and transport,
-more preview families, continuous-edit endurance, in-flight map signal
+more preview families, long-running endurance, in-flight map signal
 propagation, non-Windows execution and standalone Node 20 benchmarking. Rust
 is not claimed to accelerate DOM/Canvas work or every extension feature.

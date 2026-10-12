@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { parseHoi4File } from '../hoiformat/hoiparser';
-import { getSpriteTypes } from '../hoiformat/spritetype';
+import { extractScriptIndex } from './compute/indexextraction';
+import { measureAsync } from './perf';
 import { debounceByInput, forceError, mapWithConcurrency, UserError } from './common';
 import { error } from './debug';
 import { isGfxIndexEnabled } from './featureflags';
@@ -117,7 +117,10 @@ export async function getGfxContainerFile(gfxName: string | undefined): Promise<
         return undefined;
     }
 
-    await Promise.all([ensureGlobalGfxIndex(), ensureWorkspaceGfxIndex()]);
+    await ensureWorkspaceGfxIndex();
+    const workspaceFile = gfxIndexService.isReady('workspace') ? workspaceGfxIndex[gfxName]?.file : undefined;
+    if (workspaceFile !== undefined) { return workspaceFile; }
+    await ensureGlobalGfxIndex();
     return tryGetGfxContainerFile(gfxName);
 }
 
@@ -126,6 +129,11 @@ export function tryGetGfxContainerFile(gfxName: string | undefined): string | un
         return undefined;
     }
 
+    if (gfxIndexService.isReady('workspace')) {
+        const workspaceFile = workspaceGfxIndex[gfxName]?.file;
+        if (workspaceFile !== undefined) { return workspaceFile; }
+    }
+    if (!isGfxIndexReady()) { return undefined; }
     return workspaceGfxIndex[gfxName]?.file ?? dlcGfxIndex[gfxName]?.file ?? globalGfxIndex[gfxName]?.file;
 }
 
@@ -210,15 +218,19 @@ async function fillGfxItems(gfxFile: string, gfxIndex: Record<string, GfxIndexIt
         if (estimatedSize) {
             estimatedSize[0] += gfxFile.length;
         }
-        const [fileBuffer, uri] = await readFileFromModOrHOI4(gfxFile, options);
-        const spriteTypes = getSpriteTypes(parseHoi4File(fileBuffer.toString(), localize('infile', 'In file {0}:\n', uri.toString())));
-        for (const spriteType of spriteTypes) {
-            gfxIndex[spriteType.name] = { file: gfxFile };
+        const [fileBuffer, uri] = await measureAsync('index.read', { kind: 'gfx-index', layer: options.mod ? 'workspace' : options.dlc ? 'dlc' : 'global' },
+            () => readFileFromModOrHOI4(gfxFile, { ...options, priority: 'background' }));
+        signal?.throwIfAborted();
+        const names = await extractScriptIndex('gfx-index', fileBuffer, localize('infile', 'In file {0}:\n', uri.toString()), signal);
+        signal?.throwIfAborted();
+        for (const name of names) {
+            gfxIndex[name] = { file: gfxFile };
             if (estimatedSize) {
-                estimatedSize[0] += spriteType.name.length + 8;
+                estimatedSize[0] += name.length + 8;
             }
         }
     } catch(e) {
+        signal?.throwIfAborted();
         error(new UserError(forceError(e).toString()));
     }
 }

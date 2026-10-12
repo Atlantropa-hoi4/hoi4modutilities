@@ -7,6 +7,7 @@ import {
 import { FocusConditionPresetsByTree } from "./conditionpresets";
 import { FocusTreeAssetLoadMode, FocusTreeAssetScope, FocusTreeLoader } from "./loader";
 import { FocusTreeInvalidation } from './invalidation';
+import { isLocalisationIndexReady } from '../../util/localisationIndex';
 
 export interface FocusTreeSessionSnapshot {
     documentVersion: number;
@@ -21,6 +22,21 @@ export interface FocusTreeSessionSnapshot {
 export interface FocusTreeLoaderAdapterOptions {
     focusTreeLoader: FocusTreeLoader;
     updateDependencies: (dependencies: string[]) => void;
+}
+
+/**
+ * Cache key of the trees an asset scope prepares. The loader prepares the selected tree plus
+ * `treeIds`, so `{ treeId: 'A' }` and `{ treeId: 'A', treeIds: ['A'] }` share one key; a refresh
+ * after hydration then reuses the hydrated state instead of loading it again.
+ */
+export function getFocusTreeAssetScopeKey(assetScope: FocusTreeAssetScope | undefined): string {
+    if (!assetScope) {
+        return '*';
+    }
+    const additionalTreeIds = Array.from(new Set(assetScope.treeIds ?? []))
+        .filter(treeId => treeId !== assetScope.treeId)
+        .sort();
+    return JSON.stringify([assetScope.treeId ?? null, additionalTreeIds]);
 }
 
 export class FocusTreeLoaderAdapter {
@@ -66,7 +82,7 @@ export class FocusTreeLoaderAdapter {
             };
         }
         const sessionSnapshot = this.sessionSnapshot;
-        const scopeKey = assetScope ? JSON.stringify(assetScope) : '*';
+        const scopeKey = getFocusTreeAssetScopeKey(assetScope);
         const cachedState = assetLoadMode === 'deferred'
             ? sessionSnapshot.structureState
             : sessionSnapshot.assetScopeKey === scopeKey ? sessionSnapshot.assetState : undefined;
@@ -102,7 +118,13 @@ export class FocusTreeLoaderAdapter {
         return baseState;
     }
 
-    public invalidate(invalidation: FocusTreeInvalidation): void {
+    /**
+     * `reuseLoadedStates` keeps loaded states for a localisation-only invalidation. It is safe
+     * only when the whole index just became ready: loaded trees, icons, and watchers never depend
+     * on localisation, and rendering resolves names from the complete index. Edited localisation
+     * files keep reloading, because their index update may still be in progress.
+     */
+    public invalidate(invalidation: FocusTreeInvalidation, options?: { reuseLoadedStates?: boolean }): void {
         this.generation++;
         if (invalidation !== FocusTreeInvalidation.None) {
             this.replaceDependenciesOnAssetLoad = true;
@@ -120,7 +142,16 @@ export class FocusTreeLoaderAdapter {
             this.focusTreeLoader.clearSourceSnapshot();
             return;
         }
-        if ((invalidation & (FocusTreeInvalidation.Layout
+        if (invalidation === FocusTreeInvalidation.Localisation && options?.reuseLoadedStates) {
+            // Rendering resolves display names, filter labels, and token warnings again.
+            const localisationIndexReady = isLocalisationIndexReady();
+            for (const state of [this.sessionSnapshot.structureState, this.sessionSnapshot.assetState]) {
+                if (state) {
+                    state.focusDisplayNameById = undefined;
+                    state.localisationIndexReady = localisationIndexReady;
+                }
+            }
+        } else if ((invalidation & (FocusTreeInvalidation.Layout
             | FocusTreeInvalidation.Presentation
             | FocusTreeInvalidation.Assets
             | FocusTreeInvalidation.Localisation)) !== 0) {
