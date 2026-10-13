@@ -145,14 +145,11 @@ node --expose-gc scripts/profile-mod.mjs --mod "<mod directory>" --samples 3 --w
 하며 모드/게임 안에 쓸 수 없다. profiler가 상속된 `ELECTRON_RUN_AS_NODE`를
 제거해 실제 VS Code 앱으로 실행한다.
 
-로컬 원시 기록(설치용 VSIX에 포함하지 않음):
-- [이전 1](../../.vscode-test/performance/tno-vscode-baseline-production-1.json),
-  [이전 2](../../.vscode-test/performance/tno-vscode-baseline-production-2.json),
-  [이전 3](../../.vscode-test/performance/tno-vscode-baseline-production-3.json)
-- [최종 2](../../.vscode-test/performance/tno-vscode-final-production-2.json),
-  [최종 3](../../.vscode-test/performance/tno-vscode-final-production-3.json),
-  [최종 4](../../.vscode-test/performance/tno-vscode-final-production-4.json)
-- [실제 입력 CPU/동등성 기록](../../prod/performance/tno-optimized.json)
+원시 JSON·프로파일 작업공간·editor user-data·캡처에는 사용자 홈 경로와
+실제 모드 내용이 포함될 수 있다. 이 자료는 Git과 설치용 VSIX에 포함하지
+않고 로컬에만 보관한다. 외부 공유 전에는 개인정보를 제거하고 실제 모드
+원문·화면·이미지의 재배포 권한을 별도로 확인한다. 공개 저장소에는 요약
+측정과 위의 재현 명령만 유지한다.
 
 각 JSON은 입력/산출물 해시, 메모리·이벤트 루프 관측, 세부 stage와 실제
 backend를 보관한다. 예비 old-debug 비교는 요약 표의 최종 데이터와 섞지 않았다.
@@ -256,15 +253,6 @@ node scripts/profile-vscode-mod.mjs --mod "<mod directory>" --game "<game direct
 실행할 수 있다. 출력은 새 경로여야 하며 모드·게임 안에 쓸 수 없다.
 새 `--edits` 경로도 게임·모드 파일에 저장하지 않는다.
 
-로컬 원시 기록(설치용 VSIX에 포함하지 않음):
-- [이전 1](../../.vscode-test/performance/omp-focus-edits-before-1.json),
-  [이전 2](../../.vscode-test/performance/omp-focus-edits-before-2.json),
-  [이전 3](../../.vscode-test/performance/omp-focus-edits-before-3.json)
-- [이후 1](../../.vscode-test/performance/omp-focus-edits-after-1.json),
-  [이후 2](../../.vscode-test/performance/omp-focus-edits-after-2.json),
-  [이후 3](../../.vscode-test/performance/omp-focus-edits-after-3.json)
-- [실제 scene 전환 결과](../../.vscode-test/performance/scene-smoke-session/done.json)
-
 ## 2026-10-11: 경량 색인과 표시 영역 우선 로딩
 
 ### 경량 색인 동등성
@@ -293,10 +281,6 @@ syntax/unsafe numeric IDs 등은 기존 parser의 의미와 오류를 유지한�
 ABI v1의 선택적 `process_script_index` export가 없는 모듈도 같은 TS 경로를
 사용한다. 파일 우선순위, `replace_path`, DLC 정책, 미저장 문서 및 색인
 generation은 TypeScript에 남는다.
-
-원시 입력 해시·이름 수·decline 사유·kernel 표본은
-[색인 동등성 기록](../../.vscode-test/performance/comprehensive-1791691111454/index-parity.json)에 있다.
-이 기록과 프로파일 출력은 로컬 검증 자료이며 VSIX에 포함하지 않는다.
 
 ### 실행 계약
 
@@ -429,20 +413,6 @@ focus별 materialized ID는 남아 재요청도 없었다. 실제 shared source�
 launch 3회를 새로운 `--output` 경로로 실행한다. 모드·게임 파일에는
 저장하지 않는다. 일회성 smoke 프로그램은 검증 뒤 제거했다.
 
-로컬 원시 기록:
-- [이전 1](../../.vscode-test/performance/comprehensive-1791691111454/before-1.json),
-  [이전 2](../../.vscode-test/performance/comprehensive-1791691111454/before-2.json),
-  [이전 3](../../.vscode-test/performance/comprehensive-1791691111454/before-3.json)
-- [최종 1](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-1.json),
-  [최종 2](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-2.json),
-  [최종 3](../../.vscode-test/performance/comprehensive-1791691111454/after-corrected-3.json),
-  [중앙값과 전체 표본](../../.vscode-test/performance/comprehensive-1791691111454/corrected-summary.json)
-- [최종 stress/source 안전성](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/stress-results.json),
-  [최초 전체 트리·control](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-first-pass.json),
-  [반복 편집 후 재방문](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-edit-revisits.json),
-  [실제 DOM 좌표 전이](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-position-transitions.json),
-  [cropped 화면](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/corrected-webview.png)
-
 ## 2026-10-13: 추가 개선 8개와 검증 범위
 
 이 절은 앞의 실제 TNO 결과와 별도다. 이번에는 실제 VS Code의 소유한 합성
@@ -533,9 +503,3 @@ Node 24.14.0, `l_english` 129,541개, JSON 13,948,863 characters를
 낭독, 한국어·러시아어·중국어 실제 화면, 비Windows와 Node 20 standalone은
 이번에 새로 실측하지 않았다. worker의 host 비용과 atlas 재decode 비용도
 남는다. 실게임/모드 파일을 저장하거나 커밋·게시·배포하지 않았다.
-
-로컬 원시 기록:
-- [native 브라우저 증거](../../.vscode-test/performance/all-eight-1791872667014/browser-proof.json)
-- [최종 host 복구 증거](../../.vscode-test/performance/all-eight-1791872667014/desktop-proof.json)
-- [cache worker 표본](../../.vscode-test/performance/all-eight-1791872667014/cache-worker-benchmark.json)
-- [cropped 실제 웹뷰](../../.vscode-test/performance/all-eight-1791872667014/actual-webview.png)

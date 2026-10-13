@@ -26,7 +26,7 @@ Preview/editor audit and feature research 2026-05-30:
 - [x] Research recent HOI4 modding community pain points and similar GitHub projects.
 - [x] Package findings and feature recommendations into DOCX and XLSX deliverables.
 
-Review note: `PreviewManager` mod-root watcher rebuilds now use a generation token so stale async results cannot replace the newest watcher set, and stale watcher instances are disposed. External research and benchmark recommendations were packaged in `outputs/preview-editor-audit/hoi4_preview_editor_audit.docx` and `outputs/preview-editor-audit/hoi4_preview_editor_feature_backlog.xlsx`. Reverified with `npm run compile-tests`, targeted `npx mocha out/test/unit/previewmanager.test.js`, `npm run compile-ts`, `npm run lint`, spreadsheet render/error scan, DOCX structural inspection, and `git diff --check`. DOCX PNG render could not run because `soffice` was not installed.
+Review note: `PreviewManager` mod-root watcher rebuilds now use a generation token so stale async results cannot replace the newest watcher set, and stale watcher instances are disposed. External research and benchmark recommendations were recorded in local-only Office audit outputs, which are not distributed with the repository. Reverified with `npm run compile-tests`, targeted `npx mocha out/test/unit/previewmanager.test.js`, `npm run compile-ts`, `npm run lint`, spreadsheet render/error scan, DOCX structural inspection, and `git diff --check`. DOCX PNG render could not run because `soffice` was not installed.
 
 Preview/editor bottleneck remediation 2026-05-30:
 - [x] Reconfirm P1/P2 bottleneck candidates from the generated audit document.
@@ -288,7 +288,7 @@ Character preview 2026-05-04:
 - [x] Support direct portrait image paths such as `large = "gfx/Leaders/ZZZ/ZZZ_anarchy.png"`.
 - [ ] Extend optimization fixes beyond Focus Tree once the new metrics rank the next bottlenecks.
 
-Focus Tree loading measurement note 2026-05-01: debug state now exposes host perf entries plus `webviewTimings`, including `load`, `contentUpdateReceived`, `firstContentApplied`, `hydrationApplied`, and `webviewReady` stages. Representative fixtures remain `common/national_focus/preset-smoke.txt` and `GXC focus (Liangguang).txt`; real workspace before/after capture is still pending because it needs a manual cold/warm run against a representative mod workspace.
+Focus Tree loading measurement note 2026-05-01: debug state now exposes host perf entries plus `webviewTimings`, including `load`, `contentUpdateReceived`, `firstContentApplied`, `hydrationApplied`, and `webviewReady` stages. Public representative fixtures are `common/national_focus/preset-smoke.txt` and the project-authored `common/national_focus/multi-tree-preview.txt`; real workspace before/after capture uses separately supplied local mod inputs.
 
 Review note: this pass keeps previous Focus Tree fast-path changes intact and adds local-only measurement hooks across the wider extension. Set `HOI4MU_PERF_TRACE=1` to mirror metric entries to debug logs, or use the Focus Tree debug command to inspect the latest `performance` snapshot. Reverified with `npm run compile-ts`, targeted perf/preview/index/worldmap mocha coverage, `npm run lint`, full `npm run test:unit`, `npm run build`, and `git diff --check`.
 
@@ -404,7 +404,7 @@ Focus Tree late icon/localisation display 2026-04-30:
 Review note: deferred Focus Tree snapshots now use ready-only localisation lookups instead of always suppressing text, and open previews queue a full refresh once localisation indexes finish if they were not ready during first paint. Full hydration starts after 250ms instead of 1200ms so Focus icon placeholders are replaced sooner while preserving the lightweight first snapshot. Reverified with targeted Focus Tree/localisation mocha tests, `npm run compile-ts`, `npm run lint`, `npm run test:unit`, `npm run build`, and `git diff --check`.
 
 TFR-Korea real-mod Focus Tree smoke 2026-04-30:
-- [x] Run Focus Tree loader/render smoke against `TFR-Korea/common/national_focus/TFR_national_focus_KOR.txt`.
+- [x] Run Focus Tree loader/render smoke against a locally supplied TFR-Korea focus input (not redistributed).
 - [x] Identify and fix fileloader read-slot leakage after queued large-mod index reads.
 - [x] Add regression coverage for queued file reads releasing slots.
 - [x] Reverify with targeted fileloader/Focus Tree tests plus standard compile/lint/unit/build checks.

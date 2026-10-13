@@ -13,3 +13,24 @@ out/
 Plan.md
 .vscode-test-web
 /rust/**/target/
+
+# Machine-local tooling, private reports, and local verification inputs.
+/.codex/
+/.private/
+/outputs/
+/FOCUS_EXAMPLE/
+/test/fixtures/workspace/GXC focus (Liangguang).txt
+/test/fixtures/workspace/TFR_national_focus_KOR.txt
+/test/fixtures/workspace/common/national_focus/TFR_national_focus_KOR.txt
+/*.code-workspace
+/.npmrc
+.env
+.env.*
+!.env.example
+
+# Editor locks and operating-system metadata.
+.~lock.*#
+~$*
+.DS_Store
+Thumbs.db
+Desktop.ini

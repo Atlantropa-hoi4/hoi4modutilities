@@ -1,6 +1,10 @@
 const hoiparser = require("../out/src/hoiformat/hoiparser");
-const common = require("../out/src/util/common");
+const fs = require("fs/promises");
 const { recursiveFindAll } = require("./common");
+const inputDirectory = process.argv[2];
+if (!inputDirectory) {
+    throw new Error("Usage: node scripts/findallvals.js <game-or-mod-directory>");
+}
 
 const schemas = {};
 function fillInSchema(node) {
@@ -38,13 +42,13 @@ function fillInSchema(node) {
     }
 }
 
-const result = (async function() {
-    const files = (await recursiveFindAll('E:/Games/steamlib/steamapps/common/Hearts of Iron IV/'))
+(async function() {
+    const files = (await recursiveFindAll(inputDirectory))
         .filter(file => file.match(/\.(txt|gfx|gui)$/))
         .filter(f => !f.includes('common\\countries') && !f.match(/Hearts of Iron IV\\[^\\]*\.txt$/));
 
     const results = await Promise.all(files.map(async (file) => {
-        const content = await common.readFile(file);
+        const content = await fs.readFile(file);
         try {
             return hoiparser.parseHoi4File(content.toString(), 'In file ' + file + ':\n');
         } catch (e) {
@@ -77,5 +81,3 @@ const result = (async function() {
     console.log(JSON.stringify(schemas, undefined, 2));
     // console.log(results.map(r => r.error).filter(r => r).map(r => r.message).join('\n'));
 })();
-
-console.log(result);

@@ -1,0 +1,36 @@
+# Project-authored synthetic fixture for preview selection and reopening tests.
+
+focus_tree = {
+    id = fixture_workshop_tree
+    focus = {
+        id = FIXTURE_SURVEY_START
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = FIXTURE_WORKSHOP_PLAN
+        prerequisite = { focus = FIXTURE_SURVEY_START }
+        relative_position_id = FIXTURE_SURVEY_START
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = FIXTURE_TRAINING_PLAN
+        prerequisite = { focus = FIXTURE_SURVEY_START }
+        x = 2
+        y = 1
+    }
+}
+
+focus_tree = {
+    id = fixture_alternate_tree
+    focus = {
+        id = FIXTURE_ARCHIVE_START
+        x = 0
+        y = 0
+    }
+}
+
+focus_tree = {
+    id = fixture_empty_tree
+}

@@ -2,6 +2,16 @@
 .vscode-test/**
 .vscode-test.mjs
 .codex/**
+.private/**
+.env
+.env.*
+.npmrc
+*.code-workspace
+.~lock.*#
+~$*
+.DS_Store
+Thumbs.db
+Desktop.ini
 out/**
 src/**
 .gitignore

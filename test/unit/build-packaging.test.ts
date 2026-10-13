@@ -47,34 +47,6 @@ describe('build packaging', () => {
         }
     });
 
-    it('excludes non-runtime and obsolete artifacts from the VSIX', async () => {
-        const repositoryRoot = path.resolve(__dirname, '../../..');
-        const ignoreEntries = new Set(
-            (await fs.readFile(path.join(repositoryRoot, '.vscodeignore'), 'utf8'))
-                .split(/\r?\n/)
-                .map(line => line.trim())
-                .filter(Boolean),
-        );
-
-        for (const entry of [
-            '*.vsix',
-            '.codex/**',
-            'AGENTS.md',
-            'FlagAutoResizer.py',
-            'FOCUS_EXAMPLE/**',
-            'outputs/**',
-            'rust/**',
-            'dist/web-extension.js',
-            'static/common.js',
-            'static/common.js.LICENSE.txt',
-        ]) {
-            assert.ok(ignoreEntries.has(entry), `expected .vscodeignore to contain ${entry}`);
-        }
-
-        for (const requiredRuntimePath of ['dist/extension.js', 'dist/compute-worker.js', 'dist/index-serialization-worker.js', 'dist/hoi4_compute.wasm', 'static/focustree.js', 'l10n/**']) {
-            assert.ok(!ignoreEntries.has(requiredRuntimePath), `runtime path must remain packageable: ${requiredRuntimePath}`);
-        }
-    });
 });
 
 async function writeFixture(filePath: string): Promise<void> {

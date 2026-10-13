@@ -44,6 +44,8 @@ function hasCustomEditorTab(viewType: string, uri: vscode.Uri): boolean {
 type FocusPreviewDiagnostics = {
     currentFocusTreeId?: string;
     selectedFocusTreeId?: string;
+    selectedFocusTreeIndex?: number;
+    selectorValue?: string;
     selectorOptionCount?: number;
     selectorSelectedText?: string;
     focusCount?: number;
@@ -61,28 +63,38 @@ type FocusPreviewWebviewTiming = {
     sinceLoadMs?: number;
 };
 
-async function waitForFocusPreviewState(uri: vscode.Uri, expectedTreeId: string): Promise<void> {
+async function waitForFocusPreviewState(uri: vscode.Uri, expected: {
+    treeId: string;
+    treeCount: number;
+    focusCount: number;
+}): Promise<FocusPreviewDiagnostics> {
+    let diagnostics: FocusPreviewDiagnostics | undefined;
     await waitFor(async () => {
         const debugState = await vscode.commands.executeCommand(Commands.DebugFocusTreePreviewState, uri) as {
             diagnostics?: FocusPreviewDiagnostics;
             webviewTimings?: FocusPreviewWebviewTiming[];
         } | undefined;
-        const diagnostics = debugState?.diagnostics;
+        diagnostics = debugState?.diagnostics;
         const timings = debugState?.webviewTimings ?? [];
 
-        return diagnostics?.currentFocusTreeId === expectedTreeId
-            && diagnostics?.selectedFocusTreeId === expectedTreeId
-            && (diagnostics?.selectorOptionCount ?? 0) > 0
-            && diagnostics?.selectorSelectedText === expectedTreeId
-            && (diagnostics?.focusCount ?? 0) > 0
-            && (diagnostics?.focusGridBoxItemCount ?? 0) > 0
-            && (diagnostics?.renderedFocusHitCount ?? 0) > 0
+        return diagnostics?.currentFocusTreeId === expected.treeId
+            && diagnostics?.selectedFocusTreeId === expected.treeId
+            && diagnostics?.selectorOptionCount === expected.treeCount
+            && diagnostics?.selectorSelectedText === expected.treeId
+            && diagnostics?.focusCount === expected.focusCount
+            && diagnostics?.focusGridBoxItemCount === expected.focusCount
+            && diagnostics?.renderedFocusHitCount === expected.focusCount
             && (diagnostics?.currentCanvasWidth ?? 0) > 0
             && (diagnostics?.currentCanvasHeight ?? 0) > 0
             && timings.some(timing => timing.stage === 'firstScenePainted'
                 && (timing.payloadBytes ?? -1) >= 0
                 && (timing.sinceLoadMs ?? -1) >= 0);
-    }, 30000);
+    }, 30000).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${message}\nLast focus diagnostics: ${JSON.stringify(diagnostics)}`);
+    });
+    assert.ok(diagnostics);
+    return diagnostics;
 }
 
 suite('extension smoke', () => {
@@ -344,36 +356,48 @@ suite('extension smoke', () => {
         assert.strictEqual(document.getText(), original);
     });
 
-    test('opens the GXC focus preview and resolves a non-empty current tree', async () => {
+    test('reopens the authored multi-tree focus preview with identical selection and rendered counts', async () => {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
         assert.ok(workspaceRoot);
 
-        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'GXC focus (Liangguang).txt');
+        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'common', 'national_focus', 'multi-tree-preview.txt');
         const document = await vscode.workspace.openTextDocument(fixtureUri);
         await vscode.window.showTextDocument(document);
+        const expected = {
+            treeId: 'fixture_workshop_tree',
+            treeCount: 3,
+            focusCount: 3,
+        };
 
         await vscode.commands.executeCommand(Commands.Preview);
-        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
-        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
-    });
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: multi-tree-preview.txt'), 30000);
+        const before = await waitForFocusPreviewState(fixtureUri, expected);
+        const previewTab = vscode.window.tabGroups.all
+            .flatMap(group => group.tabs)
+            .find(tab => tab.label === 'HOI4: multi-tree-preview.txt' && tab.input instanceof vscode.TabInputWebview);
+        assert.ok(previewTab, 'expected the focus preview tab to close');
+        assert.strictEqual(await vscode.window.tabGroups.close(previewTab), true);
+        await waitFor(() => !hasPreviewTab(WebviewType.Preview, 'HOI4: multi-tree-preview.txt'), 10000);
 
-    test('reopens the GXC focus preview and keeps the current tree diagnostics stable', async () => {
-        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
-        assert.ok(workspaceRoot);
-
-        const fixtureUri = vscode.Uri.joinPath(workspaceRoot!, 'GXC focus (Liangguang).txt');
-        const document = await vscode.workspace.openTextDocument(fixtureUri);
-        await vscode.window.showTextDocument(document);
-
-        await vscode.commands.executeCommand(Commands.Preview);
-        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
-        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
-
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
         await vscode.window.showTextDocument(document);
         await vscode.commands.executeCommand(Commands.Preview);
-        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: GXC focus (Liangguang).txt'), 30000);
-        await waitForFocusPreviewState(fixtureUri, 'GXC_focus_tree');
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: multi-tree-preview.txt'), 30000);
+        const after = await waitForFocusPreviewState(fixtureUri, expected);
+        for (const key of [
+            'currentFocusTreeId',
+            'selectedFocusTreeId',
+            'selectedFocusTreeIndex',
+            'selectorValue',
+            'selectorOptionCount',
+            'selectorSelectedText',
+            'focusCount',
+            'focusGridBoxItemCount',
+            'renderedFocusHitCount',
+            'currentCanvasWidth',
+            'currentCanvasHeight',
+        ] as const) {
+            assert.strictEqual(after[key], before[key], `expected ${key} to remain stable after reopening`);
+        }
     });
 
     test('opens a gui preview webview for a representative fixture', async () => {

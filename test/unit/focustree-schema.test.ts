@@ -25,27 +25,33 @@ describe('focus tree schema fixtures', () => {
         nodeModule._load = originalLoad;
     });
 
-    it('keeps large-tree structure DTOs below half of the previous first-message baselines', () => {
+    it('preserves tree boundaries and prerequisite links in the authored multi-tree preview fixture', () => {
         const { getFocusTree } = loadFocusTreeSchema();
-        const { toFocusTreeViews } = require('../../src/previewdef/focustree/viewmodel') as typeof import('../../src/previewdef/focustree/viewmodel');
-        const fixtures = [
-            { name: 'GXC focus (Liangguang).txt', baselineBytes: 1_430_226 },
-            { name: 'TFR_national_focus_KOR.txt', baselineBytes: 1_765_021 },
-        ];
+        const trees = getFocusTree(
+            parseHoi4File(readFixture('workspace', 'common', 'national_focus', 'multi-tree-preview.txt')),
+            [],
+            'common/national_focus/multi-tree-preview.txt',
+        );
 
-        for (const fixture of fixtures) {
-            const filePath = `test/fixtures/workspace/${fixture.name}`;
-            const trees = getFocusTree(
-                parseHoi4File(readFixture('workspace', fixture.name)),
-                [],
-                filePath,
-            );
-            const viewBytes = Buffer.byteLength(JSON.stringify(toFocusTreeViews(trees)), 'utf8');
-            assert.ok(
-                viewBytes <= fixture.baselineBytes * 0.5,
-                `${fixture.name} view payload was ${viewBytes} bytes`,
-            );
-        }
+        assert.deepStrictEqual(trees.map(tree => ({
+            id: tree.id,
+            kind: tree.kind,
+            focusIds: Object.keys(tree.focuses),
+        })), [
+            {
+                id: 'fixture_workshop_tree',
+                kind: 'focus',
+                focusIds: ['FIXTURE_SURVEY_START', 'FIXTURE_WORKSHOP_PLAN', 'FIXTURE_TRAINING_PLAN'],
+            },
+            { id: 'fixture_alternate_tree', kind: 'focus', focusIds: ['FIXTURE_ARCHIVE_START'] },
+            { id: 'fixture_empty_tree', kind: 'focus', focusIds: [] },
+        ]);
+        const workshop = trees.find(tree => tree.id === 'fixture_workshop_tree');
+        assert.ok(workshop);
+        assert.deepStrictEqual(workshop.focuses.FIXTURE_WORKSHOP_PLAN.prerequisite, [['FIXTURE_SURVEY_START']]);
+        assert.strictEqual(workshop.focuses.FIXTURE_WORKSHOP_PLAN.relativePositionId, 'FIXTURE_SURVEY_START');
+        assert.deepStrictEqual(workshop.focuses.FIXTURE_TRAINING_PLAN.prerequisite, [['FIXTURE_SURVEY_START']]);
+        assert.deepStrictEqual(trees.map(tree => tree.warnings), [[], [], []]);
     });
 
     it('extracts only shared and joint focus ids for indexing', () => {

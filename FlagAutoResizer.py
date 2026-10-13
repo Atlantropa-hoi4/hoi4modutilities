@@ -1,13 +1,15 @@
 import os
+import sys
 import time
 from PIL import Image
 
 #by uncountably
 
-#Change the two directories below to an appropriate one for your mod
-#Both of them must contain directories called 'small' and 'medium'
-image_directory = r"C:/Users/DOHA/Documents/Paradox Interactive/Hearts of Iron IV/mod/81/81/gfx/flags"  # Directory containing the actual mod flags
-output_directory = r"C:/Users/DOHA/Documents/Paradox Interactive/Hearts of Iron IV/mod/81/81/gfx/flags"  # Output directory
+# Both directories must contain folders called 'small' and 'medium'.
+if len(sys.argv) < 2:
+	raise SystemExit("Usage: python FlagAutoResizer.py <flags-directory> [output-directory]")
+image_directory = os.path.abspath(sys.argv[1])
+output_directory = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else image_directory
 
 #print(os.path.realpath(__file__))
 #print(os.path.dirname(os.path.realpath(__file__)))

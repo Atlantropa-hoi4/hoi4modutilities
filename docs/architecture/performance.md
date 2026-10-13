@@ -164,9 +164,10 @@ generated host messages with the real session code (sprites, images, and localis
 stubbed), replayed them into each side's production `static/focustree.js` in headless
 Chrome at 1600 × 1000, and served images as local placeholders. VS Code itself was not
 involved. Every value is the median of five runs; synthetic ranges span two back-to-back
-before/after pairs. Inputs: `FOCUS_EXAMPLE/GXC focus (Liangguang).txt` (553 focuses), a
-TFR Korea national focus file (multiple trees, 626 focuses), and a generated 1,200-focus
-tree in which every card is mounted.
+before/after pairs. Historical inputs included locally supplied GXC (553 focuses) and
+TFR Korea (multiple trees, 626 focuses) files, plus a generated 1,200-focus tree in which
+every card is mounted. Real-mod inputs are not redistributed; clean-checkout tests now
+use project-authored synthetic fixtures.
 
 | Synthetic 1,200-focus tree | Before | After |
 | --- | ---: | ---: |

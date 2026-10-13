@@ -122,6 +122,29 @@ npm run verify
 
 `npm run verify` runs typecheck, bundle build, lint, unit tests, VS Code integration tests, and VSIX packaging.
 
+### Local-only material
+
+Keep `.codex/`, `.private/`, `outputs/`, `prod/`, `.vscode-test/`, environment secrets,
+and editor lock files out of Git and release packages. Profiling sessions can contain
+absolute user paths, cached real-mod data, editor history and screenshots; review and
+redact them before sharing. Ignore rules do not remove files from older Git commits.
+
+Checked-in tests use project-authored synthetic fixtures. Real game or mod inputs for
+local benchmarks must be supplied separately and are not redistributed with this
+repository. Existing author credits, licenses and public demo assets remain intact.
+
+Legacy local utilities accept paths rather than developer-specific defaults:
+
+```bash
+python FlagAutoResizer.py "<flags directory>" "<output directory>"
+npm run compile-tests
+node scripts/dds.js "<DDS file>" 1
+node scripts/findallvals.js "<game or mod directory>"
+```
+
+Both flag directories must already contain `medium` and `small` folders. The extension's
+supported flag-resizing command remains implemented in `src/util/flagAutoResizer.ts`.
+
 ## Release Flow
 
 Push a semantic version tag that matches `package.json`:

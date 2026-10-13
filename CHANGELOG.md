@@ -20,6 +20,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Send versioned Focus Tree style deltas instead of repeated full CSS, resynchronise mismatched bases, and compact superseded rules without dropping loaded scenes or raw style content.
 * Crop and PNG-encode only requested sprite frames, retaining encoded frames without keeping decoded atlas scratch indefinitely.
 * Propagate World Map cancellation through shared-loader consumer leases and compute jobs; cooperatively yield TypeScript fallback, zone and region processing.
+* Remove machine-local automation, private Office outputs and copied real-mod focus files from public tracking; use project-authored fixtures for desktop/schema tests, parameterize legacy utility paths, and keep profiling sessions private.
 
 ### Fixed
 * Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.
