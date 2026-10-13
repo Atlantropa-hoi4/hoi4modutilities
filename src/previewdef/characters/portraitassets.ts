@@ -49,7 +49,7 @@ export function createDefaultCharacterPortraitAssetResolver(): CharacterPortrait
 
         const sprite = await getSpriteByGfxNameFromResolvedFiles(spriteName, gfxFiles);
         return {
-            image: sprite?.frames[0] ?? sprite?.image,
+            image: sprite?.getFrame(0) ?? sprite?.image,
             dependencies: [...dependencies],
         };
     };

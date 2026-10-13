@@ -45,7 +45,7 @@ export class WorldMap {
     constructor(panel: vscode.WebviewPanel) {
         this.panel = panel;
         this.worldMapLoader = this.createWorldMapLoader();
-        this.loadQueue = new WorldMapLoadQueue(request => this.loadWorldMapGeneration(request));
+        this.loadQueue = new WorldMapLoadQueue((request, signal) => this.loadWorldMapGeneration(request, signal));
     }
 
     public initialize(): void {
@@ -230,7 +230,7 @@ export class WorldMap {
         await this.loadQueue.enqueue({ loadGeneration, force });
     }
 
-    private async loadWorldMapGeneration({ loadGeneration, force }: WorldMapLoadRequest): Promise<void> {
+    private async loadWorldMapGeneration({ loadGeneration, force }: WorldMapLoadRequest, signal: AbortSignal): Promise<void> {
         const worldMapLoader = this.worldMapLoader;
         this.loadTimings = { loadGeneration, loadStartedAt: Date.now() };
         this.loaderProgressGenerations.set(worldMapLoader, loadGeneration);
@@ -240,7 +240,7 @@ export class WorldMap {
 
         try {
             const committedWorldMap = this.pendingWorldMap ? undefined : this.committedWorldMap;
-            const loaderSession = new LoaderSession(force, () => this.panel === undefined || !this.isCurrentLoadGeneration(loadGeneration));
+            const loaderSession = new LoaderSession(force, () => this.panel === undefined || !this.isCurrentLoadGeneration(loadGeneration), signal);
             const { result: worldMap, dependencies } = await measureAsync('worldmap.load', { force }, () =>
                 worldMapLoader.load(loaderSession));
             if (!this.isCurrentLoadGeneration(loadGeneration)) {

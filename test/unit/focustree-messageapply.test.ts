@@ -41,7 +41,6 @@ describe('focustree message apply', () => {
             setGridBox: () => undefined,
             setGridSizeX: () => undefined,
             setGridSizeY: () => undefined,
-            replaceDynamicStyleCss: () => undefined,
         });
 
         assert.strictEqual(result, false);
@@ -61,7 +60,7 @@ describe('focustree message apply', () => {
             gridBox: { position: { x: 10, y: 20 } },
             xGridSize: 120,
             yGridSize: 144,
-            dynamicStyleCss: '.focus { opacity: 1; }',
+            style: { kind: 'full', baseId: 'base', version: 1, css: '.focus { opacity: 1; }\n' },
             selectedTreeId: 'tree_b',
             perf: {
                 source: 'initialize',
@@ -117,9 +116,6 @@ describe('focustree message apply', () => {
             setGridSizeY: yGridSize => {
                 applied.yGridSize = yGridSize;
             },
-            replaceDynamicStyleCss: dynamicStyleCss => {
-                applied.dynamicStyleCss = dynamicStyleCss;
-            },
         });
 
         assert.strictEqual(result, true);
@@ -131,7 +127,6 @@ describe('focustree message apply', () => {
         assert.strictEqual(applied.selectedTreeId, 'tree_b');
         assert.strictEqual(applied.selectorRefreshed, true);
         assert.strictEqual(applied.warningsRefreshed, true);
-        assert.strictEqual(applied.dynamicStyleCss, '.focus { opacity: 1; }');
         assert.strictEqual(applied.snapshotVersion, 6);
         assert.strictEqual(applied.documentVersion, 9);
         assert.strictEqual(applied.focusPositionActiveFile, 'common/national_focus/test.txt');
@@ -169,7 +164,6 @@ describe('focustree message apply', () => {
             setGridBox: () => undefined,
             setGridSizeX: () => undefined,
             setGridSizeY: () => undefined,
-            replaceDynamicStyleCss: () => undefined,
         });
 
         assert.strictEqual(result, true);
@@ -215,7 +209,6 @@ describe('focustree message apply', () => {
                 setGridBox: () => undefined,
                 setGridSizeX: () => undefined,
                 setGridSizeY: () => undefined,
-                replaceDynamicStyleCss: () => undefined,
             });
             assert.strictEqual(result, true);
             return state.requested;
@@ -288,7 +281,6 @@ describe('focustree message apply', () => {
             setGridBox: () => undefined,
             setGridSizeX: () => undefined,
             setGridSizeY: () => undefined,
-            replaceDynamicStyleCss: () => undefined,
         });
 
         assert.strictEqual(result, true);

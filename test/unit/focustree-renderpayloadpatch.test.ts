@@ -4,6 +4,7 @@ import {
     createFocusTreeRenderCache,
     createFocusTreeRenderUpdate,
 } from '../../src/previewdef/focustree/renderpayloadpatch';
+import { FocusTreeStyleLedger } from '../../src/previewdef/focustree/stylesync';
 import { toFocusTreeViews } from '../../src/previewdef/focustree/viewmodel';
 import { getPerfSnapshot, resetPerfMetrics } from '../../src/util/perf';
 import type { FocusTree } from '../../src/previewdef/focustree/schema';
@@ -372,7 +373,8 @@ describe('focus tree render payload patching', () => {
         }
         assert.deepStrictEqual(result.update.changedFocusIds, ['FOCUS_A']);
         assert.ok(result.update.changedSlots.includes('styleDeps'));
-        assert.ok((result.update.dynamicStyleCssPatch?.length ?? 0) > 0);
+        assert.strictEqual(result.cache.dynamicStyleRules.has('st-focus-overlay-GFX_focus_overlay'), true);
+        assert.strictEqual(previous.dynamicStyleRules.has('st-focus-overlay-GFX_focus_overlay'), false);
     });
 
     it('records approximate payload size metrics for full snapshots', () => {
@@ -391,6 +393,7 @@ describe('focus tree render payload patching', () => {
             focusIconStyleSignature: '',
             gridBox: { position: { x: 0, y: 0 } },
             dynamicStyleCss: '.focus { opacity: 1; }',
+            dynamicStyleRules: new Map([['focus', 'opacity: 1;']]),
             styleNonce: 'nonce',
             xGridSize: 96,
             yGridSize: 130,
@@ -409,7 +412,7 @@ describe('focus tree render payload patching', () => {
             assert.strictEqual(payloadMetric.tags.deferredAssetLoad, true);
             assert.ok((payloadMetric.tags.focusTreeBytes as number) > 0);
             assert.ok((payloadMetric.tags.focusTemplateBytes as number) > 0);
-            assert.ok((payloadMetric.tags.dynamicStyleBytes as number) > 0);
+            assert.strictEqual(payloadMetric.tags.dynamicStyleChars, 'focus'.length + 'opacity: 1;'.length);
         } finally {
             if (previousTraceValue === undefined) {
                 delete process.env.HOI4MU_PERF_TRACE;
@@ -725,21 +728,29 @@ describe('focus tree render payload patching', () => {
             return { ...createBaseState(tree, 2), hasWarningsButton: false };
         };
 
+        // The session posts each committed rule set through its ledger, like this one.
+        const ledger = new FocusTreeStyleLedger({ createBaseId: () => 'base' });
+        ledger.sync(previous.dynamicStyleRules);
+
         const first = await createFocusTreeRenderUpdate(previous, withOverlay('GFX_overlay_a'));
         assert.strictEqual(first.kind, 'partial');
         if (first.kind !== 'partial') {
             return;
         }
-        assert.match(first.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
-        assert.match(first.update.dynamicStyleCssPatch ?? '', /st-focus-overlay-GFX_overlay_a/);
+        assert.ok(first.update.changedSlots.includes('styleDeps'));
+        const firstSync = ledger.sync(first.cache.dynamicStyleRules);
+        assert.strictEqual(firstSync?.kind, 'delta');
+        assert.match(firstSync?.css ?? '', /st-focus-icon-GFX_FOCUS_A/);
+        assert.match(firstSync?.css ?? '', /st-focus-overlay-GFX_overlay_a/);
 
         const second = await createFocusTreeRenderUpdate(first.cache, withOverlay('GFX_overlay_b'));
         assert.strictEqual(second.kind, 'partial');
         if (second.kind !== 'partial') {
             return;
         }
-        assert.doesNotMatch(second.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
-        assert.match(second.update.dynamicStyleCssPatch ?? '', /st-focus-overlay-GFX_overlay_b/);
+        const secondSync = ledger.sync(second.cache.dynamicStyleRules);
+        assert.doesNotMatch(secondSync?.css ?? '', /st-focus-icon-GFX_FOCUS_A/, 'unchanged rules do not travel again');
+        assert.match(secondSync?.css ?? '', /st-focus-overlay-GFX_overlay_b/);
         assert.strictEqual(second.cache.dynamicStyleRules.has('st-focus-overlay-GFX_overlay_a'), true);
     });
 
@@ -791,10 +802,14 @@ describe('focus tree render payload patching', () => {
             return;
         }
         assert.deepStrictEqual(result.update.changedFocusIds, ['FOCUS_B']);
-        assert.match(result.update.dynamicStyleCssPatch ?? '', /\.st-focus-icon-GFX_FOCUS_NEW \{[^}]*background: grey/);
-        assert.doesNotMatch(result.update.dynamicStyleCssPatch ?? '', /st-focus-icon-GFX_FOCUS_A/);
+        assert.match(result.cache.dynamicStyleRules.get('st-focus-icon-GFX_FOCUS_NEW') ?? '', /background: grey/);
         assert.strictEqual(result.cache.dynamicStyleRules.get('st-focus-icon-GFX_FOCUS_A'), loadedIconRule);
         assert.deepStrictEqual(result.cache.materializedFocusIds, ['FOCUS_A']);
+        const ledger = new FocusTreeStyleLedger({ createBaseId: () => 'base' });
+        ledger.sync(previous.dynamicStyleRules);
+        const sync = ledger.sync(result.cache.dynamicStyleRules);
+        assert.match(sync?.css ?? '', /\.st-focus-icon-GFX_FOCUS_NEW \{[^}]*background: grey/);
+        assert.doesNotMatch(sync?.css ?? '', /st-focus-icon-GFX_FOCUS_A/);
     });
 
     it('never caches render signatures for unprepared trees and hydrates a newly selected scope', async () => {

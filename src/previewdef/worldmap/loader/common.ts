@@ -3,6 +3,7 @@ import { DetailValue, Enum } from '../../../hoiformat/schema';
 import { clipNumber, hsvToRgb } from '../../../util/common';
 import { Loader as CommonLoader, FileLoader as CommonFileLoader, FolderLoader as CommonFolderLoader, mergeInLoadResult as commonMergeInLoadResult, LoadResult as CommonLoadResult, LoadResultOD as CommonLoadResultOD } from '../../../util/loader/loader';
 import { maxBy } from "lodash";
+import { finishCooperativeWork, WorkBudget } from '../../../util/cooperative';
 
 export abstract class Loader<T> extends CommonLoader<T, MapLoaderExtra> {}
 export abstract class FileLoader<T> extends CommonFileLoader<T, MapLoaderExtra> {}
@@ -123,10 +124,22 @@ export function mergeRegion<K extends string, T extends { [k in K]: number[] }>(
 }
 
 export function mergeRegions(regions: (Zone | Region)[], width: number): Region {
+    return finishCooperativeWork(mergeRegionsSteps(regions, width));
+}
+
+export function* mergeRegionsSteps(regions: (Zone | Region)[], width: number, work = new WorkBudget()): Generator<void, Region> {
     const oneFourthWidth = 0.25 * width;
     const halfWidth = 0.5 * width;
     const threeFourthWidth = 0.75 * width;
-    const nearBorder = regions.map(r => 'mass' in r ? r.boundingBox : r).every(z => z.w + z.x < oneFourthWidth || z.x > threeFourthWidth);
+    let nearBorder = true;
+    for (const region of regions) {
+        const zone = 'mass' in region ? region.boundingBox : region;
+        if (!(zone.w + zone.x < oneFourthWidth || zone.x > threeFourthWidth)) {
+            nearBorder = false;
+            break;
+        }
+        if (work.shouldYield()) { yield; }
+    }
 
     let massX = 0;
     let massY = 0;
@@ -156,6 +169,7 @@ export function mergeRegions(regions: (Zone | Region)[], width: number): Region 
         minY = Math.min(minY, regionBondingBox.y);
         maxX = Math.max(maxX, regionBondingBox.x + regionBondingBox.w + (nearBorder && regionBondingBox.x > halfWidth ? -width : 0));
         maxY = Math.max(maxY, regionBondingBox.y + regionBondingBox.h);
+        if (work.shouldYield()) { yield; }
     }
 
     let x = massX / mass;

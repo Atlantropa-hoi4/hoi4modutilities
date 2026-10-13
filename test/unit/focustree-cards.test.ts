@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import type { FocusView } from '../../src/previewdef/focustree/viewmodel';
 import {
     FocusCardRenderInput,
+    getFocusCompletionLabel,
     getFocusIconClassName,
     isSameFocusCardMarkup,
     renderFocusCardHtml,
@@ -83,6 +84,20 @@ describe('focus tree webview cards', () => {
             + ' file="common/national_focus/test.txt"><div class="st-focus-icon-GFX_default"></div>'
             + '<span data-preview-label-id="FOCUS_&lt;A&gt;" data-preview-label-name="Focus &quot;A&quot;" data-preview-label-css-toggle="true">'
             + '<span class="preview-label-id-text">FOCUS_&lt;A&gt;</span><span class="preview-label-name-text">Focus "A"</span></span></div>');
+    });
+
+    it('names each completion checkbox after its focus the way the card is labelled', () => {
+        const english = (focusLabel: string) => `Mark ${focusLabel} as completed`;
+        const korean = (focusLabel: string) => `${focusLabel} 완료로 표시`;
+        const focus = createFocus();
+
+        assert.strictEqual(getFocusCompletionLabel(focus, 'id', english), 'Mark FOCUS_<A> as completed');
+        assert.strictEqual(getFocusCompletionLabel(focus, 'name', english), 'Mark Focus "A" as completed');
+        assert.strictEqual(getFocusCompletionLabel(focus, 'name', korean), 'Focus "A" 완료로 표시');
+        assert.strictEqual(getFocusCompletionLabel(createFocus({ displayName: undefined }), 'name', english),
+            'Mark FOCUS_<A> as completed', 'a focus without a localised name keeps its id');
+        assert.notStrictEqual(getFocusCompletionLabel(createFocus({ id: 'FOCUS_B' }), 'id', english),
+            getFocusCompletionLabel(focus, 'id', english), 'checkboxes of different focuses are told apart');
     });
 
     it('treats positions and label modes as in-place changes', () => {

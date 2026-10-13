@@ -63,8 +63,10 @@ export interface FocusTreeRenderCache extends FocusTreeRenderMetadata {
     focusIconGfxFileByName: Record<string, string>;
     focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
-    dynamicStyleCss: string;
-    /** Rules already present in `dynamicStyleCss`. */
+    /**
+     * Dynamic class rules of the loaded scenes. The session replaces them with its style ledger's
+     * rules whenever it commits or posts, so they always state what the webview's stylesheet holds.
+     */
     dynamicStyleRules: ReadonlyMap<string, string>;
     xGridSize: number;
     yGridSize: number;
@@ -130,7 +132,6 @@ export function createFocusTreeRenderCache(
         focusIconGfxFileByName: payload.focusIconGfxFileByName,
         focusIconStyleSignature: payload.focusIconStyleSignature ?? '',
         gridBox: payload.gridBox,
-        dynamicStyleCss: payload.dynamicStyleCss,
         dynamicStyleRules: payload.dynamicStyleRules ?? new Map(),
         xGridSize: payload.xGridSize,
         yGridSize: payload.yGridSize,
@@ -187,12 +188,13 @@ function createFullFocusTreeRenderUpdateWithMetadata(
         continuousFocusHtml: payload.continuousFocusHtml,
         focusTemplates: [payload.focusTemplates, payload.focusTemplateKeyById],
         renderedInlayWindows: payload.renderedInlayWindows,
-        dynamicStyleCss: payload.dynamicStyleCss,
+        styleRules: payload.dynamicStyleRules ?? [],
         focusCount: Object.keys(payload.focusTemplateKeyById).length,
         inlayCount: Object.keys(payload.renderedInlayWindows).length,
     });
     if (previousCache && isInPlacePresentationUpdate) {
-        // The webview keeps its scene; only changed tree data and presentation are sent.
+        // The webview keeps its scene; only changed tree data and presentation are sent. The
+        // session posts the payload's style rules as a delta on the webview's stylesheet.
         const focusTreePatches = createFocusTreeViewPatches(previousCache, cache);
         return {
             cache,
@@ -212,7 +214,6 @@ function createFullFocusTreeRenderUpdateWithMetadata(
                 focusTemplates: payload.focusTemplates,
                 focusTemplateKeyById: payload.focusTemplateKeyById,
                 renderedInlayWindows: payload.renderedInlayWindows,
-                dynamicStyleCss: payload.dynamicStyleCss,
                 assetMaterialization: getFocusTreeAssetMaterialization(cache),
             },
         };
@@ -237,7 +238,6 @@ function createFullFocusTreeRenderUpdateWithMetadata(
             focusTemplateKeyById: payload.focusTemplateKeyById,
             renderedInlayWindows: payload.renderedInlayWindows,
             gridBox: payload.gridBox,
-            dynamicStyleCss: payload.dynamicStyleCss,
             xGridSize: payload.xGridSize,
             yGridSize: payload.yGridSize,
             assetMaterialization: getFocusTreeAssetMaterialization(cache),
@@ -252,34 +252,6 @@ export function getFocusTreeAssetMaterialization(
     return cache.deferredAssetLoad
         ? { deferred: true, focusIds: [] }
         : { deferred: false, focusIds: cache.materializedFocusIds && [...cache.materializedFocusIds] };
-}
-
-/** Serializes class rules in the format of `StyleTable.toStyleContent`. */
-export function serializeFocusTreeStyleRules(rules: Iterable<readonly [key: string, content: string]>): string {
-    let css = '';
-    for (const [key, content] of rules) {
-        css += `.${key} { ${content.replace(/^\s+/gm, '')} }\n`;
-    }
-    return css;
-}
-
-/**
- * Appends rules of `nextRules` that `previousRules` lacks or defines differently. Later rules win
- * the cascade, so the result renders like a full rebuild without repeating unchanged rules.
- */
-export function mergeFocusTreeStyleRules(
-    previousCss: string,
-    previousRules: ReadonlyMap<string, string>,
-    nextRules: ReadonlyMap<string, string>,
-): { dynamicStyleCss: string; dynamicStyleRules: ReadonlyMap<string, string>; appendedCss: string } {
-    const appended = Array.from(nextRules).filter(([key, content]) => previousRules.get(key) !== content);
-    if (appended.length === 0) {
-        return { dynamicStyleCss: previousCss, dynamicStyleRules: previousRules, appendedCss: '' };
-    }
-    const appendedCss = serializeFocusTreeStyleRules(appended);
-    const dynamicStyleRules = new Map(previousRules);
-    appended.forEach(([key, content]) => dynamicStyleRules.set(key, content));
-    return { dynamicStyleCss: `${previousCss}\n${appendedCss}`, dynamicStyleRules, appendedCss };
 }
 
 export async function createFocusTreeRenderUpdate(
@@ -342,7 +314,7 @@ export async function createFocusTreeRenderUpdate(
     if (focusSignatureDiff.changedKeys.length > 0 || focusSignatureDiff.removedKeys.length > 0) {
         changedSlots.add('treeBody');
     }
-    if (presentationPatch.dynamicStyleCssPatch) {
+    if (presentationPatch.newStyleRules.length > 0) {
         changedSlots.add('styleDeps');
     }
     const cache: FocusTreeRenderCache = {
@@ -358,9 +330,6 @@ export async function createFocusTreeRenderUpdate(
         focusIconGfxFileByName: nextBaseState.focusIconGfxFileByName,
         focusIconStyleSignature: nextBaseState.focusIconStyleSignature ?? '',
         gridBox: nextBaseState.gridBox,
-        dynamicStyleCss: presentationPatch.dynamicStyleCssPatch
-            ? `${previous.dynamicStyleCss}\n${presentationPatch.dynamicStyleCssPatch}`
-            : previous.dynamicStyleCss,
         dynamicStyleRules: presentationPatch.dynamicStyleRules,
         xGridSize: nextBaseState.xGridSize,
         yGridSize: nextBaseState.yGridSize,
@@ -376,7 +345,7 @@ export async function createFocusTreeRenderUpdate(
         focusTrees: focusTreePatches,
         focusTemplates: [focusTemplatePatch, focusTemplateKeyPatch],
         renderedInlayWindows: {},
-        dynamicStyleCss: presentationPatch.dynamicStyleCssPatch,
+        styleRules: presentationPatch.newStyleRules,
         focusCount: focusSignatureDiff.changedKeys.length,
         inlayCount: 0,
     });
@@ -399,7 +368,6 @@ export async function createFocusTreeRenderUpdate(
             focusTemplatePatch: Object.keys(focusTemplatePatch).length > 0 ? focusTemplatePatch : undefined,
             focusTemplateKeyPatch: Object.keys(focusTemplateKeyPatch).length > 0 ? focusTemplateKeyPatch : undefined,
             removedFocusTemplateKeyIds: focusSignatureDiff.removedKeys.length > 0 ? focusSignatureDiff.removedKeys : undefined,
-            dynamicStyleCssPatch: presentationPatch.dynamicStyleCssPatch || undefined,
         },
         cache,
         changedTreeCount: changedTreeIds.length,
@@ -521,7 +489,7 @@ function recordFocusTreePayloadSize(
         focusTemplates: unknown;
         continuousFocusHtml?: string;
         renderedInlayWindows: unknown;
-        dynamicStyleCss: string;
+        styleRules: Iterable<readonly [key: string, content: string]>;
         focusCount: number;
         inlayCount: number;
     },
@@ -529,13 +497,17 @@ function recordFocusTreePayloadSize(
     if (!isPerfTraceEnabled()) {
         return;
     }
+    let dynamicStyleChars = 0;
+    for (const [key, content] of payload.styleRules) {
+        dynamicStyleChars += key.length + content.length;
+    }
     recordPerf('focustree.payloadSize', 0, {
         kind,
         deferredAssetLoad,
         focusTreeBytes: approximateJsonByteLength(payload.focusTrees),
         focusTemplateBytes: approximateJsonByteLength(payload.focusTemplates),
         renderedInlayBytes: approximateJsonByteLength(payload.renderedInlayWindows),
-        dynamicStyleBytes: Buffer.byteLength(payload.dynamicStyleCss, 'utf8'),
+        dynamicStyleChars,
         focusCount: payload.focusCount,
         inlayCount: payload.inlayCount,
     });
@@ -811,7 +783,8 @@ async function renderChangedFocusPresentation(
     isCancelled?: () => boolean,
     materializedFocusIds?: ReadonlySet<string>,
 ): Promise<FocusCardTemplates & {
-    dynamicStyleCssPatch: string;
+    /** Rules the existing ones lack or define differently. */
+    newStyleRules: Array<[key: string, content: string]>;
     dynamicStyleRules: ReadonlyMap<string, string>;
 }> {
     const styleTable = createFocusTreeStyleTable();
@@ -847,15 +820,11 @@ async function renderChangedFocusPresentation(
 
     throwIfFocusTreeRenderCancelled(isCancelled);
     // Content-addressed class names let patches reuse rules the webview already has.
-    const newRules = styleTable.rules().filter(([key, content]) => existingStyleRules.get(key) !== content);
-    if (newRules.length === 0) {
-        return { ...cardTemplates, dynamicStyleCssPatch: '', dynamicStyleRules: existingStyleRules };
+    const newStyleRules = styleTable.rules().filter(([key, content]) => existingStyleRules.get(key) !== content);
+    if (newStyleRules.length === 0) {
+        return { ...cardTemplates, newStyleRules, dynamicStyleRules: existingStyleRules };
     }
     const dynamicStyleRules = new Map(existingStyleRules);
-    newRules.forEach(([key, content]) => dynamicStyleRules.set(key, content));
-    return {
-        ...cardTemplates,
-        dynamicStyleCssPatch: styleTable.toStyleContent(existingStyleRules).trim(),
-        dynamicStyleRules,
-    };
+    newStyleRules.forEach(([key, content]) => dynamicStyleRules.set(key, content));
+    return { ...cardTemplates, newStyleRules, dynamicStyleRules };
 }

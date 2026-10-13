@@ -25,6 +25,7 @@ import {
     PendingFocusLinkType,
     runtime,
 } from './runtime';
+import { getFocusNavigationTarget, navigateToFocus } from './navigation';
 import { focusScene } from './scenestore';
 import {
     clearCurrentSelectedFocusIds,
@@ -38,6 +39,7 @@ import {
     refreshLinkParentState,
     setHoveredRelationFocusId,
 } from './visualstate';
+import { closeFocusWarningsPanelOnEscape } from './warnings';
 
 type FocusSelectionRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type ActiveFocusSelectionMarquee = {
@@ -120,26 +122,6 @@ function postFocusEdit(command: string, payload: Record<string, unknown>): boole
     return true;
 }
 
-/** Navigation data for a focus card, read from the current view rather than stale markup. */
-export function getFocusNavigationTarget(card: HTMLElement): { start?: number; end?: number; file?: string; focusId?: string } {
-    const focusId = card.dataset.focusId || undefined;
-    const focus = focusId ? runtime.renderedFocusTree?.focuses[focusId] : undefined;
-    return {
-        start: focus?.start,
-        end: focus?.end,
-        file: card.getAttribute('file') ?? undefined,
-        focusId,
-    };
-}
-
-function navigateToFocusDefinition(card: HTMLElement): void {
-    vscode.postMessage({
-        command: 'navigate',
-        ...getFocusNavigationTarget(card),
-        documentVersion: runtime.focusPositionDocumentVersion,
-    });
-}
-
 function clearPendingFocusNavigate(): void {
     if (focusNavigateTimer !== undefined) {
         window.clearTimeout(focusNavigateTimer);
@@ -152,7 +134,7 @@ function scheduleFocusNavigate(card: HTMLElement): void {
     focusNavigateTimer = window.setTimeout(() => {
         focusNavigateTimer = undefined;
         if (runtime.focusPositionEditMode && !hasPendingFocusLink()) {
-            navigateToFocusDefinition(card);
+            navigateToFocus(getFocusNavigationTarget(card));
         }
     }, focusNavigateDelayMs);
 }
@@ -707,6 +689,10 @@ function setupFocusPointerHandlers(): void {
         hideFocusContextMenu();
         if (hasPendingFocusLink()) {
             clearPendingFocusLink();
+            return;
+        }
+        // An open warnings panel closes before Escape clears the focus selection behind it.
+        if (closeFocusWarningsPanelOnEscape()) {
             return;
         }
         clearActiveFocusSelectionMarquee();

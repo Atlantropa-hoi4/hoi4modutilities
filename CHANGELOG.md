@@ -16,12 +16,20 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Prioritize interactive preview reads over background index reads in a shared bounded pool, while preserving coalescing, file precedence, unsaved content, and background progress.
 * Extract shared-focus IDs and GFX sprite names with a lightweight Rust/WASM scanner; keep the original parser for unsupported syntax and resolve ready workspace hits without waiting for global indexes.
 * Serialize Focus Tree root/dependency refreshes, retain only the latest pending update, and remove the extra Undo/Redo debounce.
+* Publish in-memory indexes before best-effort disk persistence; move cache JSON, UTF-8 and checksums into a bounded worker, validate decoded snapshot shapes, and rebuild old cache files in the new format.
+* Send versioned Focus Tree style deltas instead of repeated full CSS, resynchronise mismatched bases, and compact superseded rules without dropping loaded scenes or raw style content.
+* Crop and PNG-encode only requested sprite frames, retaining encoded frames without keeping decoded atlas scratch indefinitely.
+* Propagate World Map cancellation through shared-loader consumer leases and compute jobs; cooperatively yield TypeScript fallback, zone and region processing.
 
 ### Fixed
 * Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.
 * Keep the latest requested Focus Tree selected when asynchronous scene loading finishes, and require real on-screen icons before reporting assets ready.
 * Preserve loaded shared-icon styles when merging a newly selected Focus Tree, so an off-screen placeholder cannot erase an already hydrated icon on cached revisits.
 * Restore hidden allow-branch selections in Focus Tree Preview when conditions are disabled.
+* Refresh dependent previews after workspace localisation commits, and reject stale per-file parses during the existing typing debounce window.
+* Publish generation-tagged World Map collection diffs atomically on matching completion; ignore stale or repeated completion without mutating already published maps.
+* Include late-mounted Focus Tree cards in Enter/Shift+Enter search traversal, mounting the target before scrolling and preserving Alt+Enter source navigation.
+* Make shared dropdown options keyboard-accessible without nested checkbox Tab stops, name each focus completion checkbox, and isolate covered content while warnings are open, including focus restoration on Escape or automatic close.
 * Format blocks that start with content on the opening-brace line and close on a later line: a lone entry closes back into an inline block, such as `traits = { AFR_red_queen_trait }`, and other content moves to its own line. Wrapped lists that close right after their last entry keep their layout.
 * Stop classifying non-script `.txt` files in a Steam game folder (`steamapps/common/<game>`) as HOI4 scripts.
 

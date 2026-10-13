@@ -13,7 +13,14 @@ import type * as HoiParserModule from '../../src/hoiformat/hoiparser';
 import type * as RenderPatchModule from '../../src/previewdef/focustree/renderpayloadpatch';
 import type * as FocusViewModule from '../../src/previewdef/focustree/viewmodel';
 import type * as FocusIconAssetsModule from '../../src/previewdef/focustree/focusicongfx';
-import type { FocusTreeAssetRequestMessage } from '../../src/previewdef/focustree/webviewupdate';
+import type * as StyleSyncModule from '../../src/previewdef/focustree/stylesync';
+import type * as AssetDemandModule from '../../webviewsrc/focustree/assetdemand';
+import type {
+    FocusTreeAssetMaterialization,
+    FocusTreeAssetRequestMessage,
+    FocusTreeSceneAssetsStatus,
+    FocusTreeStyleSync,
+} from '../../src/previewdef/focustree/webviewupdate';
 import { applyFocusTreeContentUpdate } from '../../webviewsrc/focustree/messageapply';
 import type { FocusTreeMessageApplyContext } from '../../webviewsrc/focustree/messageapply';
 
@@ -189,7 +196,7 @@ function createSession(overrides?: {
                     renderedInlayWindows: {},
                     focusIconGfxFileByName: {},
                     gridBox: baseState.gridBox,
-                    dynamicStyleCss: '',
+                    dynamicStyleRules: new Map<string, string>(),
                     xGridSize: baseState.xGridSize,
                     yGridSize: baseState.yGridSize,
                     focusPositionDocumentVersion: baseState.focusPositionDocumentVersion,
@@ -346,7 +353,6 @@ describe('focustree preview session', () => {
             setRenderedInlayWindows: () => undefined, patchRenderedInlayWindows: () => undefined,
             refreshFocusTreeSelectorOptions: () => undefined, refreshWarningsButtonVisibility: () => undefined,
             setGridBox: () => undefined, setGridSizeX: () => undefined, setGridSizeY: () => undefined,
-            replaceDynamicStyleCss: () => undefined,
         };
         assert.strictEqual(applyFocusTreeContentUpdate(merged, consumer), true);
         assert.strictEqual(selectedTreeId, 'A', 'Late hydration must not override a cached client-local switch');
@@ -522,7 +528,6 @@ describe('focustree preview session', () => {
                     focusTemplateKeyById: { FIRST: 'first', SECOND: 'second' },
                     renderedInlayWindows: {},
                     gridBox: baseState.gridBox,
-                    dynamicStyleCss: '',
                     xGridSize: 96,
                     yGridSize: 130,
                 },
@@ -854,7 +859,7 @@ describe('focustree preview session', () => {
             focusIconGfxFileByName: {},
             focusIconStyleSignature: 'hydrated-icons',
             gridBox: { position: { x: 0, y: 0 } },
-            dynamicStyleCss: '.hydrated-icons {}',
+            dynamicStyleRules: new Map([['hydrated-icons', '']]),
             xGridSize: 96,
             yGridSize: 130,
             focusPositionDocumentVersion: document.version - 1,
@@ -1078,50 +1083,76 @@ describe('focustree preview session', () => {
 });
 
 const { FocusTreeInvalidation } = require('../../src/previewdef/focustree/invalidation') as typeof import('../../src/previewdef/focustree/invalidation');
-const { FocusAssetMaterializationState } = require('../../webviewsrc/focustree/assetdemand') as typeof import('../../webviewsrc/focustree/assetdemand');
+const { FocusAssetMaterializationState } = require('../../webviewsrc/focustree/assetdemand') as typeof AssetDemandModule;
+const { FocusTreeStyleReceiver } = require('../../src/previewdef/focustree/stylesync') as typeof StyleSyncModule;
 
 function serializeRules(rules: Iterable<readonly [string, string]>): string {
     return Array.from(rules).map(([key, content]) => `.${key} { ${content} }\n`).join('');
 }
 
-function countOccurrences(text: string, value: string): number {
-    return text.split(value).length - 1;
-}
-
-/** The content of the last rule for `key` in a stylesheet, which wins the cascade. */
-function getCascadedRule(css: string, key: string): string | undefined {
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
-    const pattern = new RegExp(`\\.${escapedKey} \\{\\s*([^}]*?)\\s*\\}`, 'g');
-    let content: string | undefined;
-    for (const match of css.matchAll(pattern)) {
-        content = match[1];
-    }
-    return content;
+/** Rules of serialized test CSS, in order; the fixtures' rule bodies contain no braces. */
+function parseRules(css: string): Array<[selector: string, content: string]> {
+    return Array.from(css.matchAll(/\.([^\s{]+) \{\s*([^}]*?)\s*\}/g), match => [match[1], match[2]]);
 }
 
 /**
- * What the webview holds after the posted messages, applied like `hostsync`: scene and full
- * updates replace the stylesheet and the materialized set; patches append rules and focuses.
+ * A webview stylesheet as `stylesheet.ts` keeps it: a full sync replaces every rule, and an
+ * appended rule replaces the earlier rule of its selector.
  */
-function getWebviewAssetState(messages: readonly any[]): { css: string; materialization: InstanceType<typeof FocusAssetMaterializationState> } {
-    let css = '';
+function createWebviewStyleSheet() {
+    const rules = new Map<string, string>();
+    const transported: Array<{ kind: 'replace' | 'append'; css: string }> = [];
+    return {
+        rules,
+        transported,
+        target: {
+            replace(css: string) {
+                transported.push({ kind: 'replace', css });
+                rules.clear();
+                parseRules(css).forEach(([selector, content]) => rules.set(selector, content));
+            },
+            append(css: string) {
+                transported.push({ kind: 'append', css });
+                parseRules(css).forEach(([selector, content]) => {
+                    rules.delete(selector);
+                    rules.set(selector, content);
+                });
+            },
+        },
+    };
+}
+
+/** The fields of a posted message that change the webview's stylesheet and materialized focuses. */
+interface PostedAssetMessage {
+    command?: string;
+    style?: FocusTreeStyleSync;
+    status?: FocusTreeSceneAssetsStatus;
+    materializedFocusIds?: string[];
+    assetMaterialization?: FocusTreeAssetMaterialization;
+}
+
+/**
+ * What the webview holds after the posted messages, applied like `hostsync`: every style sync in
+ * arrival order, scene and full updates replacing the materialized set, patches adding to it.
+ */
+function getWebviewAssetState(messages: readonly PostedAssetMessage[]) {
+    const sheet = createWebviewStyleSheet();
+    const resyncRequests: number[] = [];
+    const receiver = new FocusTreeStyleReceiver(sheet.target, () => resyncRequests.push(resyncRequests.length));
     const materialization = new FocusAssetMaterializationState();
     for (const message of messages) {
+        receiver.apply(message.style);
         if (message.command === 'focusTreeSceneAssets') {
             if (message.status === 'applied') {
-                css += message.dynamicStyleCssPatch ?? '';
                 materialization.add(message.materializedFocusIds ?? []);
             }
             continue;
-        }
-        if (message.changedSlots?.includes('styleDeps')) {
-            css = message.dynamicStyleCss !== undefined ? message.dynamicStyleCss : css + (message.dynamicStyleCssPatch ?? '');
         }
         if (message.assetMaterialization) {
             materialization.replace(message.assetMaterialization);
         }
     }
-    return { css, materialization };
+    return { rules: sheet.rules, transported: sheet.transported, resyncRequests, materialization, receiver };
 }
 
 /**
@@ -1159,7 +1190,8 @@ function createAssetFixture(version: number) {
     let baseStateLocalised = false;
     const iconName = (focusId: string) => focusById[focusId].icon[0].icon!;
     const iconRuleKey = (focusId: string) => `st-focus-icon-${iconName(focusId)}`;
-    const realRule = (focusId: string) => `real:${iconName(focusId).replace(/^GFX_/, '')};`;
+    // Changed icon textures change the decoded rule, like a new image body would.
+    const realRule = (focusId: string) => `real:${iconName(focusId).replace(/^GFX_/, '')}${iconStyleSignature === 'icons-1' ? '' : `@${iconStyleSignature}`};`;
     const fixture = createSession({
         latestDocument: document,
         deferredHydrationDelayMs: 10_000,
@@ -1233,7 +1265,7 @@ function createAssetFixture(version: number) {
                 .filter(focus => options.resendFocusIds?.has(focus.id)
                     || options.existingStyleRules.get(iconRuleKey(focus.id)) !== realRule(focus.id))
                 .forEach(focus => rules.set(iconRuleKey(focus.id), realRule(focus.id)));
-            return { css: serializeRules(rules), rules: Array.from(rules) };
+            return { rules: Array.from(rules) };
         },
     });
     const sceneAssets = (assetRequestId?: number) => fixture.postMessages
@@ -1330,22 +1362,23 @@ describe('focustree preview session visible-first assets', () => {
             ['visible', ['A2'], base, base + 1, false],
             ['nearby', ['A3'], base + 1, base + 2, true],
         ], 'B1 belongs to an unloaded tree and is ignored');
-        assert.match(revealed[0].dynamicStyleCssPatch, /real:A2;/);
-        assert.doesNotMatch(revealed[0].dynamicStyleCssPatch, /real:A1;/);
+        assert.strictEqual(revealed[0].style.kind, 'delta');
+        assert.match(revealed[0].style.css, /real:A2;/);
+        assert.doesNotMatch(revealed[0].style.css, /real:A1;/);
         const cache = fixture.runtimeState.lastRenderCache!;
         assert.deepStrictEqual(cache.materializedFocusIds, ['A1', 'A2', 'A3']);
         assert.strictEqual(cache.snapshotVersion, base + 2);
         assert.strictEqual(cache.dynamicStyleRules.get('st-focus-icon-GFX_A2'), 'real:A2;');
-        assert.strictEqual(countOccurrences(cache.dynamicStyleCss, 'real:A2;'), 1);
+        assert.strictEqual(getWebviewAssetState(fixture.postMessages).rules.get('st-focus-icon-GFX_A2'), 'real:A2;');
 
         // A request computed before the webview saw A2's patch must not receive it again.
         await fixture.request(2, ['A2'], [], { snapshotVersion: base });
         assert.deepStrictEqual((await fixture.finalResponse(2)).map(message => message.status), ['empty']);
-        // A webview that saw the patch and still asks lacks the rule; it is sent again.
+        // A webview that saw the patch and still asks is marked again; its stylesheet already
+        // holds the rule, so the image body does not travel twice.
         await fixture.request(3, ['A2'], [], { snapshotVersion: base + 2 });
         const resent = await fixture.finalResponse(3);
-        assert.strictEqual(resent[0].status, 'applied');
-        assert.match(resent[0].dynamicStyleCssPatch, /real:A2;/);
+        assert.deepStrictEqual(resent.map(message => [message.status, message.materializedFocusIds, message.style]), [['applied', ['A2'], undefined]]);
         assert.deepStrictEqual(fixture.patchCalls.at(-1), { focusIds: ['A2'], resend: ['A2'] });
         fixture.session.dispose();
     });
@@ -1385,9 +1418,10 @@ describe('focustree preview session visible-first assets', () => {
         assert.strictEqual(scene.command, 'focusTreeScene');
         assert.deepStrictEqual(scene.assetMaterialization, { deferred: false, focusIds: ['A1', 'A2'] },
             'the new tree arrives with placeholders; loaded scenes keep their icons');
-        assert.strictEqual(countOccurrences(scene.dynamicStyleCss, 'real:A1;'), 1, 'merged scenes do not repeat rules');
-        assert.strictEqual(countOccurrences(scene.dynamicStyleCss, 'real:A2;'), 1);
-        assert.match(scene.dynamicStyleCss, /st-focus-icon-GFX_B1 \{ placeholder; \}/);
+        assert.strictEqual(scene.style.kind, 'delta', 'a merged scene adds to the stylesheet the webview has');
+        assert.doesNotMatch(scene.style.css, /real:A1;|real:A2;/, 'loaded rules do not travel again');
+        assert.match(scene.style.css, /st-focus-icon-GFX_B1 \{ placeholder; \}/);
+        assert.strictEqual(getWebviewAssetState(fixture.postMessages).rules.get('st-focus-icon-GFX_A2'), 'real:A2;');
 
         await fixture.request(2, ['B1'], ['B2'], { treeId: 'B' });
         const shown = await fixture.finalResponse(2);
@@ -1407,14 +1441,15 @@ describe('focustree preview session visible-first assets', () => {
         const focusIds = ['A1', 'A2', 'A3', 'D1', 'D2'];
         /** Focuses the webview counts as materialized, each rendering its real icon rule. */
         const assertWebviewRendersMaterializedIcons = (step: string, materializedFocusIds: string[]) => {
-            const { css, materialization } = getWebviewAssetState(fixture.postMessages);
+            const { rules, materialization, resyncRequests } = getWebviewAssetState(fixture.postMessages);
+            assert.deepStrictEqual(resyncRequests, [], `${step}: every style delta fits the webview's stylesheet`);
             assert.deepStrictEqual(focusIds.filter(focusId => !materialization.isPending(focusId)), materializedFocusIds,
                 `${step}: materialized focuses`);
             for (const focusId of materializedFocusIds) {
-                assert.strictEqual(getCascadedRule(css, fixture.iconRuleKey(focusId)), fixture.realRule(focusId),
+                assert.strictEqual(rules.get(fixture.iconRuleKey(focusId)), fixture.realRule(focusId),
                     `${step}: ${focusId} renders its real icon, not a placeholder`);
             }
-            assert.strictEqual(fixture.runtimeState.lastRenderCache?.dynamicStyleRules.get(sharedKey), 'real:A1;',
+            assert.strictEqual(fixture.runtimeState.lastRenderCache?.dynamicStyleRules.get(sharedKey), fixture.realRule('A1'),
                 `${step}: the host's rule index agrees with the webview`);
         };
 
@@ -1427,7 +1462,8 @@ describe('focustree preview session visible-first assets', () => {
         const scene = fixture.postMessages.at(-1);
         assert.strictEqual(scene.command, 'focusTreeScene');
         assert.strictEqual(scene.treeId, 'D');
-        assert.strictEqual(getCascadedRule(scene.dynamicStyleCss, fixture.iconRuleKey('D2')), 'placeholder;');
+        assert.deepStrictEqual(parseRules(scene.style.css), [[fixture.iconRuleKey('D2'), 'placeholder;']],
+            'only the new scene\'s missing rule travels');
         assertWebviewRendersMaterializedIcons('other tree hydrated', ['A1']);
 
         await fixture.request(1, ['D2'], [], { treeId: 'D' });
@@ -1458,14 +1494,65 @@ describe('focustree preview session visible-first assets', () => {
         const fullSync = fixture.fullSnapshotCalls.at(-1)!;
         assert.deepStrictEqual([...fullSync.treeIds].sort(), ['A', 'D'], 'the full sync covers every loaded scene');
         assert.deepStrictEqual([...fullSync.materializedFocusIds ?? []].sort(), ['A1', 'D2']);
+        const assetUpdate = fixture.postMessages.filter(message => message.command !== 'focusTreeSceneAssets').at(-1);
+        assert.deepStrictEqual(parseRules(assetUpdate.style.css).map(([selector]) => selector).sort(),
+            [fixture.iconRuleKey('A1'), fixture.iconRuleKey('D2')].sort(), 'exactly the changed icon bodies travel');
         assertWebviewRendersMaterializedIcons('full sync', ['A1', 'D2']);
 
         // Revealing D1 later only extends the bookkeeping: its icon is already real.
         await fixture.request(2, ['D1'], [], { treeId: 'D', documentVersion: latest.version });
         const revealed = await fixture.finalResponse(2);
-        assert.deepStrictEqual(revealed.map(message => [message.status, message.materializedFocusIds, message.dynamicStyleCssPatch]),
+        assert.deepStrictEqual(revealed.map(message => [message.status, message.materializedFocusIds, message.style]),
             [['applied', ['D1'], undefined]]);
         assertWebviewRendersMaterializedIcons('shared icon revealed', ['A1', 'D1', 'D2']);
+        fixture.session.dispose();
+    });
+
+    it('resyncs a webview whose stylesheet missed a delta and gives a restored webview every rule', async () => {
+        const fixture = createAssetFixture(112);
+        await fixture.hydrate(['A1']);
+        await fixture.request(1, ['A2']);
+        await fixture.finalResponse(1);
+        await fixture.session.handleSceneRequest('B');
+        const sceneIndex = fixture.postMessages.length - 1;
+        assert.strictEqual(fixture.postMessages[sceneIndex].style.kind, 'delta');
+
+        // The webview lost the scene's delta, so the next delta cannot apply; it reports that
+        // through its asset request channel without asking for any focus.
+        const lost = fixture.postMessages.map((message, index) => index === sceneIndex ? { ...message, style: undefined } : message);
+        const resyncIndex = fixture.postMessages.length;
+        await fixture.session.handleAssetRequest({
+            command: 'focusTreeAssetRequest',
+            protocolVersion: focusTreeProtocolVersion,
+            assetRequestId: 0,
+            treeId: 'B',
+            snapshotVersion: fixture.runtimeState.lastRenderCache!.snapshotVersion,
+            documentVersion: fixture.document.version,
+            visibleFocusIds: [],
+            nearbyFocusIds: [],
+            styleResync: true,
+        });
+        const resync = fixture.postMessages.slice(resyncIndex);
+        assert.deepStrictEqual(resync.map(message => message.command), ['focusTreeStyleSync'], 'a style-only report queues no asset work');
+        assert.strictEqual(resync[0].style.kind, 'full');
+        const recovered = getWebviewAssetState([...lost, ...resync]);
+        assert.deepStrictEqual(recovered.rules, new Map(fixture.runtimeState.lastRenderCache!.dynamicStyleRules));
+        assert.strictEqual(recovered.rules.get('st-focus-icon-GFX_A2'), 'real:A2;');
+        assert.strictEqual(recovered.rules.get('st-focus-icon-GFX_B1'), 'placeholder;');
+
+        // A restored webview document announces itself again; its first sync carries every rule.
+        fixture.session.handleWebviewReady('B');
+        const restoredIndex = fixture.postMessages.length;
+        await fixture.request(2, ['B2'], [], { treeId: 'B' });
+        const restored = await fixture.finalResponse(2);
+        const restoredMessages = fixture.postMessages.slice(restoredIndex);
+        assert.deepStrictEqual(restored.map(message => [message.status, message.materializedFocusIds]), [['applied', ['B2']]]);
+        assert.strictEqual(restored[0].style.kind, 'full', 'a new document holds no stylesheet to extend');
+        const fresh = getWebviewAssetState(restoredMessages);
+        assert.deepStrictEqual(fresh.resyncRequests, []);
+        assert.strictEqual(fresh.rules.get('st-focus-icon-GFX_A1'), 'real:A1;', 'loaded scenes keep their icons');
+        assert.strictEqual(fresh.rules.get('st-focus-icon-GFX_B2'), 'real:B2;');
+        assert.deepStrictEqual(fresh.rules, new Map(fixture.runtimeState.lastRenderCache!.dynamicStyleRules));
         fixture.session.dispose();
     });
 
@@ -1540,7 +1627,12 @@ describe('focustree preview session visible-first assets', () => {
         const refreshed = fixture.postMessages.filter(message => message.command !== 'focusTreeSceneAssets').at(-1);
         assert.strictEqual(refreshed.perf.source, 'dependency');
         assert.deepStrictEqual(refreshed.assetMaterialization, { deferred: false, focusIds: ['A1', 'A2'] });
-        assert.match(refreshed.dynamicStyleCss, /real:A2;/, 'the full update replaces every materialized rule');
+        assert.strictEqual(refreshed.style.kind, 'delta');
+        assert.deepStrictEqual(parseRules(refreshed.style.css), [
+            ['st-focus-icon-GFX_A1', 'real:A1@icons-2;'],
+            ['st-focus-icon-GFX_A2', 'real:A2@icons-2;'],
+        ], 'every materialized rule is replaced; unchanged placeholders stay where they are');
+        assert.strictEqual(getWebviewAssetState(fixture.postMessages).rules.get('st-focus-icon-GFX_A2'), 'real:A2@icons-2;');
 
         const queued = await fixture.finalResponse(2);
         assert.deepStrictEqual(queued.map(message => [message.status, message.materializedFocusIds, message.baseSnapshotVersion]),

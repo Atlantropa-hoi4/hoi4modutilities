@@ -32,6 +32,27 @@ describe('latest update coordinator', () => {
         assert.deepStrictEqual(commits, ['new']);
     });
 
+    it('rejects an in-flight value before the debounced replacement is queued without dropping another path', async () => {
+        const coordinator = new LatestUpdateCoordinator<string>();
+        const old = createDeferred<string>();
+        const commits: string[] = [];
+        let started = false;
+        const pending = coordinator.update('edited-file', async () => {
+            started = true;
+            return old.promise;
+        }, value => commits.push(value));
+        await waitFor(() => started);
+
+        coordinator.invalidate('edited-file');
+        await coordinator.update('other-file', async () => 'other-current', value => commits.push(value));
+        old.resolve('stale-before-debounce');
+        await pending;
+        assert.deepStrictEqual(commits, ['other-current']);
+
+        await coordinator.update('edited-file', async () => 'latest-after-debounce', value => commits.push(value));
+        assert.deepStrictEqual(commits, ['other-current', 'latest-after-debounce']);
+    });
+
     it('prevents a pending add from committing after the path is deleted', async () => {
         const coordinator = new LatestUpdateCoordinator<string>();
         const load = createDeferred<string>();

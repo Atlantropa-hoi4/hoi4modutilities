@@ -38,13 +38,12 @@ function sceneAssets(overrides: Partial<FocusTreeSceneAssetsMessage>): FocusTree
         status: 'applied',
         final: true,
         materializedFocusIds: ['B'],
-        dynamicStyleCssPatch: '.st-focus-icon-GFX_B { background-image: url(b.png); }',
+        style: { kind: 'delta', baseId: 'base', baseVersion: 2, version: 3, css: '.st-focus-icon-GFX_B { background-image: url(b.png); }\n' },
         ...overrides,
     };
 }
 
 function applyContext(state: { documentVersion: number; snapshotVersion: number; latestRequestId: number }) {
-    const css: string[] = [];
     const materialized = new FocusAssetMaterializationState();
     materialized.replace({ deferred: false, focusIds: ['A'] });
     const context: FocusTreeSceneAssetsApplyContext = {
@@ -52,10 +51,9 @@ function applyContext(state: { documentVersion: number; snapshotVersion: number;
         getSnapshotVersion: () => state.snapshotVersion,
         setSnapshotVersion: snapshotVersion => { state.snapshotVersion = snapshotVersion; },
         getLatestRequestId: () => state.latestRequestId,
-        appendDynamicStyleCss: value => css.push(value),
         addMaterializedFocusIds: focusIds => materialized.add(focusIds),
     };
-    return { context, css, materialized };
+    return { context, materialized };
 }
 
 describe('focus tree asset demand', () => {
@@ -284,21 +282,19 @@ describe('focus tree scene readiness', () => {
 });
 
 describe('focus tree asset patch application', () => {
-    it('adds rules and focuses and advances the snapshot from its base', () => {
+    it('marks focuses loaded and advances the snapshot from its base', () => {
         const state = { documentVersion: 7, snapshotVersion: 4, latestRequestId: 3 };
-        const { context, css, materialized } = applyContext(state);
+        const { context, materialized } = applyContext(state);
         assert.strictEqual(applyFocusTreeSceneAssets(sceneAssets({}), context), true);
-        assert.deepStrictEqual(css, ['.st-focus-icon-GFX_B { background-image: url(b.png); }']);
         assert.strictEqual(materialized.isPending('B'), false);
         assert.strictEqual(state.snapshotVersion, 5);
     });
 
     it('keeps the snapshot when the patch was computed from another base', () => {
         const state = { documentVersion: 7, snapshotVersion: 6, latestRequestId: 3 };
-        const { context, css, materialized } = applyContext(state);
+        const { context, materialized } = applyContext(state);
         assert.strictEqual(applyFocusTreeSceneAssets(sceneAssets({}), context), true);
-        assert.strictEqual(css.length, 1, 'ordered delivery makes the rules current for this document');
-        assert.strictEqual(materialized.isPending('B'), false);
+        assert.strictEqual(materialized.isPending('B'), false, 'ordered delivery makes the rules current for this document');
         assert.strictEqual(state.snapshotVersion, 6, 'later host deltas detect the divergence instead');
     });
 
@@ -309,9 +305,8 @@ describe('focus tree asset patch application', () => {
             [{ status: 'stale', materializedFocusIds: undefined }, { documentVersion: 7, snapshotVersion: 4, latestRequestId: 3 }],
             [{ protocolVersion: 3 as unknown as typeof focusTreeProtocolVersion }, { documentVersion: 7, snapshotVersion: 4, latestRequestId: 3 }],
         ] as Array<[Partial<FocusTreeSceneAssetsMessage>, { documentVersion: number; snapshotVersion: number; latestRequestId: number }]>) {
-            const { context, css, materialized } = applyContext(state);
+            const { context, materialized } = applyContext(state);
             assert.strictEqual(applyFocusTreeSceneAssets(sceneAssets(overrides), context), false, JSON.stringify(overrides));
-            assert.deepStrictEqual(css, []);
             assert.strictEqual(materialized.isPending('B'), true);
             assert.strictEqual(state.snapshotVersion, 4);
         }

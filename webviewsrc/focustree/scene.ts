@@ -221,13 +221,24 @@ export class FocusScene {
             return [];
         }
 
-        return Object.values(geometry.nodes).map(node => {
-            const wrapper = this.wrappers.get(node.id);
-            const hidden = wrapper
-                ? wrapper.classList.contains('focus-branch-hidden')
-                : (this.itemsById.get(node.id)?.classNames ?? '').split(/\s+/).some(className => !!className && isHiddenBranchClass(className));
-            return { id: node.id, slot: node.slot, hidden };
-        });
+        return Object.values(geometry.nodes).map(node => ({
+            id: node.id,
+            slot: node.slot,
+            hidden: this.isInHiddenBranch(node.id, isHiddenBranchClass),
+        }));
+    }
+
+    /** Whether a focus is laid out and outside every hidden branch, mounted or not. */
+    public isFocusShown(focusId: string, isHiddenBranchClass: (className: string) => boolean): boolean {
+        return !!this.geometry?.nodes[focusId] && !this.isInHiddenBranch(focusId, isHiddenBranchClass);
+    }
+
+    /** Mounted nodes carry the hidden-branch class; unmounted ones are judged by their branch classes. */
+    private isInHiddenBranch(focusId: string, isHiddenBranchClass: (className: string) => boolean): boolean {
+        const wrapper = this.wrappers.get(focusId);
+        return wrapper
+            ? wrapper.classList.contains('focus-branch-hidden')
+            : (this.itemsById.get(focusId)?.classNames ?? '').split(/\s+/).some(className => !!className && isHiddenBranchClass(className));
     }
 
     public clear(): void {

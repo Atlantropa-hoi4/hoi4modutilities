@@ -12,12 +12,14 @@ import { localize } from './i18n';
 import { Logger } from "./logger";
 import { YAMLException } from "js-yaml";
 import { IndexService } from '../services/indexService';
+import { isLocalisationIndexSnapshot } from '../services/indexSnapshotValidation';
 import { getConfiguration } from './vsccommon';
 import { parseLocalisationFileContent } from './localisationparser';
 import { LatestGeneration, LatestUpdateCoordinator } from './latestUpdate';
 import { ConfigurationKey } from '../constants';
 import { getRelativePathWithinRoot } from './nodecommon';
 import { onDidChangeSelectedModSource } from './modfile';
+import { notifyWorkspaceLocalisationIndexCommitted } from './localisationIndexEvents';
 
 export { parseLocalisationFile, parseLocalisationFileContent, preprocessYamlContent } from './localisationparser';
 
@@ -40,6 +42,7 @@ let globalLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationIndex: LocalisationData = {};
 let workspaceLocalisationFileIndexes: Record<string, LocalisationData> = {};
 const workspaceLocalisationUpdates = new LatestUpdateCoordinator<string>();
+const pendingWorkspaceLocalisationChanges = new Map<string, vscode.Uri>();
 const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
     global: {
         cache: {
@@ -48,6 +51,7 @@ const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
                 return createGlobalLocalisationFileFilter(getConfiguration().previewLocalisation);
             },
         },
+        validateCacheSnapshot: isLocalisationIndexSnapshot,
         build: (estimatedSize, signal) => buildGlobalLocalisationIndex(estimatedSize, signal),
         commit: snapshot => {
             globalLocalisationIndex = snapshot.index;
@@ -60,11 +64,15 @@ const localisationIndexService = new IndexService<LocalisationIndexSnapshot>({
     },
     workspace: {
         cache: { folder: 'localisation', extension: '.yml', layer: 'workspace' },
+        validateCacheSnapshot: isLocalisationIndexSnapshot,
         build: (estimatedSize, signal) => buildWorkspaceLocalisationIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceLocalisationUpdates.invalidateAll();
             workspaceLocalisationIndex = snapshot.index;
             workspaceLocalisationFileIndexes = snapshot.fileIndexes ?? {};
+            const changedFiles = Array.from(pendingWorkspaceLocalisationChanges.values());
+            pendingWorkspaceLocalisationChanges.clear();
+            notifyWorkspaceLocalisationIndexCommitted(changedFiles);
         },
         reset: () => {
             workspaceLocalisationUpdates.invalidateAll();
@@ -415,7 +423,15 @@ function rebuildActiveLocalisationIndex(targetId: 'global' | 'workspace'): void 
     localisationIndexService.rebuildIfActive(targetId, { showStatusBar: false });
 }
 
-function prepareWorkspaceLocalisationIncrementalUpdate(): boolean {
+function prepareWorkspaceLocalisationIncrementalUpdate(files: readonly vscode.Uri[], root?: vscode.Uri): boolean {
+    for (const file of files) {
+        const relative = getWorkspaceLocalisationIndexRelativePath(file, root);
+        if (relative) {
+            // A newer edit must invalidate a running parse, not only the later debounced task.
+            workspaceLocalisationUpdates.invalidate(relative);
+            pendingWorkspaceLocalisationChanges.set(relative, file);
+        }
+    }
     if (localisationIndexService.isReady('workspace')) {
         return true;
     }
@@ -429,7 +445,7 @@ function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
         return;
     }
     refreshFileContentSource();
-    if (!prepareWorkspaceLocalisationIncrementalUpdate()) {
+    if (!prepareWorkspaceLocalisationIncrementalUpdate([file])) {
         return;
     }
     onChangeTextDocumentImpl(file);
@@ -437,7 +453,7 @@ function onChangeTextDocument(e: vscode.TextDocumentChangeEvent) {
 
 const onChangeTextDocumentImpl = debounceByInput(
     (file: vscode.Uri) => {
-        if (prepareWorkspaceLocalisationIncrementalUpdate()) {
+        if (prepareWorkspaceLocalisationIncrementalUpdate([file])) {
             replaceWorkspaceLocalisationIndex(file);
         }
     },
@@ -452,7 +468,7 @@ function onCloseTextDocument(document: vscode.TextDocument) {
         return;
     }
     refreshFileContentSource();
-    if (!prepareWorkspaceLocalisationIncrementalUpdate()) {
+    if (!prepareWorkspaceLocalisationIncrementalUpdate([file])) {
         return;
     }
     replaceWorkspaceLocalisationIndex(file);
@@ -464,7 +480,7 @@ function onCreateFiles(e: vscode.FileCreateEvent) {
         return;
     }
     refreshFileContentSource();
-    if (!prepareWorkspaceLocalisationIncrementalUpdate()) {
+    if (!prepareWorkspaceLocalisationIncrementalUpdate(files)) {
         return;
     }
     for (const file of files) {
@@ -478,7 +494,7 @@ function onDeleteFiles(e: vscode.FileDeleteEvent) {
         return;
     }
     refreshFileContentSource();
-    if (!prepareWorkspaceLocalisationIncrementalUpdate()) {
+    if (!prepareWorkspaceLocalisationIncrementalUpdate(files)) {
         return;
     }
     for (const file of files) {
@@ -502,7 +518,7 @@ function createLocalisationIndexFileWatcher(
             return;
         }
         refreshFileContentSource();
-        if (prepareWorkspaceLocalisationIncrementalUpdate()) {
+        if (prepareWorkspaceLocalisationIncrementalUpdate([file], root)) {
             replaceWorkspaceLocalisationIndex(file, root);
         }
     };
@@ -533,6 +549,8 @@ function replaceWorkspaceLocalisationIndex(file: vscode.Uri, root?: vscode.Uri):
             relative,
             fileIndex,
         );
+        pendingWorkspaceLocalisationChanges.delete(relative);
+        notifyWorkspaceLocalisationIndexCommitted([file]);
     });
 }
 

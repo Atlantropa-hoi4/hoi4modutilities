@@ -42,13 +42,34 @@ export interface FocusTreeContentUpdateMessage {
     renderedInlayWindowPatch?: Record<string, string>;
     removedRenderedInlayWindowIds?: string[];
     gridBox?: unknown;
-    dynamicStyleCss?: string;
-    dynamicStyleCssPatch?: string;
+    /** Dynamic style changes; the webview applies them in arrival order, even for stale content. */
+    style?: FocusTreeStyleSync;
     xGridSize?: number;
     yGridSize?: number;
     /** Replaces the webview's materialized focus set; patches omit it and keep the current set. */
     assetMaterialization?: FocusTreeAssetMaterialization;
     perf?: FocusTreeContentUpdatePerf;
+}
+
+/** Identity of a dynamic stylesheet: the host ledger's base and the last sync applied on it. */
+export interface FocusTreeStyleBase {
+    baseId: string;
+    version: number;
+}
+
+/**
+ * Dynamic style changes. A `full` sync replaces the webview's whole dynamic stylesheet and starts
+ * its base; a `delta` adds changed and new rules and applies only on the base version it names.
+ */
+export type FocusTreeStyleSync =
+    | { kind: 'full'; baseId: string; version: number; css: string }
+    | { kind: 'delta'; baseId: string; baseVersion: number; version: number; css: string };
+
+/** Host → webview: a whole stylesheet the webview asked for after a delta did not apply. */
+export interface FocusTreeStyleSyncMessage {
+    command: 'focusTreeStyleSync';
+    protocolVersion: typeof focusTreeProtocolVersion;
+    style: FocusTreeStyleSync;
 }
 
 /**
@@ -92,6 +113,8 @@ export interface FocusTreeAssetRequestMessage {
     visibleFocusIds: string[];
     /** Within the prefetch margin around the screen; closest first. */
     nearbyFocusIds: string[];
+    /** A style delta did not fit the webview's stylesheet; the host answers with a whole one. */
+    styleResync?: boolean;
 }
 
 export type FocusTreeSceneAssetsStatus = 'applied' | 'empty' | 'stale' | 'failed';
@@ -115,8 +138,8 @@ export interface FocusTreeSceneAssetsMessage {
     final: boolean;
     /** Focuses whose assets this patch adds. */
     materializedFocusIds?: string[];
-    /** Style rules the webview does not have yet, plus rules it asked for again. */
-    dynamicStyleCssPatch?: string;
+    /** Icon rules the webview does not have yet. */
+    style?: FocusTreeStyleSync;
 }
 
 export interface FocusTreeCatalogMessage extends FocusTreeContentUpdateMessage {
@@ -138,6 +161,16 @@ export interface FocusTreeAssetBatchMessage extends FocusTreeContentUpdateMessag
     command: 'focusTreeAssetBatch';
     updateType: 'assets';
     batchKind?: 'content';
+}
+
+/** Host → webview: icon rules of a full build, streamed before the build's own update. */
+export interface FocusTreeAssetStyleBatchMessage {
+    command: 'focusTreeAssetBatch';
+    protocolVersion: typeof focusTreeProtocolVersion;
+    batchKind: 'style';
+    requestId: number;
+    batchIndex: number;
+    style: FocusTreeStyleSync;
 }
 
 export type FocusTreeHostMessage =

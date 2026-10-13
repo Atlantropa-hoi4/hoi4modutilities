@@ -59,7 +59,8 @@ modules._load = function(request, parent, isMain) {
             getImageByPath: async () => image,
             getSpriteByGfxName: async (name: string) => {
                 spriteLookups.push(name);
-                return { image, frames: [image, { ...image, uri: 'data:image/png;base64,AQ==' }] };
+                return { image, getFrame: (frame: number) => frame === 0 ? image
+                    : frame === 1 ? { ...image, uri: 'data:image/png;base64,AQ==' } : undefined };
             },
         };
     }

@@ -13,6 +13,7 @@ export class LoaderSession {
     constructor(
         public readonly force: boolean,
         private readonly cancelled?: () => boolean,
+        public readonly signal?: AbortSignal,
     ) {}
 
     public isLoaded(loader: AnyLoader): boolean {
@@ -71,17 +72,21 @@ export class LoaderSession {
         }
     }
 
-    public forChild(): LoaderSession {
-        const child = new LoaderSession(this.force, this.cancelled);
+    public forChild(cancelled = this.cancelled, signal = this.signal): LoaderSession {
+        const child = new LoaderSession(this.force, cancelled, signal);
         child.loadedLoaders = this.loadedLoaders;
         child.shouldReloadStates = this.shouldReloadStates;
         child.cachedLoaders = this.cachedLoaders;
         child.loadingLoaders = [...this.loadingLoaders];
         return child;
     }
+    public isCancelled(): boolean {
+        return this.signal?.aborted === true || this.cancelled?.call(this) === true;
+    }
+
 
     public throwIfCancelled(): void {
-        if (this.cancelled?.call(this)) {
+        if (this.isCancelled()) {
             throw new UserError('Load session cancelled.');
         }
     }

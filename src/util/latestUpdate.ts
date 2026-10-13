@@ -29,6 +29,11 @@ export class LatestUpdateCoordinator<TKey> {
         return operation;
     }
 
+    /** Reject an in-flight value immediately, before a debounced replacement is queued. */
+    public invalidate(key: TKey): void {
+        this.currentRevisions.delete(key);
+    }
+
     public invalidateAll(): void {
         this.epoch += 1;
         this.currentRevisions.clear();

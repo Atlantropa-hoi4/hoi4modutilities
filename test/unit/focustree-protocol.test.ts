@@ -2,9 +2,9 @@ import * as assert from 'assert';
 import { focusTreeProtocolVersion } from '../../src/previewdef/focustree/viewmodel';
 import { getFocusTreeHostCommand } from '../../src/previewdef/focustree/webviewupdate';
 
-describe('focus tree webview protocol v4', () => {
-    it('uses the delta-patch protocol version', () => {
-        assert.strictEqual(focusTreeProtocolVersion, 4);
+describe('focus tree webview protocol v5', () => {
+    it('uses the versioned style-sync protocol version', () => {
+        assert.strictEqual(focusTreeProtocolVersion, 5);
     });
 
     it('maps content changes to the discriminated message commands', () => {

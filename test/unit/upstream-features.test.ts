@@ -4,6 +4,11 @@ import { parseHoi4File } from '../../src/hoiformat/hoiparser';
 import { convertNodeToJson } from '../../src/hoiformat/schema';
 import { guiFileSchema, GuiFile } from '../../src/hoiformat/gui';
 import { StyleTable } from '../../src/util/styletable';
+import { waitFor } from '../testUtils';
+import type * as IndexServiceModule from '../../src/services/indexService';
+import type * as IndexCacheModule from '../../src/services/indexCache';
+import * as path from 'node:path';
+import type * as IndexSerializationModule from '../../src/services/indexSerialization';
 
 // Keep module mocks local to each test, including lazy imports made during an async load.
 async function isolated(mocks: Record<string, unknown>, run: () => Promise<void>): Promise<void> {
@@ -36,53 +41,65 @@ const shared = { vscode, telemetry: { sendEvent: () => undefined }, context: { c
 describe('imported preview features', () => {
     it('persists warm indexes, separates mod namespaces and rejects stale or damaged snapshots', async () => {
         const files = new Map<string, Uint8Array>();
-        let mod = 'one.mod'; let source = 'first'; let dirty = false; let builds = 0;
-        const uri = (value: string): any => ({ path: value, toString: () => value, with: (change: { path: string }) => uri(change.path) });
+        let mod = 'one.mod'; let source = 'first'; let dirty = false; let builds = 0; let renames = 0;
+        type StorageUri = { path: string; toString(): string; with(change: { path: string }): StorageUri };
+        const uri = (value: string): StorageUri => ({ path: value, toString: () => value, with: change => uri(change.path) });
         const storage = uri('/storage');
         const config = () => ({ installPath: '/game', modFile: mod, loadDlcContents: true });
-        const vscodeMock = { ...vscode, Uri: { joinPath: (base: any, ...parts: string[]) => uri(base.path + '/' + parts.join('/')) }, workspace: {
+        const vscodeMock = { ...vscode, Uri: { joinPath: (base: StorageUri, ...parts: string[]) => uri(base.path + '/' + parts.join('/')) }, workspace: {
             getConfiguration: config, workspaceFolders: [{ uri: uri('/mod') }], fs: {
-                stat: async (file: any) => { const content = files.get(file.path); if (!content) { throw new Error('missing'); } return { size: content.length }; },
-                readFile: async (file: any) => files.get(file.path),
-                writeFile: async (file: any, content: Uint8Array) => { files.set(file.path, content); },
+                stat: async (file: StorageUri) => { const content = files.get(file.path); if (!content) { throw new Error('missing'); } return { size: content.length }; },
+                readFile: async (file: StorageUri) => { const content = files.get(file.path); if (!content) { throw new Error('missing'); } return content; },
+                writeFile: async (file: StorageUri, content: Uint8Array) => { files.set(file.path, content); },
                 createDirectory: async () => undefined,
-                rename: async (from: any, to: any) => { files.set(to.path, files.get(from.path)!); files.delete(from.path); },
-                delete: async (file: any) => { files.delete(file.path); },
+                rename: async (from: StorageUri, to: StorageUri) => { files.set(to.path, files.get(from.path)!); files.delete(from.path); renames++; },
+                delete: async (file: StorageUri) => { files.delete(file.path); },
             },
         } };
         await isolated({ ...shared, vscode: vscodeMock, context: { contextContainer: { current: { globalStorageUri: storage } } }, fileloader: {
             listFilesFromModOrHOI4: async () => ['a.txt'], getFilePathFromModOrHOI4: async () => uri('/mod/a.txt'),
             expiryToken: async () => source, isHoiFileOpened: () => dirty, readFileFromPath: async () => [Buffer.from(source)],
         } }, async () => {
-            const { IndexService } = require('../../src/services/indexService') as typeof import('../../src/services/indexService');
-            const { indexCacheUri, indexFingerprint, readIndexCache } = require('../../src/services/indexCache') as typeof import('../../src/services/indexCache');
-            const spec = { folder: 'events', extension: '.txt', layer: 'all' as const };
-            const committed: string[] = [];
-            const create = () => new IndexService({ events: { cache: spec,
-                build: async () => { builds++; return { content: source }; }, commit: snapshot => committed.push(snapshot.content),
-                reset: () => undefined, statusMessage: 'Building', telemetryEvent: 'eventTest',
-            } });
-            await create().ensure('events', { showStatusBar: false });
-            await create().ensure('events', { showStatusBar: false });
-            assert.strictEqual(builds, 1);
-            assert.deepStrictEqual(committed, ['first', 'first']);
-            const firstUri = indexCacheUri('eventTest')!;
-            const firstFingerprint = await indexFingerprint(spec, new AbortController().signal);
-            mod = 'two.mod'; assert.notStrictEqual(indexCacheUri('eventTest')!.toString(), firstUri.toString()); mod = 'one.mod';
-            source = 'changed';
-            await create().ensure('events', { showStatusBar: false });
-            assert.strictEqual(builds, 2);
-            assert.strictEqual(await readIndexCache(firstUri, firstFingerprint), undefined);
-            const fingerprint = await indexFingerprint(spec, new AbortController().signal);
-            const envelope = JSON.parse(Buffer.from(files.get(firstUri.path)!).toString()); envelope.data = '{"content":"tampered"}';
-            files.set(firstUri.path, Buffer.from(JSON.stringify(envelope)));
-            assert.strictEqual(await readIndexCache(firstUri, fingerprint), undefined);
-            dirty = true;
-            const dirtyFingerprint = await indexFingerprint(spec, new AbortController().signal);
-            assert.strictEqual(await indexFingerprint(spec, new AbortController().signal), dirtyFingerprint);
-            source = 'unsaved edit';
-            assert.notStrictEqual(await indexFingerprint(spec, new AbortController().signal), dirtyFingerprint);
-            assert.ok([...files.keys()].every(key => !key.endsWith('.tmp')));
+            const { IndexService } = require('../../src/services/indexService') as typeof IndexServiceModule;
+            const { indexCacheUri, indexFingerprint, readIndexCache } = require('../../src/services/indexCache') as typeof IndexCacheModule;
+            const { registerIndexSerialization } = require('../../src/services/indexSerialization') as typeof IndexSerializationModule;
+            const serialization = registerIndexSerialization(path.resolve(__dirname, '../../..'));
+            try {
+                const spec = { folder: 'events', extension: '.txt', layer: 'all' as const };
+                const committed: string[] = [];
+                const create = () => new IndexService({ events: { cache: spec,
+                    validateCacheSnapshot: (value: unknown): value is { content: string } =>
+                        !!value && typeof value === 'object' && 'content' in value && typeof value.content === 'string',
+                    build: async () => { builds++; return { content: source }; }, commit: snapshot => committed.push(snapshot.content),
+                    reset: () => undefined, statusMessage: 'Building', telemetryEvent: 'eventTest',
+                } });
+                await create().ensure('events', { showStatusBar: false });
+                await waitFor(() => renames === 1);
+                await create().ensure('events', { showStatusBar: false });
+                assert.strictEqual(builds, 1);
+                assert.deepStrictEqual(committed, ['first', 'first']);
+                const firstUri = indexCacheUri('eventTest')!;
+                const firstFingerprint = await indexFingerprint(spec, new AbortController().signal);
+                mod = 'two.mod'; assert.notStrictEqual(indexCacheUri('eventTest')!.toString(), firstUri.toString()); mod = 'one.mod';
+                source = 'changed';
+                await create().ensure('events', { showStatusBar: false });
+                assert.strictEqual(builds, 2);
+                await waitFor(() => renames === 2);
+                assert.strictEqual(await readIndexCache(firstUri, firstFingerprint), undefined);
+                const fingerprint = await indexFingerprint(spec, new AbortController().signal);
+                const damaged = Uint8Array.from(files.get(firstUri.path)!);
+                damaged[damaged.length - 1] ^= 1;
+                files.set(firstUri.path, damaged);
+                assert.strictEqual(await readIndexCache(firstUri, fingerprint), undefined);
+                dirty = true;
+                const dirtyFingerprint = await indexFingerprint(spec, new AbortController().signal);
+                assert.strictEqual(await indexFingerprint(spec, new AbortController().signal), dirtyFingerprint);
+                source = 'unsaved edit';
+                assert.notStrictEqual(await indexFingerprint(spec, new AbortController().signal), dirtyFingerprint);
+                assert.ok([...files.keys()].every(key => !key.endsWith('.tmp')));
+            } finally {
+                serialization.dispose();
+            }
         });
     });
 

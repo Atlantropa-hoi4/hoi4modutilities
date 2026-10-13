@@ -64,6 +64,8 @@ export interface FocusTreeWebviewRuntime {
     selectedFocusIds: Set<string>;
     searchTextByFocusId: Record<string, string>;
     searchResultIds: Set<string>;
+    /** The search match Enter last moved to. */
+    currentSearchResultId: string | undefined;
     searchFilterMatchIds: Set<string>;
     hoveredRelationFocusId: string | undefined;
     pendingFocusLinkParentId: string | undefined;
@@ -130,6 +132,7 @@ export const runtime: FocusTreeWebviewRuntime = {
     selectedFocusIds: new Set(),
     searchTextByFocusId: {},
     searchResultIds: new Set(),
+    currentSearchResultId: undefined,
     searchFilterMatchIds: new Set(),
     hoveredRelationFocusId: undefined,
     pendingFocusLinkParentId: undefined,

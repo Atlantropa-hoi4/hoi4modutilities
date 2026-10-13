@@ -1,5 +1,9 @@
 import * as assert from 'assert';
 import Module = require('module');
+import { FakeUpdateClock } from './fake-update-clock';
+import type * as LocalisationIndexModule from '../../src/util/localisationIndex';
+import type * as LocalisationIndexEventsModule from '../../src/util/localisationIndexEvents';
+import type { TextDocumentChangeEvent, Uri } from 'vscode';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -33,7 +37,7 @@ const {
     preprocessYamlContent,
     rebuildLocalisationIndexFromFileIndexes,
     resolveLocalisedTextFromIndex,
-} = require('../../src/util/localisationIndex') as typeof import('../../src/util/localisationIndex');
+} = require('../../src/util/localisationIndex') as typeof LocalisationIndexModule;
 
 nodeModule._load = originalLoad;
 delete require.cache[require.resolve('../../src/util/featureflags')];
@@ -343,7 +347,7 @@ describe('localisation index helpers', () => {
 });
 
 type LocalisationLayer = 'base' | 'dlc' | 'workspace';
-type LocalisationIndexApi = typeof import('../../src/util/localisationIndex');
+type LocalisationIndexApi = typeof LocalisationIndexModule;
 
 interface LocalisationHarness {
     previewLocalisation: string;
@@ -351,6 +355,8 @@ interface LocalisationHarness {
     reads: string[];
     readFile?: (layer: LocalisationLayer, file: string) => Promise<string>;
     changePreviewLanguage(language: string): void;
+    changeFile(file: string, content: string): void;
+    committedLabels: Array<string | undefined>;
 }
 
 describe('localisation index language loading', () => {
@@ -436,13 +442,72 @@ describe('localisation index language loading', () => {
     });
 });
 
+describe('localisation incremental freshness', () => {
+    let clock: FakeUpdateClock;
+    beforeEach(() => {
+        clock = new FakeUpdateClock();
+        clock.install();
+    });
+    afterEach(() => clock.restore());
+
+    it('announces the committed label after a debounced unsaved edit and its Undo', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            await api.whenLocalisationIndexReady({ showStatusBar: false });
+            harness.changeFile('mod_l_english.yml', 'l_english:\n SHARED:0 "Edited English"');
+            await clock.advance(35);
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'en'), 'Workspace English');
+            assert.deepStrictEqual(harness.committedLabels, []);
+
+            await clock.advance(965);
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'en'), 'Edited English');
+            assert.deepStrictEqual(harness.committedLabels, ['Edited English']);
+
+            harness.changeFile('mod_l_english.yml', 'l_english:\n SHARED:0 "Workspace English"');
+            await clock.advance(1000);
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'en'), 'Workspace English');
+            assert.deepStrictEqual(harness.committedLabels, ['Edited English', 'Workspace English']);
+        });
+    });
+
+    it('does not publish a stale parse during the next edit debounce window', async () => {
+        await withLocalisationIndex(async (api, harness) => {
+            await api.whenLocalisationIndexReady({ showStatusBar: false });
+            let release!: () => void;
+            const gate = new Promise<void>(resolve => { release = resolve; });
+            let started = false;
+            harness.readFile = async (layer, file) => {
+                const text = harness.files[layer][file];
+                if (layer === 'workspace' && file === 'mod_l_english.yml' && !started) {
+                    started = true;
+                    await gate;
+                }
+                return text;
+            };
+            harness.changeFile('mod_l_english.yml', 'l_english:\n SHARED:0 "Obsolete English"');
+            await clock.advance(1000);
+            assert.strictEqual(started, true);
+            harness.changeFile('mod_l_english.yml', 'l_english:\n SHARED:0 "Newest English"');
+            release();
+            await clock.advance();
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'en'), 'Workspace English');
+            assert.deepStrictEqual(harness.committedLabels, []);
+
+            await clock.advance(1000);
+            assert.strictEqual(api.getLocalisedTextIfReady('SHARED', 'en'), 'Newest English');
+            assert.deepStrictEqual(harness.committedLabels, ['Newest English']);
+        });
+    });
+});
+
 async function withLocalisationIndex(
     run: (api: LocalisationIndexApi, harness: LocalisationHarness) => Promise<void>,
 ): Promise<void> {
     const configurationListeners: Array<(event: { affectsConfiguration(key: string): boolean }) => void> = [];
+    const documentListeners: Array<(event: TextDocumentChangeEvent) => void> = [];
     const harness: LocalisationHarness = {
         previewLocalisation: 'Korean',
         reads: [],
+        committedLabels: [],
         files: {
             base: {
                 'base_l_english.yml': 'l_english:\n ENGLISH_ONLY:0 "Old English"\n DLC_OVERRIDE:0 "Base English"',
@@ -466,12 +531,34 @@ async function withLocalisationIndex(
                 affectsConfiguration: key => key === 'hoi4ModUtilities.previewLocalisation',
             }));
         },
+        changeFile: (file, content) => {
+            harness.files.workspace[file] = content;
+            // This fixture exercises only URI identity/version, never URI filesystem methods.
+            const uri = { path: '/workspace/localisation/' + file,
+                toString: () => 'file:///workspace/localisation/' + file } as unknown as Uri;
+            const document = { uri, version: 2 };
+            const change = { document, contentChanges: [{ text: content }] } as unknown as TextDocumentChangeEvent;
+            documentListeners.forEach(listener => listener(change));
+        },
     };
     class Disposable {
         constructor(private readonly callback: () => void = () => undefined) {}
         public dispose(): void { this.callback(); }
         public static from(...items: Disposable[]): Disposable {
             return new Disposable(() => items.forEach(item => item.dispose()));
+        }
+    }
+    class EventEmitter<T> {
+        private readonly listeners = new Set<(event: T) => unknown>();
+        public readonly event = (listener: (event: T) => unknown): Disposable => {
+            this.listeners.add(listener);
+            return new Disposable(() => { this.listeners.delete(listener); });
+        };
+        public fire(value: T): void {
+            this.listeners.forEach(listener => listener(value));
+        }
+        public dispose(): void {
+            this.listeners.clear();
         }
     }
     const event = () => new Disposable();
@@ -481,10 +568,16 @@ async function withLocalisationIndex(
     const mocks: Record<string, unknown> = {
         vscode: {
             Disposable,
+            EventEmitter,
             env: { language: 'en' },
             workspace: {
                 getConfiguration: getConfig,
-                onDidChangeWorkspaceFolders: event, onDidChangeTextDocument: event,
+                onDidChangeWorkspaceFolders: event,
+                onDidChangeTextDocument: (listener: typeof documentListeners[number]) => {
+                    documentListeners.push(listener);
+                    return new Disposable(() => documentListeners.splice(documentListeners.indexOf(listener), 1));
+                },
+                getWorkspaceFolder: () => ({ uri: { path: '/workspace' } }),
                 onDidCloseTextDocument: event, onDidCreateFiles: event,
                 onDidDeleteFiles: event, onDidRenameFiles: event,
                 onDidChangeConfiguration: (listener: typeof configurationListeners[number]) => {
@@ -499,6 +592,9 @@ async function withLocalisationIndex(
         telemetry: { sendEvent: () => undefined },
         fileloader: {
             getSelectedModRootFolders: async () => [],
+            refreshFileContentSource: () => undefined,
+            getFilePathFromMod: async (relative: string) => harness.files.workspace[relative.slice('localisation/'.length)] === undefined
+                ? undefined : { path: '/workspace/' + relative, toString: () => 'file:///workspace/' + relative },
             listFilesFromModOrHOI4: async (_folder: string, options: { mod?: boolean; hoi4?: boolean }) =>
                 Object.keys(harness.files[layerFor(options)]),
             readFileFromModOrHOI4: async (relative: string, options: { mod?: boolean; hoi4?: boolean }) => {
@@ -513,7 +609,8 @@ async function withLocalisationIndex(
     };
     const original = nodeModule._load;
     const cached = { ...require.cache };
-    for (const name of ['../../src/util/localisationIndex', '../../src/services/indexService', '../../src/services/indexCache']) {
+    for (const name of ['../../src/util/localisationIndex', '../../src/util/localisationIndexEvents',
+        '../../src/services/indexService', '../../src/services/indexCache']) {
         delete require.cache[require.resolve(name)];
     }
     nodeModule._load = function(request, parent, isMain) {
@@ -521,11 +618,17 @@ async function withLocalisationIndex(
         return Object.hasOwn(mocks, name) ? mocks[name] : original.call(this, request, parent, isMain);
     };
     let registration: { dispose(): void } | undefined;
+    let committedSubscription: { dispose(): void } | undefined;
     try {
         const api = require('../../src/util/localisationIndex') as LocalisationIndexApi;
         registration = api.registerLocalisationIndex();
+        const events = require('../../src/util/localisationIndexEvents') as typeof LocalisationIndexEventsModule;
+        committedSubscription = events.onDidCommitWorkspaceLocalisationIndex(() => {
+            harness.committedLabels.push(api.getLocalisedTextIfReady('SHARED', 'en'));
+        });
         await run(api, harness);
     } finally {
+        committedSubscription?.dispose();
         registration?.dispose();
         nodeModule._load = original;
         for (const key of Object.keys(require.cache)) {

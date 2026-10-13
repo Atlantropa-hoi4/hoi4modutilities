@@ -7,10 +7,10 @@ import type {
 } from './contentbuilder';
 import {
     getFocusTreeAssetMaterialization,
-    mergeFocusTreeStyleRules,
     type FocusTreeRenderCache,
     type FocusTreeRenderPreparation,
 } from './renderpayloadpatch';
+import { FocusTreeStyleLedger } from './stylesync';
 import { createEmptyFocusIconAssetResolution } from './focusicongfx';
 import type { Focus } from './schema';
 import { getDocumentByUri } from '../../util/vsccommon';
@@ -44,8 +44,11 @@ import {
     focusTreeAssetRequestLimits,
     getFocusTreeHostCommand,
     type FocusTreeAssetRequestMessage,
+    type FocusTreeAssetStyleBatchMessage,
     type FocusTreeSceneAssetsMessage,
     type FocusTreeSceneAssetsStatus,
+    type FocusTreeStyleSync,
+    type FocusTreeStyleSyncMessage,
 } from './webviewupdate';
 
 export interface FocusTreeRefreshOptions {
@@ -115,6 +118,7 @@ interface FocusTreeAssetRequest {
     documentVersion: number;
     visibleFocusIds: string[];
     nearbyFocusIds: string[];
+    styleResync: boolean;
 }
 
 /** Visible focus ids accepted from one first-paint acknowledgement. */
@@ -155,6 +159,8 @@ export class FocusTreePreviewSession {
     private assetWorkerRunning = false;
     /** Refreshes, hydrations, and scene requests in progress; asset requests wait for them. */
     private activeRenderWork = 0;
+    /** Exactly the dynamic style rules posted to the webview's current document. */
+    private readonly styleLedger = new FocusTreeStyleLedger();
 
     constructor(options: FocusTreePreviewSessionOptions) {
         this.uri = options.uri;
@@ -181,6 +187,8 @@ export class FocusTreePreviewSession {
 
     public renderShell(documentVersion: number): string {
         this.runtimeState.lastRenderCache = undefined;
+        // The shell is a new webview document with an empty dynamic stylesheet.
+        this.styleLedger.clear();
         return this.snapshotBuilder.renderShell(documentVersion);
     }
 
@@ -199,6 +207,7 @@ export class FocusTreePreviewSession {
                 assetWorkerRunning: this.assetWorkerRunning,
                 contextDocumentVersion: this.assetContext?.documentVersion,
             },
+            style: this.styleLedger.state,
             traces: [...this.traceEvents],
         };
     }
@@ -309,6 +318,8 @@ export class FocusTreePreviewSession {
         }
 
         markFocusTreeWebviewReady(this.runtimeState);
+        // A ready webview is a new document: its first style sync must be a whole stylesheet.
+        this.styleLedger.invalidateDelivery();
         this.preferredTreeId = selectedTreeId || this.preferredTreeId;
         this.trace('handleWebviewReady', {
             latestDocumentVersion: this.latestDocument?.version,
@@ -360,6 +371,8 @@ export class FocusTreePreviewSession {
         let cache = initialCache;
         let tree = cache.focusTrees.find(candidate => candidate.id === treeId);
         let builtBaseState: FocusTreeRenderBaseState | undefined;
+        let sceneStyleRules: ReadonlyMap<string, string> | undefined;
+        let sceneRawStyleCss: string | undefined;
         this.preferredTreeId = treeId;
         this.cancelDeferredHydrationTimer();
         const requestId = beginFocusTreeRefresh(this.runtimeState);
@@ -370,10 +383,9 @@ export class FocusTreePreviewSession {
                     treeId, treeIds: cache.deferredAssetLoad ? cache.assetTreeIds : undefined,
                 });
                 if (isCancelled()) { return; }
-                const previousRules = cache.dynamicStyleRules ?? new Map<string, string>();
                 // Focuses of different trees share icon rules by asset name. The new scene's
-                // placeholders only fill names without a rule, so merging it never turns an icon
-                // that a loaded scene materialized back into a placeholder.
+                // placeholders only fill names the webview's stylesheet lacks, so merging it never
+                // turns an icon that a loaded scene materialized back into a placeholder.
                 const snapshot = await this.snapshotBuilder.createFullSnapshot(
                     baseState,
                     cache,
@@ -381,18 +393,12 @@ export class FocusTreePreviewSession {
                     undefined,
                     undefined,
                     this.resolveMaterializedFocusIds(cache),
-                    previousRules,
+                    this.styleLedger.rules,
                 );
                 if (isCancelled()) { return; }
                 const previousTrees = new Map(cache.focusTrees.map(value => [value.id, value]));
-                const nextRules = snapshot.cache.dynamicStyleRules ?? new Map<string, string>();
-                // Hydrated scenes already share template, GUI, and icon rules; append only new ones.
-                const styles = cache.deferredAssetLoad
-                    ? {
-                        dynamicStyleCss: `${cache.dynamicStyleCss}\n${snapshot.cache.dynamicStyleCss}`,
-                        dynamicStyleRules: new Map([...previousRules, ...nextRules]),
-                    }
-                    : mergeFocusTreeStyleRules(cache.dynamicStyleCss, previousRules, nextRules);
+                sceneStyleRules = snapshot.cache.dynamicStyleRules;
+                sceneRawStyleCss = snapshot.payload.dynamicStyleRawCss;
                 cache = {
                     ...snapshot.cache,
                     focusTrees: snapshot.cache.focusTrees.map(value =>
@@ -404,8 +410,7 @@ export class FocusTreePreviewSession {
                     focusRenderSignatures: { ...cache.focusRenderSignatures, ...snapshot.cache.focusRenderSignatures },
                     inlayRenderSignatures: { ...cache.inlayRenderSignatures, ...snapshot.cache.inlayRenderSignatures },
                     renderedInlayWindows: { ...cache.renderedInlayWindows, ...snapshot.cache.renderedInlayWindows },
-                    dynamicStyleCss: styles.dynamicStyleCss,
-                    dynamicStyleRules: styles.dynamicStyleRules,
+                    dynamicStyleRules: cache.dynamicStyleRules,
                 };
                 builtBaseState = baseState;
                 tree = cache.focusTrees.find(value => value.id === treeId);
@@ -424,12 +429,15 @@ export class FocusTreePreviewSession {
         const inlayIds = new Set(sceneTrees.flatMap(value => value.inlayWindows.map(inlay => inlay.id)));
         // Commit before posting, with no await in between: a scene request arriving while this
         // scene is in transit builds on it instead of dropping a scene the webview has applied.
+        // Only rules the webview's stylesheet lacks travel; it keeps every loaded scene's rules.
+        const style = this.styleLedger.sync(sceneStyleRules ?? [], sceneRawStyleCss);
         cache.selectedTreeId = treeId;
+        cache.dynamicStyleRules = this.styleLedger.rules;
         this.runtimeState.lastRenderCache = cache;
         if (builtBaseState) {
             this.captureAssetContext(builtBaseState, 'merge');
         }
-        // The scene message replaces the webview's stylesheet with every materialized rule.
+        // The scene message replaces the webview's materialized set with every materialized focus.
         this.recordMaterializedSnapshot(cache, true);
         if (!cache.deferredAssetLoad) {
             this.pendingVisibleFocusIds = [];
@@ -456,7 +464,7 @@ export class FocusTreePreviewSession {
             ...pickFocusTemplates(cache.focusTemplates, cache.focusTemplateKeyById, focusIds),
             renderedInlayWindows: pickStringEntries(cache.renderedInlayWindows, inlayIds),
             gridBox: cache.gridBox,
-            dynamicStyleCss: cache.dynamicStyleCss,
+            style,
             xGridSize: cache.xGridSize,
             yGridSize: cache.yGridSize,
             focusPositionActiveFile: cache.focusPositionActiveFile,
@@ -688,27 +696,34 @@ export class FocusTreePreviewSession {
         let cache: FocusTreeSnapshot['cache'] | undefined;
         let snapshotMetrics: FocusTreeSnapshot['metrics'] | undefined;
         let snapshotBuildDurationMs = 0;
+        let fullStyleRules: ReadonlyMap<string, string> | undefined;
+        let fullRawStyleCss: string | undefined;
         if (patchPlan.kind === 'full') {
             const snapshotBuildStart = Date.now();
-            const targetSnapshotVersion = (this.runtimeState.lastRenderCache?.snapshotVersion ?? 0) + 1;
             const onAssetStyleBatch: FocusTreeAssetStyleBatchHandler | undefined = baseState.deferredAssetLoad
                 ? undefined
                 : async batch => {
                     if (isCancelled()) {
                         return;
                     }
-                    await this.webview.postMessage({
+                    // Streamed icons are delivered once; the build's own update skips them.
+                    const style = this.styleLedger.sync(batch.rules);
+                    const committedCache = this.runtimeState.lastRenderCache;
+                    if (committedCache) {
+                        committedCache.dynamicStyleRules = this.styleLedger.rules;
+                    }
+                    if (!style) {
+                        return;
+                    }
+                    const message: FocusTreeAssetStyleBatchMessage = {
                         command: 'focusTreeAssetBatch',
                         protocolVersion: focusTreeProtocolVersion,
-                        requestId,
-                        snapshotVersion: targetSnapshotVersion,
-                        documentVersion: requestDocumentVersion,
-                        sceneRevision: this.sceneRevision + 1,
-                        treeId: baseState.assetTreeIds?.[0] ?? this.preferredTreeId ?? baseState.focusTrees[0]?.id ?? '',
-                        updateType: 'assets',
                         batchKind: 'style',
-                        ...batch,
-                    });
+                        requestId,
+                        batchIndex: batch.batchIndex,
+                        style,
+                    };
+                    await this.webview.postMessage(message);
                 };
             const snapshot = await this.snapshotBuilder.createFullSnapshot(
                 baseState,
@@ -738,6 +753,8 @@ export class FocusTreePreviewSession {
             update = snapshot.update;
             cache = snapshot.cache;
             snapshotMetrics = snapshot.metrics;
+            fullStyleRules = snapshot.payload.dynamicStyleRules ?? snapshot.cache.dynamicStyleRules;
+            fullRawStyleCss = snapshot.payload.dynamicStyleRawCss;
         } else {
             update = patchPlan.update;
             cache = patchPlan.cache;
@@ -751,6 +768,9 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        // From here to the post nothing awaits, so the ledger records exactly what is posted. A
+        // full build states every rule of its scenes; only those the webview lacks travel.
+        const style = this.styleLedger.sync(fullStyleRules ?? cache.dynamicStyleRules ?? [], fullRawStyleCss);
         const command = getFocusTreeHostCommand(update.updateType);
         const updateMessage: FocusTreeSnapshot['update'] & {
             command: 'focusTreeScene' | 'focusTreeAssetBatch' | 'focusTreeScenePatch';
@@ -801,6 +821,9 @@ export class FocusTreePreviewSession {
         if (patchPlan.kind === 'full' && !updateMessage.assetMaterialization) {
             updateMessage.assetMaterialization = getFocusTreeAssetMaterialization(cache);
         }
+        if (style) {
+            updateMessage.style = style;
+        }
         const payloadBytes = isPerfTraceEnabled() ? getApproximateJsonByteLength(updateMessage) : 0;
         updateMessage.perf = {
             source: options.source,
@@ -846,9 +869,15 @@ export class FocusTreePreviewSession {
         }
 
         if (isCancelled()) {
+            // The webview has these rules although the update is not committed.
+            const committedCache = this.runtimeState.lastRenderCache;
+            if (committedCache) {
+                committedCache.dynamicStyleRules = this.styleLedger.rules;
+            }
             return;
         }
 
+        cache.dynamicStyleRules = this.styleLedger.rules;
         this.runtimeState.lastRenderCache = cache;
         if (!cache.deferredAssetLoad && !baseState.deferredAssetLoad) {
             // The refresh covered every loaded scene, so its icon resolution replaces the context.
@@ -1101,6 +1130,7 @@ export class FocusTreePreviewSession {
         this.assetContext = undefined;
         this.materializedAtSnapshot.clear();
         this.cancelAssetWork();
+        this.styleLedger.clear();
         resetFocusTreeRuntimeState(this.runtimeState);
     }
 
@@ -1195,8 +1225,36 @@ export class FocusTreePreviewSession {
             return;
         }
 
+        if (normalized.styleResync) {
+            // Posted ahead of any queued patch, so later deltas build on this whole stylesheet.
+            await this.postStyleResync();
+            if (normalized.visibleFocusIds.length === 0 && normalized.nearbyFocusIds.length === 0) {
+                return;
+            }
+        }
         this.queuedAssetRequest = normalized;
         this.drainAssetRequests();
+    }
+
+    /** Sends every recorded rule to a webview whose stylesheet missed a delta. */
+    private async postStyleResync(): Promise<void> {
+        if (this.disposed || !this.runtimeState.webviewReady) {
+            return;
+        }
+        const message: FocusTreeStyleSyncMessage = {
+            command: 'focusTreeStyleSync',
+            protocolVersion: focusTreeProtocolVersion,
+            style: this.styleLedger.resync(),
+        };
+        this.trace('styleResync', { version: message.style.version });
+        try {
+            await this.webview.postMessage(message);
+        } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            if (!text.toLowerCase().includes('disposed')) {
+                throw error;
+            }
+        }
     }
 
     private drainAssetRequests(): void {
@@ -1294,7 +1352,8 @@ export class FocusTreePreviewSession {
                 return false;
             }
             if (materialized.has(focusId)) {
-                // The webview asks again only when it lacks rules a message it saw should have carried.
+                // The webview asks again only when a message it saw should have marked the focus
+                // loaded; it is marked again, and its rules travel only if the webview lacks them.
                 if (request.snapshotVersion < (this.materializedAtSnapshot.get(focusId) ?? 0)) {
                     return false;
                 }
@@ -1337,7 +1396,7 @@ export class FocusTreePreviewSession {
                     xGridSize: context.xGridSize,
                     yGridSize: context.yGridSize,
                     useNativeSize: context.useNativeSize,
-                    existingStyleRules: expectedCache.dynamicStyleRules ?? new Map<string, string>(),
+                    existingStyleRules: this.styleLedger.rules,
                     resendFocusIds: resend,
                     isCancelled,
                 });
@@ -1349,18 +1408,12 @@ export class FocusTreePreviewSession {
                 // Commit before posting with no await in between, so a refresh that starts later
                 // plans against the cache this patch produced.
                 const base = expectedCache;
-                let dynamicStyleRules = base.dynamicStyleRules;
-                if (patch.rules.length > 0) {
-                    const rules = new Map(base.dynamicStyleRules);
-                    patch.rules.forEach(([key, content]) => rules.set(key, content));
-                    dynamicStyleRules = rules;
-                }
+                const style = this.styleLedger.sync(patch.rules);
                 const next: FocusTreeRenderCache = {
                     ...base,
                     snapshotVersion: base.snapshotVersion + 1,
                     materializedFocusIds: Array.from(new Set([...base.materializedFocusIds ?? [], ...chunk.focusIds])),
-                    dynamicStyleCss: patch.css ? `${base.dynamicStyleCss}\n${patch.css}` : base.dynamicStyleCss,
-                    dynamicStyleRules,
+                    dynamicStyleRules: this.styleLedger.rules,
                 };
                 this.runtimeState.lastRenderCache = next;
                 expectedCache = next;
@@ -1370,7 +1423,7 @@ export class FocusTreePreviewSession {
                     baseSnapshotVersion: base.snapshotVersion,
                     tier: chunk.tier,
                     materializedFocusIds: chunk.focusIds,
-                    dynamicStyleCssPatch: patch.css || undefined,
+                    style,
                 });
             }
         } catch (error) {
@@ -1440,13 +1493,14 @@ export class FocusTreePreviewSession {
         cache: FocusTreeRenderCache | undefined,
         status: FocusTreeSceneAssetsStatus,
         final: boolean,
-        patch?: Pick<FocusTreeSceneAssetsMessage, 'baseSnapshotVersion' | 'tier' | 'materializedFocusIds' | 'dynamicStyleCssPatch'>,
+        patch?: Pick<FocusTreeSceneAssetsMessage, 'baseSnapshotVersion' | 'tier' | 'materializedFocusIds'> & { style?: FocusTreeStyleSync },
     ): Promise<void> {
         if (this.disposed) {
             return;
         }
 
         const snapshotVersion = cache?.snapshotVersion ?? 0;
+        const { style, ...patchFields } = patch ?? {};
         const message: FocusTreeSceneAssetsMessage = {
             command: 'focusTreeSceneAssets',
             protocolVersion: focusTreeProtocolVersion,
@@ -1458,7 +1512,8 @@ export class FocusTreePreviewSession {
             snapshotVersion,
             status,
             final,
-            ...patch,
+            ...patchFields,
+            ...(style ? { style } : {}),
         };
         try {
             await this.webview.postMessage(message);
@@ -1596,5 +1651,6 @@ export function normalizeFocusTreeAssetRequest(request: Partial<FocusTreeAssetRe
         visibleFocusIds,
         nearbyFocusIds: normalizeFocusIdList(request.nearbyFocusIds, focusTreeAssetRequestLimits.nearby)
             .filter(focusId => !visible.has(focusId)),
+        styleResync: request.styleResync === true,
     };
 }

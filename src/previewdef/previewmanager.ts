@@ -9,6 +9,7 @@ import { getWebviewPanelOptions } from '../util/webview';
 import { UpdateScheduler } from '../services/updateScheduler';
 import { getSelectedModRootFolders } from '../util/fileloader';
 import { onDidChangeSelectedModSource } from '../util/modfile';
+import { onDidCommitWorkspaceLocalisationIndex } from '../util/localisationIndexEvents';
 import { incrementPerfCounter, measureAsync, recordPerf } from '../util/perf';
 import { PreviewProviderResolver } from './previewproviderresolver';
 import { PreviewDependencyTracker } from './previewdependencytracker';
@@ -70,6 +71,16 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildActiveDependencyWatchers(); }));
         disposables.push(onDidChangeSelectedModSource(() => {
             void this.onDidChangeSelectedModSource(registrationGeneration);
+        }));
+        disposables.push(onDidCommitWorkspaceLocalisationIndex(({ files }) => {
+            if (this.registrationGeneration !== registrationGeneration) {
+                return;
+            }
+            // Raw document events may render before a debounced index update. Reconcile only
+            // after the latest file index commits, through the existing dependency scheduler.
+            for (const uri of files) {
+                this.updatePreviewItemsInSubscription(uri);
+            }
         }));
         disposables.push(this.previewContextService.register());
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));

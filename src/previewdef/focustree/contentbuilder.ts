@@ -6,6 +6,7 @@ import { localize, i18nTableAsScript } from '../../util/i18n';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
 import { html, htmlEscape } from '../../util/html';
+import { htmlAttributeEscape } from '../../util/htmlescape';
 import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
@@ -45,7 +46,8 @@ const focusTreeAssetRenderBatchSize = 32;
 
 export interface FocusTreeAssetStyleBatch {
     batchIndex: number;
-    css: string;
+    /** Class rules of the batch's icons, keyed like the payload's dynamic style rules. */
+    rules: Array<[key: string, content: string]>;
     assetNames: string[];
 }
 
@@ -74,9 +76,12 @@ export interface FocusTreeRenderPayload {
     focusIconAssetResolution: FocusIconAssetResolution;
     focusIconStyleSignature: string;
     gridBox: HOIPartial<GridBoxType>;
+    /** The whole dynamic stylesheet, for markup that embeds it. */
     dynamicStyleCss: string;
-    /** Host-only rule index of `dynamicStyleCss`, used to send only new rules in patches. */
+    /** Host-only class rules of `dynamicStyleCss`; the session posts them as style syncs. */
     dynamicStyleRules?: ReadonlyMap<string, string>;
+    /** Host-only raw records of `dynamicStyleCss`, such as the continuous focus GUI's size. */
+    dynamicStyleRawCss?: string;
     styleNonce: string;
     xGridSize: number;
     yGridSize: number;
@@ -362,6 +367,7 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
     const continuousFocusHtml = await renderContinuousFocusGui(baseState.presentation, styleTable, baseState.gfxFiles);
     const inlayRenderDurationMs = Date.now() - inlayRenderStart;
     throwIfFocusTreeRenderCancelled(isCancelled);
+    const classRules = new Map(styleTable.rules());
 
     return {
         payload: {
@@ -380,7 +386,9 @@ export async function buildFocusTreeRenderPayloadFromBaseState(
             focusIconStyleSignature,
             gridBox: baseState.gridBox,
             dynamicStyleCss: styleTable.toStyleContent(),
-            dynamicStyleRules: new Map(styleTable.rules()),
+            dynamicStyleRules: classRules,
+            // Every class record matches `classRules`, so only the raw records remain.
+            dynamicStyleRawCss: styleTable.toStyleContent(classRules).trim(),
             styleNonce: Math.random().toString(36).slice(2),
             xGridSize: baseState.xGridSize,
             yGridSize: baseState.yGridSize,
@@ -469,7 +477,6 @@ export interface FocusTreeAssetStylePatchOptions {
 }
 
 export interface FocusTreeAssetStylePatch {
-    css: string;
     rules: Array<[key: string, content: string]>;
 }
 
@@ -497,11 +504,9 @@ export async function renderFocusAssetStylePatch(
     const resendKeys = new Set(focuses
         .filter(focus => options.resendFocusIds?.has(focus.id))
         .flatMap(getFocusAssetStyleKeys));
-    const rules = styleTable.rules()
-        .filter(([key, content]) => resendKeys.has(key) || options.existingStyleRules.get(key) !== content);
     return {
-        css: rules.map(([key, content]) => `.${key} { ${content.replace(/^\s+/gm, '')} }\n`).join(''),
-        rules,
+        rules: styleTable.rules()
+            .filter(([key, content]) => resendKeys.has(key) || options.existingStyleRules.get(key) !== content),
     };
 }
 
@@ -716,6 +721,7 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw(':where(body[data-focus-hover="true"]) #focustreeplaceholder .focus-connection-layer path', 'opacity: 0.14; filter: saturate(0.35);');
     styleTable.raw(':where(body[data-focus-hover="true"]) #focustreeplaceholder .focus-connection-layer path.focus-related-edge', 'opacity: 1; filter: saturate(1.1);');
     styleTable.raw('#focustreeplaceholder .focus.focus-search-match', 'outline: 1px solid #E33; background: rgba(255, 0, 0, 0.5);');
+    styleTable.raw('#focustreeplaceholder .focus.focus-search-match.focus-search-current', 'outline-width: 3px;');
     styleTable.raw('#focustreeplaceholder .focus-branch-hidden', 'display: none !important;');
     // Icons still rendering structural placeholders pulse gently; nothing moves or resizes.
     const pendingIconSelector = '#focustreeplaceholder [data-focus-id].focus-asset-pending .st-focus-icon-image, '
@@ -814,7 +820,7 @@ function renderWarningContainer(styleTable: StyleTable) {
         border-left: 3px solid rgba(92, 138, 184, 0.96);
     `);
     return `
-    <div id="warnings-container" class="${styleTable.style('warnings-container', () => `
+    <div id="warnings-container" role="region" aria-label="${htmlAttributeEscape(localize('focustree.warnings.panel', 'Warnings'))}" class="${styleTable.style('warnings-container', () => `
         height: 100vh;
         width: 100vw;
         position: fixed;
@@ -825,7 +831,7 @@ function renderWarningContainer(styleTable: StyleTable) {
         box-sizing: border-box;
         display: none;
     `)}">
-        <div id="warnings" class="${styleTable.style('warnings', () => `
+        <div id="warnings" tabindex="-1" class="${styleTable.style('warnings', () => `
             height: 100%;
             width: 100%;
             font-family: 'Consolas', monospace;
@@ -872,14 +878,17 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
                 class="${styleTable.style('searchbox', () => `height:22px; box-sizing:border-box;`)}"
                 id="searchbox"
                 type="text"
+                title="${htmlAttributeEscape(localize('focustree.search.keys', 'Enter: next match. Shift+Enter: previous match. Alt+Enter: open the current match in the editor.'))}"
+                aria-describedby="focus-search-count"
             />
+            <span id="focus-search-count" aria-live="polite" class="${styleTable.style('focusSearchCount', () => `margin-left:6px; min-width:4em; font-size:11px; white-space:nowrap; color:var(--vscode-descriptionForeground);`)}"></span>
         </div>`;
 
     const searchFilters = `
         <div id="search-filters-container" class="${toolbarGroupStyle()}">
             <label for="search-filters" class="${toolbarLabelStyle()}">${localize('focustree.searchfilters', 'Filters: ')}</label>
             <div class="select-container">
-                <div id="search-filters" class="select multiple-select ${styleTable.style('searchFilters', () => `min-width:120px; max-width:260px;`)}" tabindex="0" role="combobox" aria-multiselectable="true">
+                <div id="search-filters" class="select multiple-select ${styleTable.style('searchFilters', () => `min-width:120px; max-width:260px;`)}" tabindex="0" role="combobox">
                     <span class="value"></span>
                 </div>
             </div>
@@ -952,8 +961,8 @@ function renderToolBar(payload: FocusTreeRenderPayload, styleTable: StyleTable):
         </div>`;
 
     const warningsButton = `
-        <button id="show-warnings" title="${localize('focustree.warnings', 'Toggle warnings')}" style="${payload.hasWarningsButton ? '' : 'display:none;'}">
-            <i class="codicon codicon-warning"></i>
+        <button id="show-warnings" type="button" title="${localize('focustree.warnings', 'Toggle warnings')}" aria-controls="warnings-container" aria-expanded="false" style="${payload.hasWarningsButton ? '' : 'display:none;'}">
+            <i class="codicon codicon-warning" aria-hidden="true"></i>
         </button>`;
 
     const refreshButton = `
@@ -1029,7 +1038,7 @@ async function prepareInlayGfxStyles(
             }
 
             const sprite = await getSpriteByGfxNameFromResolvedFiles(option.gfxName, [option.gfxFile]);
-            const frame = sprite?.frames[0];
+            const frame = sprite?.getFrame(0);
             if (!frame) {
                 applyMissingStyle(option.key);
                 return;
@@ -1221,7 +1230,7 @@ export async function prepareFocusIconStyles(
         if (onAssetStyleBatch && iconNames.length > 0) {
             await onAssetStyleBatch({
                 batchIndex: batchIndex++,
-                css: batchStyleTable.toStyleContent(),
+                rules: batchStyleTable.rules(),
                 assetNames: iconNames,
             });
         }
@@ -1251,7 +1260,7 @@ export async function prepareFocusIconStyles(
         if (onAssetStyleBatch && overlayNames.length > 0) {
             await onAssetStyleBatch({
                 batchIndex: batchIndex++,
-                css: batchStyleTable.toStyleContent(),
+                rules: batchStyleTable.rules(),
                 assetNames: overlayNames,
             });
         }

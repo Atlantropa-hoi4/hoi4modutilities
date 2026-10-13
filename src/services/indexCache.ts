@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { createHash, randomUUID } from 'crypto';
 import { contextContainer } from '../context';
 import { mapWithConcurrency } from '../util/common';
+import { serializeIndex } from './indexSerialization';
+import { maxIndexCacheBytes } from './indexSerializationProtocol';
 
 export interface IndexCacheSpec {
     folder: string;
@@ -46,31 +48,75 @@ export function indexCacheUri(name: string): vscode.Uri | undefined {
     const config = vscode.workspace.getConfiguration('hoi4ModUtilities');
     const namespace = JSON.stringify([name, config.installPath, config.modFile, config.loadDlcContents,
         config.previewLocalisation, vscode.workspace.workspaceFolders?.map(folder => folder.uri.toString())]);
-    return vscode.Uri.joinPath(root, 'indexes-v1', `${digest(namespace)}.json`);
+    return vscode.Uri.joinPath(root, 'indexes-v2', `${digest(namespace)}.cache`);
 }
 
-export async function readIndexCache<T>(uri: vscode.Uri, fingerprint: string): Promise<T | undefined> {
+export async function readIndexCache(uri: vscode.Uri, fingerprint: string, signal?: AbortSignal): Promise<unknown> {
     try {
+        signal?.throwIfAborted();
         const stat = await vscode.workspace.fs.stat(uri);
-        if (stat.size > 64 * 1024 * 1024) { return undefined; }
-        const envelope = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(uri)).toString());
-        if (envelope.version !== 1 || envelope.fingerprint !== fingerprint || typeof envelope.data !== 'string'
-            || digest(envelope.data) !== envelope.checksum) { return undefined; }
-        const result = JSON.parse(envelope.data);
-        return result && typeof result === 'object' && !Array.isArray(result) ? result as T : undefined;
-    } catch { return undefined; }
+        if (stat.size > maxIndexCacheBytes) { return undefined; }
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        signal?.throwIfAborted();
+        if (bytes.byteLength > maxIndexCacheBytes) { return undefined; }
+        const result = await serializeIndex({ kind: 'decode', fingerprint, bytes }, signal);
+        return result?.kind === 'decode' ? result.value : undefined;
+    } catch { signal?.throwIfAborted(); return undefined; }
 }
 
-export async function saveIndexCache(uri: vscode.Uri, fingerprint: string, value: unknown, signal: AbortSignal): Promise<void> {
-    const temp = uri.with({ path: uri.path + '.' + randomUUID() + '.tmp' });
-    try {
-        signal.throwIfAborted();
-        const data = JSON.stringify(value);
-        if (Buffer.byteLength(data) > 60 * 1024 * 1024) { return; }
-        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
-        await vscode.workspace.fs.writeFile(temp, Buffer.from(JSON.stringify({ version: 1, fingerprint, data, checksum: digest(data) })));
-        signal.throwIfAborted();
-        await vscode.workspace.fs.rename(temp, uri, { overwrite: true });
-    } catch { /* A cache failure must not prevent an in-memory preview. */ }
-    finally { try { await vscode.workspace.fs.delete(temp); } catch { /* Already renamed or absent. */ } }
+interface CacheSave {
+    controller: AbortController;
+    promise: Promise<void>;
+    value?: unknown;
+}
+const cacheSaves = new Map<string, CacheSave>();
+
+export function saveIndexCache(uri: vscode.Uri, fingerprint: string, value: unknown, signal: AbortSignal): Promise<void> {
+    const key = uri.toString();
+    const previous = cacheSaves.get(key);
+    previous?.controller.abort();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) { controller.abort(); }
+    const save: CacheSave = { controller, promise: Promise.resolve(), value };
+    value = undefined;
+    const releaseSnapshot = () => { save.value = undefined; };
+    controller.signal.addEventListener('abort', releaseSnapshot, { once: true });
+    if (controller.signal.aborted) { releaseSnapshot(); }
+    // Serialize publication for each disk target, including an already-started rename:
+    // a superseded write can never complete after a newer snapshot's rename.
+    save.promise = (async () => {
+        await previous?.promise;
+        const temp = uri.with({ path: uri.path + '.' + randomUUID() + '.tmp' });
+        let published = false;
+        try {
+            controller.signal.throwIfAborted();
+            const result = await serializeIndex({ kind: 'encode', fingerprint, value: save.value }, controller.signal);
+            save.value = undefined;
+            controller.signal.throwIfAborted();
+            if (result?.kind !== 'encode') { return; }
+            await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
+            controller.signal.throwIfAborted();
+            await vscode.workspace.fs.writeFile(temp, result.bytes);
+            controller.signal.throwIfAborted();
+            await vscode.workspace.fs.rename(temp, uri, { overwrite: true });
+            published = true;
+        } catch { /* Cache failure and cancellation never prevent an in-memory preview. */ }
+        finally {
+            try { await vscode.workspace.fs.delete(temp); } catch { /* Renamed or absent. */ }
+            if (published && controller.signal.aborted) {
+                // Rename itself is not cancellable. Retire its stale result before releasing
+                // the per-URI publication lane; a newer rename cannot have run yet.
+                try { await vscode.workspace.fs.delete(uri); } catch { /* Storage remains best effort. */ }
+            }
+        }
+    })().catch(() => { /* Includes a failed predecessor or unavailable storage URI. */ }).finally(() => {
+        save.value = undefined;
+        controller.signal.removeEventListener('abort', releaseSnapshot);
+        signal.removeEventListener('abort', abort);
+        if (cacheSaves.get(key) === save) { cacheSaves.delete(key); }
+    });
+    cacheSaves.set(key, save);
+    return save.promise;
 }

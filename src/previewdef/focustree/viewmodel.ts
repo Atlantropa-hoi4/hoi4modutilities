@@ -8,7 +8,7 @@ import type {
 } from './schema';
 import type { ContinuousFocusPositionMeta, FocusTreeCreateMeta } from './positioneditcommon';
 
-export const focusTreeProtocolVersion = 4 as const;
+export const focusTreeProtocolVersion = 5 as const;
 
 export interface FocusTreeCatalogView {
     id: string;

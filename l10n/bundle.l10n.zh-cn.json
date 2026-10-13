@@ -356,6 +356,8 @@
   "Loading focus icons: {0} of {1} on screen": "正在加载国策图标：屏幕上 {1} 个中的 {0} 个",
   "Some focus icons could not be loaded.": "部分国策图标无法加载。",
   "Retry": "重试",
+  "Enter: next match. Shift+Enter: previous match. Alt+Enter: open the current match in the editor.": "Enter：下一个匹配项。Shift+Enter：上一个匹配项。Alt+Enter：在编辑器中打开当前匹配项。",
+  "Mark {0} as completed": "将 {0} 标记为已完成",
   "Toggle MIO trait editing": "切换军工机构特质编辑",
   "Link Any Parent": "链接任一父特质",
   "Link All Parents": "链接所有父特质",

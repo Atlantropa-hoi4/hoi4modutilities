@@ -1,4 +1,5 @@
 import { IndexService } from '../services/indexService';
+import { isEventIndexSnapshot } from '../services/indexSnapshotValidation';
 import { getFileContentSourceGeneration, getFilePathFromMod, listFilesFromModOrHOI4, readFileFromModOrHOI4 } from './fileloader';
 import { parseHoi4File } from '../hoiformat/hoiparser';
 import { getEvents } from '../previewdef/event/schema';
@@ -11,6 +12,7 @@ let sourceGeneration = '';
 const service = new IndexService<{ index: Record<string, string> }>({
     events: {
         cache: { folder: 'events', extension: '.txt', layer: 'all' },
+        validateCacheSnapshot: isEventIndexSnapshot,
         statusMessage: 'Building event index...',
         telemetryEvent: 'eventIndex',
         reset: () => { indexedFiles = Object.create(null); },

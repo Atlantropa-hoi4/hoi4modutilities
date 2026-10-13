@@ -356,6 +356,8 @@
   "Loading focus icons: {0} of {1} on screen": "Загрузка значков фокусов: {0} из {1} на экране",
   "Some focus icons could not be loaded.": "Не удалось загрузить некоторые значки фокусов.",
   "Retry": "Повторить",
+  "Enter: next match. Shift+Enter: previous match. Alt+Enter: open the current match in the editor.": "Enter: следующее совпадение. Shift+Enter: предыдущее совпадение. Alt+Enter: открыть текущее совпадение в редакторе.",
+  "Mark {0} as completed": "Отметить {0} как выполненный",
   "Toggle MIO trait editing": "Переключить редактирование черт ВПК",
   "Link Any Parent": "Связать с любым родителем",
   "Link All Parents": "Связать со всеми родителями",

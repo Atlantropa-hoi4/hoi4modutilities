@@ -1,10 +1,21 @@
 import { Disposable, Subscriber, toDisposable } from "./event";
 import { feLocalize } from "./i18n";
 import { Checkbox } from "./checkbox";
+import type { ComboboxOpenFocus } from "./combobox";
+import {
+    describeListbox,
+    getClosedComboboxKeyAction,
+    getInitialListboxIndex,
+    getListboxKeyAction,
+    labelCombobox,
+    setComboboxExpanded,
+    setOptionSelected,
+} from "./combobox";
 import { BehaviorSubject, fromEvent, Observable, Subject, Subscription } from 'rxjs';
 
 const dropdowns: Dropdown[] = [];
 export const numDropDownOpened$ = new BehaviorSubject<number>(0);
+let nextListboxId = 0;
 
 export function enableDropdowns() {
     dropdowns.forEach(s => s.dispose());
@@ -17,11 +28,27 @@ export function enableDropdowns() {
     }
 }
 
+/**
+ * Gives a combobox its accessible name and popup state. The label written right before its
+ * `.select-container` names it; a `label[for]` is the fallback.
+ */
+function initializeComboboxAccessibility(select: HTMLElement): string | undefined {
+    const container = select.closest('.select-container');
+    const preceding = container?.previousElementSibling;
+    const referencing = select.id ? document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(select.id)}"]`) : null;
+    return labelCombobox(select, {
+        preceding: preceding instanceof HTMLLabelElement ? preceding : undefined,
+        referencing: referencing ?? undefined,
+    });
+}
+
 class Dropdown extends Subscriber {
     private closeDropdown: (() => void) | undefined = undefined;
+    private readonly labelId: string | undefined;
 
     constructor(readonly select: HTMLSelectElement) {
         super();
+        this.labelId = initializeComboboxAccessibility(select);
         this.init();
     }
 
@@ -32,22 +59,27 @@ class Dropdown extends Subscriber {
             if (this.closeDropdown) {
                 this.closeDropdown();
             } else {
-                this.showSelectionsForDropdown();
+                this.showSelectionsForDropdown('selected');
             }
         }));
         this.addSubscription(fromEvent<KeyboardEvent>(this.select, 'keydown').subscribe(e => {
-            if (e.code === 'Enter') {
-                e.preventDefault();
-                if (this.closeDropdown) {
+            if (this.closeDropdown) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
                     this.closeDropdown();
-                } else {
-                    this.showSelectionsForDropdown();
                 }
+                return;
+            }
+            // Plain arrow keys keep changing a native select's value in place.
+            const action = getClosedComboboxKeyAction(e, true);
+            if (action) {
+                e.preventDefault();
+                this.showSelectionsForDropdown(action.focus);
             }
         }));
     }
 
-    private showSelectionsForDropdown() {
+    private showSelectionsForDropdown(focus: ComboboxOpenFocus) {
         this.select.classList.add('dropdown-opened');
         const options = this.select.querySelectorAll('option');
         const optionForDropdownMenu: Option[] = [];
@@ -61,7 +93,7 @@ class Dropdown extends Subscriber {
             }
         });
 
-        const dropdownMenu = new DropdownMenu(optionForDropdownMenu);
+        const dropdownMenu = new DropdownMenu(optionForDropdownMenu, false, this.labelId);
         const dropdownMenuSubscriptions: Disposable[] = [ dropdownMenu ];
 
         dropdownMenuSubscriptions.push(toDisposable(dropdownMenu.options$.subscribe(options => {
@@ -85,13 +117,15 @@ class Dropdown extends Subscriber {
         numDropDownOpened$.next(numDropDownOpened$.value + 1);
         this.closeDropdown = () => {
             this.select.classList.remove('dropdown-opened');
+            setComboboxExpanded(this.select, undefined);
             dropdownMenu.hide();
             dropdownMenuSubscriptions.forEach(d => d.dispose());
             numDropDownOpened$.next(numDropDownOpened$.value - 1);
             this.closeDropdown = undefined;
         };
 
-        dropdownMenu.show(this.select);
+        dropdownMenu.show(this.select, focus);
+        setComboboxExpanded(this.select, dropdownMenu.id);
     }
 }
 
@@ -101,6 +135,7 @@ export interface DivDropdownLabels {
 
 export class DivDropdown extends Subscriber {
     private closeDropdown: (() => void) | undefined = undefined;
+    private readonly labelId: string | undefined;
 
     public selectedValues$ = new BehaviorSubject<readonly string[]>([]);
 
@@ -110,6 +145,7 @@ export class DivDropdown extends Subscriber {
         private labels: DivDropdownLabels = {},
     ) {
         super();
+        this.labelId = initializeComboboxAccessibility(select);
         this.init();
         this.addSubscription(this.selectedValues$.subscribe((value) => {
             const options = this.getOptions(value);
@@ -143,6 +179,7 @@ export class DivDropdown extends Subscriber {
             const option = document.createElement('div');
             option.classList.add('option');
             option.setAttribute('value', value);
+            option.setAttribute('aria-hidden', 'true');
             option.textContent = text;
             select.appendChild(option);
         }
@@ -155,18 +192,22 @@ export class DivDropdown extends Subscriber {
             if (this.closeDropdown) {
                 this.closeDropdown();
             } else {
-                this.showSelectionsForDropdown();
+                this.showSelectionsForDropdown('selected');
             }
         }));
 
         this.addSubscription(fromEvent<KeyboardEvent>(this.select, 'keydown').subscribe(e => {
-            if (e.code === 'Enter') {
-                e.preventDefault();
-                if (this.closeDropdown) {
+            if (this.closeDropdown) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
                     this.closeDropdown();
-                } else {
-                    this.showSelectionsForDropdown();
                 }
+                return;
+            }
+            const action = getClosedComboboxKeyAction(e, false);
+            if (action) {
+                e.preventDefault();
+                this.showSelectionsForDropdown(action.focus);
             }
         }));
 
@@ -174,10 +215,10 @@ export class DivDropdown extends Subscriber {
         this.updateSelectedValue(options);
     }
 
-    private showSelectionsForDropdown() {
+    private showSelectionsForDropdown(focus: ComboboxOpenFocus) {
         this.select.classList.add('dropdown-opened');
 
-        const dropdownMenu = new DropdownMenu(this.getOptions(), this.multiSelection);
+        const dropdownMenu = new DropdownMenu(this.getOptions(), this.multiSelection, this.labelId);
         const dropdownMenuSubscriptions: Disposable[] = [ dropdownMenu ];
 
         dropdownMenuSubscriptions.push(toDisposable(dropdownMenu.options$.subscribe(options => {
@@ -199,13 +240,15 @@ export class DivDropdown extends Subscriber {
         numDropDownOpened$.next(numDropDownOpened$.value + 1);
         this.closeDropdown = () => {
             this.select.classList.remove('dropdown-opened');
+            setComboboxExpanded(this.select, undefined);
             dropdownMenu.hide();
             dropdownMenuSubscriptions.forEach(d => d.dispose());
             numDropDownOpened$.next(numDropDownOpened$.value - 1);
             this.closeDropdown = undefined;
         };
 
-        dropdownMenu.show(this.select);
+        dropdownMenu.show(this.select, focus);
+        setComboboxExpanded(this.select, dropdownMenu.id);
     }
 
     private getOptions(selectedValues?: readonly string[]): Option[] {
@@ -216,6 +259,8 @@ export class DivDropdown extends Subscriber {
         const options = this.select.querySelectorAll('.option');
         const optionForDropdownMenu: Option[] = [];
         options.forEach(option => {
+            // The option data stays out of the combobox's announced value; the popup lists it.
+            option.setAttribute('aria-hidden', 'true');
             if (!option.hasAttribute('hidden')) {
                 const value = option.getAttribute('value');
                 optionForDropdownMenu.push({
@@ -244,15 +289,16 @@ type Option = { text: string, value: string, selected: boolean, glyph?: string }
 class DropdownMenu extends Subscriber {
     private writableOptions$: Subject<Option[]>;
     public options$: Observable<Option[]>;
-    
+
     private writableClose$: Subject<boolean>;
     public close$: Observable<boolean>;
 
+    public readonly id = `select-dropdown-${++nextListboxId}`;
     private list: HTMLUListElement;
     private items: HTMLLIElement[] = [];
     private subscriptionWhenOpen: Subscription[] = [];
 
-    constructor(private options: Option[], private multiSelection: boolean = false) {
+    constructor(private options: Option[], private multiSelection: boolean = false, private labelId?: string) {
         super();
         this.list = this.createList();
         this.writableOptions$ = new Subject();
@@ -267,7 +313,7 @@ class DropdownMenu extends Subscriber {
         });
     }
 
-    public show(host: Element) {
+    public show(host: Element, focus: ComboboxOpenFocus) {
         this.hide();
         const bbox = host.getBoundingClientRect();
         this.list.style.left = bbox.left + 'px';
@@ -276,9 +322,10 @@ class DropdownMenu extends Subscriber {
         this.registerEventHandlerWhenOpen(host);
         document.body.appendChild(this.list);
 
-        const selectedOptionIndex = this.multiSelection ? 0 : Math.max(0, this.options.findIndex(o => o.selected));
-        if (this.items.length > 0) {
-            this.items[selectedOptionIndex].focus();
+        const selectedIndex = this.multiSelection ? 0 : this.options.findIndex(o => o.selected);
+        const index = getInitialListboxIndex(focus, selectedIndex, this.items.length);
+        if (index >= 0) {
+            this.items[index].focus();
         }
     }
 
@@ -291,9 +338,11 @@ class DropdownMenu extends Subscriber {
         const options = this.options;
         const list = document.createElement('ul');
         list.classList.add('select-dropdown');
+        list.id = this.id;
+        describeListbox(list, { labelId: this.labelId, multiSelection: this.multiSelection });
 
         const items = this.items;
-    
+
         for (let i = 0; i < options.length; i++) {
             const option = options[i];
             const item = this.createDropdownItem(option, i, items);
@@ -305,8 +354,9 @@ class DropdownMenu extends Subscriber {
 
     private createDropdownItem(option: Option, index: number, items: HTMLLIElement[]): HTMLLIElement {
         const item = document.createElement('li');
-        item.setAttribute('role', 'option');
         item.tabIndex = -1;
+        setOptionSelected(item, option.selected);
+        let choose: () => void = () => undefined;
 
         if (this.multiSelection) {
             const checkbox = document.createElement('input');
@@ -314,11 +364,13 @@ class DropdownMenu extends Subscriber {
             checkbox.checked = option.selected;
 
             item.appendChild(checkbox);
-            const checkboxItem = new Checkbox(checkbox, option.text, option.glyph);
+            // The option itself takes focus and reports its state; the check mark only shows it.
+            const checkboxItem = new Checkbox(checkbox, option.text, option.glyph, 'direct', { presentational: true });
             this.addSubscription(checkboxItem);
 
             fromEvent(checkbox, 'change').subscribe(() => {
                 option.selected = checkbox.checked;
+                setOptionSelected(item, option.selected);
                 this.writableOptions$.next(this.options);
             });
 
@@ -327,14 +379,7 @@ class DropdownMenu extends Subscriber {
                     checkbox.click();
                 }
             });
-
-            fromEvent<KeyboardEvent>(item, 'keydown').subscribe((e) => {
-                if (e.target === item && (e.code === 'Enter' || e.code === 'Space')) {
-                    e.preventDefault();
-                    checkbox.click();
-                }
-            });
-
+            choose = () => checkbox.click();
         } else {
             item.textContent = option.text;
             const updateValue = () => {
@@ -344,13 +389,7 @@ class DropdownMenu extends Subscriber {
             };
 
             fromEvent(item, 'click').subscribe(updateValue);
-
-            fromEvent<KeyboardEvent>(item, 'keydown').subscribe((e) => {
-                if (e.code === 'Enter') {
-                    e.preventDefault();
-                    updateValue();
-                }
-            });
+            choose = updateValue;
         }
 
         fromEvent(item, 'mouseenter').subscribe(() => {
@@ -358,12 +397,24 @@ class DropdownMenu extends Subscriber {
         });
 
         fromEvent<KeyboardEvent>(item, 'keydown').subscribe((e) => {
-            if (e.code === 'ArrowDown' && index < items.length - 1) {
+            const action = getListboxKeyAction(e, { index, count: items.length });
+            if (!action) {
+                return;
+            }
+            if (action.kind === 'move') {
                 e.preventDefault();
-                items[index + 1].focus();
-            } else if (e.code === 'ArrowUp' && index > 0) {
+                items[action.index]?.focus();
+            } else if (action.kind === 'choose') {
                 e.preventDefault();
-                items[index - 1].focus();
+                choose();
+            } else {
+                if (action.preventDefault) {
+                    e.preventDefault();
+                }
+                // Escape also reaches the window handler, which closes the same way.
+                e.stopPropagation();
+                this.writableClose$.next(true);
+                this.hide();
             }
         });
 

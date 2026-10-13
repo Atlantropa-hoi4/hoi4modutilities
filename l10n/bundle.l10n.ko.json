@@ -356,6 +356,8 @@
   "Loading focus icons: {0} of {1} on screen": "중점 아이콘 불러오는 중: 화면의 {1}개 중 {0}개",
   "Some focus icons could not be loaded.": "일부 중점 아이콘을 불러오지 못했습니다.",
   "Retry": "다시 시도",
+  "Enter: next match. Shift+Enter: previous match. Alt+Enter: open the current match in the editor.": "Enter: 다음 일치 항목. Shift+Enter: 이전 일치 항목. Alt+Enter: 현재 일치 항목을 편집기에서 열기.",
+  "Mark {0} as completed": "{0} 완료로 표시",
   "Toggle MIO trait editing": "MIO 특성 편집 전환",
   "Link Any Parent": "하나 이상 부모 연결",
   "Link All Parents": "모든 부모 연결",

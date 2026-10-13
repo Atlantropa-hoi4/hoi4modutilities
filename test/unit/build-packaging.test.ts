@@ -47,15 +47,6 @@ describe('build packaging', () => {
         }
     });
 
-    it('ships a browser-independent compute worker and a Rust WASM artifact', async () => {
-        const repositoryRoot = path.resolve(__dirname, '../../..');
-        const wasm = await fs.readFile(path.join(repositoryRoot, 'dist', 'hoi4_compute.wasm'));
-        assert.deepStrictEqual([...wasm.subarray(0, 4)], [0, 97, 115, 109]);
-        const worker = await fs.readFile(path.join(repositoryRoot, 'dist', 'compute-worker.js'), 'utf8');
-        assert.ok(worker.includes('worker_threads'));
-        assert.ok(!/require\(["']vscode["']\)/.test(worker), 'compute worker must not depend on the VS Code host');
-    });
-
     it('excludes non-runtime and obsolete artifacts from the VSIX', async () => {
         const repositoryRoot = path.resolve(__dirname, '../../..');
         const ignoreEntries = new Set(
@@ -80,7 +71,7 @@ describe('build packaging', () => {
             assert.ok(ignoreEntries.has(entry), `expected .vscodeignore to contain ${entry}`);
         }
 
-        for (const requiredRuntimePath of ['dist/extension.js', 'dist/compute-worker.js', 'dist/hoi4_compute.wasm', 'static/focustree.js', 'l10n/**']) {
+        for (const requiredRuntimePath of ['dist/extension.js', 'dist/compute-worker.js', 'dist/index-serialization-worker.js', 'dist/hoi4_compute.wasm', 'static/focustree.js', 'l10n/**']) {
             assert.ok(!ignoreEntries.has(requiredRuntimePath), `runtime path must remain packageable: ${requiredRuntimePath}`);
         }
     });

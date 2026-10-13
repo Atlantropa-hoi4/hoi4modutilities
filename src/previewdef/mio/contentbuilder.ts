@@ -268,7 +268,7 @@ async function renderTrait(
         traitBgPromise = getSpriteByGfxName(
             trait.specialTraitBackground ? 'GFX_country_spefific_org_trait_button' : 'GFX_industrial_org_trait_button',
             gfxFiles,
-        ).then(sprite => sprite ? (sprite.frames[2] ?? sprite.image) : undefined);
+        ).then(sprite => sprite ? (sprite.getFrame(2) ?? sprite.image) : undefined);
         assetCache.backgrounds.set(trait.specialTraitBackground, traitBgPromise);
     }
     const traitBg = await traitBgPromise;

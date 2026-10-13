@@ -21,6 +21,7 @@ import {
     removeFocusFileFromIndex,
 } from "./sharedFocusIndexState";
 import { IndexService } from '../services/indexService';
+import { isFocusIndexSnapshot } from '../services/indexSnapshotValidation';
 import { LatestGeneration, LatestUpdateCoordinator } from './latestUpdate';
 import { ConfigurationKey } from '../constants';
 import { getRelativePathWithinRoot } from './nodecommon';
@@ -48,6 +49,7 @@ const sharedFocusIndexBuildConcurrency = 8;
 const sharedFocusIndexService = new IndexService<FocusIndexSnapshot>({
     global: {
         cache: { folder: 'common/national_focus', extension: '.txt', layer: 'global' },
+        validateCacheSnapshot: isFocusIndexSnapshot,
         build: (estimatedSize, signal) => buildGlobalFocusIndex(estimatedSize, signal),
         commit: snapshot => {
             globalFocusIndex = snapshot.index;
@@ -62,6 +64,7 @@ const sharedFocusIndexService = new IndexService<FocusIndexSnapshot>({
     },
     workspace: {
         cache: { folder: 'common/national_focus', extension: '.txt', layer: 'workspace' },
+        validateCacheSnapshot: isFocusIndexSnapshot,
         build: (estimatedSize, signal) => buildWorkspaceFocusIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceFocusUpdates.invalidateAll();

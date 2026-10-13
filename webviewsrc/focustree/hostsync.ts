@@ -6,12 +6,15 @@ import {
     FocusTreeView,
     FocusTreeViewPatch,
 } from '../../src/previewdef/focustree/viewmodel';
+import { FocusTreeStyleReceiver } from '../../src/previewdef/focustree/stylesync';
+import type { FocusTreeAssetRequestMessage } from '../../src/previewdef/focustree/webviewupdate';
 import {
     FocusTreeContentUpdateMessage,
     FocusTreeSceneAssetsMessage,
     getFocusTreeContentUpdateDecision,
 } from '../../src/previewdef/focustree/webviewupdate';
 import { feLocalize } from '../util/i18n';
+import { vscode } from '../util/vscode';
 import { applyFocusTreeSceneAssets } from './assetdemand';
 import {
     claimVisibleAssetsApplied,
@@ -31,6 +34,7 @@ import {
 } from './runtime';
 import { getCurrentFocusTree, getCurrentSelectionTreeId, setSelectedFocusTreeById } from './selection';
 import { applyStringMapPatchInPlace } from './stringmappatch';
+import { createFocusTreeStyleSheetTarget } from './stylesheet';
 import { createFocusTreeContentTiming, postFocusTreeContentApplied, postFocusTreeWebviewTiming } from './telemetry';
 import {
     handleConditionPresetNameResolved,
@@ -44,87 +48,40 @@ import {
 type HostMessage = FocusTreeContentUpdateMessage & FocusEditResultMessage & {
     command?: string;
     name?: string;
-    batchIndex?: number;
-    css?: string;
+    batchKind?: 'style' | 'content';
 };
 
-const dynamicStyleId = 'focus-tree-dynamic-style';
-const patchStyleId = 'focus-tree-dynamic-patch-style';
-const assetStyleId = 'focus-tree-asset-rules';
-const insertedCssRules = new Set<string>();
-
 /**
- * Inserts rules through the CSSOM into a style element placed right after the base dynamic
- * style, so later rules win the cascade without re-parsing the whole stylesheet.
+ * Dynamic styles follow the host's ledger: every sync is applied in arrival order, even when the
+ * content beside it is stale, so the stylesheet always matches what the host recorded. A delta
+ * that does not fit asks the host for a whole stylesheet.
  */
-function insertCssRules(styleId: string, css: string): void {
-    let styleElement = document.getElementById(styleId) as HTMLStyleElement | null;
-    if (!styleElement) {
-        styleElement = document.createElement('style');
-        styleElement.id = styleId;
-        styleElement.dataset.focusAssetStyleChunk = 'true';
-        styleElement.nonce = window.styleNonce;
-        const anchor = document.getElementById(patchStyleId) ?? document.getElementById(dynamicStyleId);
-        if (anchor) {
-            anchor.after(styleElement);
-        } else {
-            document.head.appendChild(styleElement);
-        }
-    }
-    const targetSheet = styleElement.sheet;
-    try {
-        if (!targetSheet) {
-            throw new Error('Style sheet is not available.');
-        }
-        const parsedSheet = new CSSStyleSheet();
-        parsedSheet.replaceSync(css);
-        for (const rule of Array.from(parsedSheet.cssRules)) {
-            if (!insertedCssRules.has(rule.cssText)) {
-                insertedCssRules.add(rule.cssText);
-                targetSheet.insertRule(rule.cssText, targetSheet.cssRules.length);
-            }
-        }
-    } catch {
-        if (!insertedCssRules.has(css)) {
-            insertedCssRules.add(css);
-            styleElement.textContent += `\n${css}`;
-        }
-    }
+const styleReceiver = new FocusTreeStyleReceiver(createFocusTreeStyleSheetTarget(), requestFocusTreeStyleResync);
+
+/** The webview reports a stylesheet that missed a delta through its asset request channel. */
+function requestFocusTreeStyleResync(): void {
+    const message: FocusTreeAssetRequestMessage = {
+        command: 'focusTreeAssetRequest',
+        protocolVersion: focusTreeProtocolVersion,
+        assetRequestId: 0,
+        treeId: runtime.renderedFocusTree?.id ?? runtime.selectedFocusTreeId ?? '',
+        snapshotVersion: runtime.snapshotVersion,
+        documentVersion: runtime.focusPositionDocumentVersion,
+        visibleFocusIds: [],
+        nearbyFocusIds: [],
+        styleResync: true,
+    };
+    vscode.postMessage(message);
 }
 
-function replaceFocusTreeDynamicStyles(dynamicStyleCss: string | undefined): void {
-    if (dynamicStyleCss === undefined) {
+function applyFocusTreeAssetStyleBatch(message: HostMessage): void {
+    if (message.protocolVersion !== focusTreeProtocolVersion) {
         return;
     }
-    const styleElement = document.getElementById(dynamicStyleId) as HTMLStyleElement | null;
-    if (styleElement) {
-        styleElement.textContent = dynamicStyleCss;
+    if (typeof message.requestId === 'number') {
+        runtime.latestRequestId = Math.max(runtime.latestRequestId, message.requestId);
     }
-    document.querySelectorAll('style[data-focus-asset-style-chunk]').forEach(element => element.remove());
-    insertedCssRules.clear();
-}
-
-function appendFocusTreeDynamicStyles(dynamicStyleCssPatch: string | undefined): void {
-    if (dynamicStyleCssPatch) {
-        insertCssRules(patchStyleId, dynamicStyleCssPatch);
-    }
-}
-
-function applyFocusTreeAssetStyleChunk(message: HostMessage): void {
-    if (message.protocolVersion !== focusTreeProtocolVersion
-        || typeof message.requestId !== 'number'
-        || typeof message.snapshotVersion !== 'number'
-        || typeof message.documentVersion !== 'number'
-        || typeof message.batchIndex !== 'number'
-        || typeof message.css !== 'string'
-        || message.requestId < runtime.latestRequestId
-        || message.snapshotVersion < runtime.snapshotVersion
-        || message.documentVersion !== runtime.focusPositionDocumentVersion) {
-        return;
-    }
-
-    runtime.latestRequestId = message.requestId;
-    insertCssRules(assetStyleId, message.css);
+    styleReceiver.apply(message.style);
 }
 
 function setFocusTrees(nextFocusTrees: FocusTreeView[], sceneMode: FocusTreeContentUpdateMessage['sceneMode']): void {
@@ -256,8 +213,6 @@ function applyFocusTreeContentUpdate(message: FocusTreeContentUpdateMessage): bo
             runtime.yGridSize = yGridSize;
             window.yGridSize = yGridSize;
         },
-        replaceDynamicStyleCss: replaceFocusTreeDynamicStyles,
-        appendDynamicStyleCss: appendFocusTreeDynamicStyles,
         setAssetMaterialization: replaceFocusAssetMaterialization,
     });
 }
@@ -267,6 +222,7 @@ function handleSceneAssets(message: FocusTreeSceneAssetsMessage): void {
     if (message.protocolVersion !== focusTreeProtocolVersion) {
         return;
     }
+    styleReceiver.apply(message.style);
     recordFocusAssetResponse(message);
     const appliedAt = performance.now();
     const applied = applyFocusTreeSceneAssets(message, {
@@ -276,7 +232,6 @@ function handleSceneAssets(message: FocusTreeSceneAssetsMessage): void {
             runtime.snapshotVersion = snapshotVersion;
         },
         getLatestRequestId: () => runtime.latestRequestId,
-        appendDynamicStyleCss: appendFocusTreeDynamicStyles,
         addMaterializedFocusIds: focusIds => runtime.assetMaterialization.add(focusIds),
     });
     if (applied) {
@@ -286,8 +241,11 @@ function handleSceneAssets(message: FocusTreeSceneAssetsMessage): void {
 }
 
 function handleContentUpdate(message: FocusTreeContentUpdateMessage): void {
-    if (message.protocolVersion !== focusTreeProtocolVersion
-        || (message.requestId ?? 0) < runtime.latestRequestId
+    if (message.protocolVersion !== focusTreeProtocolVersion) {
+        return;
+    }
+    styleReceiver.apply(message.style);
+    if ((message.requestId ?? 0) < runtime.latestRequestId
         || (message.sceneRevision ?? 0) < runtime.sceneRevision) {
         return;
     }
@@ -355,8 +313,8 @@ export function handleHostMessage(event: MessageEvent): void {
     const message = event.data as HostMessage;
     switch (message?.command) {
         case 'focusTreeAssetBatch':
-            if (typeof message.css === 'string') {
-                applyFocusTreeAssetStyleChunk(message);
+            if (message.batchKind === 'style') {
+                applyFocusTreeAssetStyleBatch(message);
                 return;
             }
             handleContentUpdate(message);
@@ -367,6 +325,11 @@ export function handleHostMessage(event: MessageEvent): void {
             return;
         case 'focusTreeSceneAssets':
             handleSceneAssets(event.data as FocusTreeSceneAssetsMessage);
+            return;
+        case 'focusTreeStyleSync':
+            if (message.protocolVersion === focusTreeProtocolVersion) {
+                styleReceiver.apply(message.style);
+            }
             return;
         case 'focusConditionPresetNameResolved':
             handleConditionPresetNameResolved(message.name);

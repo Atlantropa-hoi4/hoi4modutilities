@@ -29,6 +29,7 @@ export function applyFocusNodeVisualState(focusId: string, wrapper: HTMLElement,
     toggleClass(card, 'focus-related', relatedFocusIds.has(focusId));
     toggleClass(card, 'focus-filter-miss', !runtime.searchFilterMatchIds.has(focusId));
     toggleClass(wrapper, 'focus-search-match', runtime.searchResultIds.has(focusId));
+    toggleClass(wrapper, 'focus-search-current', runtime.currentSearchResultId === focusId);
     toggleClass(wrapper, 'focus-branch-hidden', isInHiddenBranch(wrapper));
     toggleClass(card, 'focus-asset-pending', runtime.assetMaterialization.isPending(focusId));
 }
@@ -66,6 +67,7 @@ export function updateSearchMatchClasses(focusIds: Iterable<string>): void {
         const wrapper = scene?.getWrapper(focusId);
         if (wrapper) {
             toggleClass(wrapper, 'focus-search-match', runtime.searchResultIds.has(focusId));
+            toggleClass(wrapper, 'focus-search-current', runtime.currentSearchResultId === focusId);
         }
     }
 }
@@ -205,10 +207,6 @@ export function setBranchVisibility(visible: boolean, branchClass: string): void
         const element = elements[index] as HTMLElement;
         toggleClass(element, 'focus-branch-hidden', isInHiddenBranch(element));
     }
-}
-
-export function isFocusBranchHidden(element: Element): boolean {
-    return element.classList.contains('focus-branch-hidden');
 }
 
 function isInHiddenBranch(element: Element): boolean {

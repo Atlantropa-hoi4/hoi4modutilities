@@ -263,11 +263,11 @@ async function buildTraitIcon(
 		return undefined;
 	}
 
-	// Sprite.frames slices a strip into per-frame images with their own data URLs, so a frame is
-	// drawn with the same background-image rule as a whole sprite and needs no background-position
+	// Sprite.getFrame slices only the requested strip frame into an image with its own data URL.
+	// It is drawn with the same background-image rule as a whole sprite and needs no background-position
 	// arithmetic. A frame index the sheet does not have falls back to the whole image rather than
 	// dropping the medal: a trait written with `sprite = 40` is still a trait.
-	const image = sprite.frames[wanted.frame] ?? sprite.image;
+	const image = sprite.getFrame(wanted.frame) ?? sprite.image;
 
 	// Keyed on the sprite and frame rather than the trait, so the forty advisors sharing frame 13 of
 	// the strip share one rule instead of writing the same data URL forty times.
@@ -305,7 +305,7 @@ async function buildPortrait(
 
 	const sprite = isSpriteName(chosen) ? await getSpriteByGfxName(chosen, loadResult.gfxFiles) : undefined;
 	const image = isSpriteName(chosen)
-		? sprite?.frames[0] ?? sprite?.image ?? (await createDefaultCharacterPortraitAssetResolver()(chosen)).image
+		? sprite?.getFrame(0) ?? sprite?.image ?? (await createDefaultCharacterPortraitAssetResolver()(chosen)).image
 		: await getImageByPath(normalizeCharacterPortraitImagePath(chosen) ?? chosen);
 
 	if (!image) {

@@ -1,29 +1,22 @@
 import { setState } from '../util/common';
+import { feLocalize } from '../util/i18n';
+import { getFocusNavigationTargetById, navigateToFocus } from './navigation';
 import { runtime } from './runtime';
 import { focusScene } from './scenestore';
-import { isFocusBranchHidden, updateSearchMatchClasses } from './visualstate';
+import { createFocusSearchScene, FocusSearchNavigator, matchFocusSearch } from './searchnavigation';
+import { isHiddenBranchClass, updateSearchMatchClasses } from './visualstate';
 
 let searchValue = runtime.initialSearchboxValue;
-let searchedFocus: HTMLElement[] = [];
-let navigatedIndex = 0;
 
-/** Marks focuses whose id or display name contains the query; optionally reveals the first. */
-export function search(searchContent: string, navigate = true): HTMLElement[] {
-    const normalizedSearch = searchContent.trim().toLowerCase();
-    const nextResultIds = new Set<string>();
-    if (normalizedSearch) {
-        for (const [focusId, normalizedText] of Object.entries(runtime.searchTextByFocusId)) {
-            if (normalizedText.includes(normalizedSearch)) {
-                nextResultIds.add(focusId);
-            }
-        }
-    }
+/**
+ * Enter walks the current matches the scene shows, mounting a match's card before scrolling to
+ * it; matches hidden by conditions or branches are skipped. Typing moves to the first match.
+ */
+const navigator = new FocusSearchNavigator(createFocusSearchScene(focusScene, isHiddenBranchClass));
 
-    const firstResultId = nextResultIds.values().next().value as string | undefined;
-    if (navigate && firstResultId) {
-        focusScene.ensureMounted([firstResultId]);
-    }
-
+/** Marks focuses whose id or display name contains the query; `navigate` moves to the first. */
+export function search(searchContent: string, navigate = true): void {
+    const nextResultIds = matchFocusSearch(runtime.searchTextByFocusId, searchContent);
     const changedResultIds = new Set<string>();
     runtime.searchResultIds.forEach(focusId => {
         if (!nextResultIds.has(focusId)) {
@@ -37,23 +30,45 @@ export function search(searchContent: string, navigate = true): HTMLElement[] {
     });
     runtime.searchResultIds = nextResultIds;
     updateSearchMatchClasses(changedResultIds);
-
-    const results = Array.from(nextResultIds)
-        .map(focusId => focusScene.getWrapper(focusId))
-        .filter((wrapper): wrapper is HTMLElement => !!wrapper);
-    if (navigate) {
-        results[0]?.scrollIntoView({ block: 'center', inline: 'center' });
-    }
-    return results;
+    navigator.setResults(nextResultIds, navigate);
+    applySearchPosition();
 }
 
 export function retriggerSearch(): void {
-    searchedFocus = search(searchValue, false);
+    search(searchValue, false);
+}
+
+/** Recounts the walkable matches after branch visibility changed without a rebuild. */
+export function refreshSearchNavigation(): void {
+    navigator.refresh();
+    applySearchPosition();
+}
+
+function applySearchPosition(): void {
+    const previous = runtime.currentSearchResultId;
+    runtime.currentSearchResultId = navigator.current;
+    if (previous !== runtime.currentSearchResultId) {
+        updateSearchMatchClasses([previous, runtime.currentSearchResultId].filter((focusId): focusId is string => !!focusId));
+    }
+
+    const count = document.getElementById('focus-search-count');
+    if (!count) {
+        return;
+    }
+    const position = navigator.getPosition();
+    const text = !searchValue.trim()
+        ? ''
+        : position.total === 0
+            ? feLocalize('focustree.search.nomatches', 'no matches')
+            : feLocalize('focustree.search.matches', '{0}/{1}', position.current ?? '-', position.total);
+    if (count.textContent !== text) {
+        count.textContent = text;
+    }
 }
 
 export function installSearchbox(): void {
     const searchbox = document.getElementById('searchbox') as HTMLInputElement | null;
-    searchedFocus = search(searchValue, false);
+    search(searchValue, false);
     if (!searchbox) {
         return;
     }
@@ -62,27 +77,36 @@ export function installSearchbox(): void {
     const handleChange = () => {
         const nextValue = searchbox.value.toLowerCase();
         if (searchValue !== nextValue) {
-            navigatedIndex = 0;
-            searchedFocus = search(nextValue);
             searchValue = nextValue;
+            search(nextValue);
             setState({ searchboxValue: nextValue });
         }
     };
 
-    searchbox.addEventListener('change', handleChange);
-    searchbox.addEventListener('keypress', event => {
-        if (event.key !== 'Enter') {
+    searchbox.addEventListener('input', event => {
+        // Text an IME is still composing is searched once compositionend commits it.
+        if (!(event as InputEvent).isComposing) {
             handleChange();
-            return;
-        }
-
-        const visibleResults = searchedFocus.filter(result => !isFocusBranchHidden(result));
-        if (visibleResults.length > 0) {
-            navigatedIndex = (navigatedIndex + (event.shiftKey ? visibleResults.length - 1 : 1)) % visibleResults.length;
-            visibleResults[navigatedIndex].scrollIntoView({ block: 'center', inline: 'center' });
         }
     });
-    searchbox.addEventListener('keyup', handleChange);
-    searchbox.addEventListener('paste', handleChange);
-    searchbox.addEventListener('cut', handleChange);
+    searchbox.addEventListener('compositionend', handleChange);
+    searchbox.addEventListener('change', handleChange);
+    searchbox.addEventListener('keydown', event => {
+        // Enter that commits an IME composition is not a search step.
+        if (event.key !== 'Enter' || event.isComposing) {
+            return;
+        }
+        event.preventDefault();
+        if (event.altKey) {
+            // Opens the current match in the editor, the keyboard counterpart of clicking its card.
+            const focusId = navigator.ensureCurrent();
+            applySearchPosition();
+            if (focusId) {
+                navigateToFocus(getFocusNavigationTargetById(focusId));
+            }
+            return;
+        }
+        navigator.step(event.shiftKey);
+        applySearchPosition();
+    });
 }

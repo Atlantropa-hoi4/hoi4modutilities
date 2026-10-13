@@ -23,7 +23,8 @@ async function withPresentation(run: (api: typeof import('../../src/previewdef/f
         debug: { debug: () => undefined, error: () => undefined },
         imagecache: { getSpriteByGfxName: async (name: string) => {
             sprites.push(name);
-            return { id: name, width: 160, height: 40, frames: [{ uri: `data:image/png;base64,${name}` }] };
+            return { id: name, width: 160, height: 40,
+                getFrame: (frame: number) => frame === 0 ? { uri: `data:image/png;base64,${name}` } : undefined };
         } },
     };
     loader._load = function(request, parent, main) {

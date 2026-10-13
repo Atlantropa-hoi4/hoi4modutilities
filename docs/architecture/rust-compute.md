@@ -83,11 +83,13 @@ The edge payload is completely validated before province graphs are mutated.
 Bad payloads use the original TS traversal/validation; valid output preserves
 component/neighbor/path order, seam handling and warning order/text. File reads
 still use the existing fileloader, preserving unsaved content, mod/dependency
-precedence, `replace_path` and optional DLC behavior. Map sessions check
-cancellation around off-thread computation and before commit; a cancelled map
-job may finish its shared worker stage before being discarded. Shared image
-jobs are not tied to one consumer's cancellation. Editor jobs have their own
-abort signal and cannot update disposed panels.
+precedence, `replace_path` and optional DLC behavior. Superseded map generations
+abort their loader consumer; shared loader flights abort province color/edge
+compute only when every consumer cancels. A new flight waits for a cancelled
+flight to retire. TypeScript colors, edges, zones and region/subdivision loops
+cooperatively yield and check cancellation; zones/regions remain TypeScript,
+not Rust kernels. Shared image jobs are not tied to one consumer's cancellation.
+Editor jobs have their own abort signal and cannot update disposed panels.
 
 Script jobs use the same bounded worker queue, cancellation and ownership rules.
 Missing optional index exports, normal scanner rejection and a disabled compute
@@ -111,7 +113,7 @@ npm run verify
 and an explicit Cargo target directory. CI installs the target and runs native
 tests. Rust source, Cargo outputs and profiling inputs/reports are excluded
 from the universal VSIX. Worker code has no runtime VS Code dependency; browser
-CSP and the map payload protocol are unchanged; focus viewport requests remain on protocol v4.
+CSP and the map payload protocol are unchanged; focus viewport/style messages use protocol v5.
 
 The watcher watches worker TypeScript, not Rust. After Rust edits rebuild compute
 artifacts and reload the Extension Development Host. Existing instances do not
@@ -153,7 +155,14 @@ original TS algorithms, including malformed payloads, queue/cancellation/ownersh
 old ABI capabilities and nonfatal rejection. Cache and localisation tests cover
 version/language races. Desktop integration checks the shipped worker inside VS Code.
 
-Remaining work includes map zones/large payload retention and transport,
-more preview families, long-running endurance, in-flight map signal
-propagation, non-Windows execution and standalone Node 20 benchmarking. Rust
-is not claimed to accelerate DOM/Canvas work or every extension feature.
+Index cache serialization is separate from the Rust compute worker. Its lazy,
+bounded JavaScript worker handles JSON, UTF-8 and checksums; memory publication
+does not wait for persistence. Structured-clone admission is still host work.
+Map collection diffs now publish atomically on generation completion, independently
+of which compute backend produced the collections.
+
+Remaining measurements include large map payload retention/transport, full-map
+zone throughput, more preview families, long-running endurance, non-Windows
+execution and standalone Node 20 benchmarking. In-flight map signal propagation
+and cooperative zone cancellation are implemented and exercised; this does not
+claim that Rust accelerates DOM/Canvas work or every extension feature.

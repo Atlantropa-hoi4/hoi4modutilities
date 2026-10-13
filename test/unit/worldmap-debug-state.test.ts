@@ -1,6 +1,10 @@
 import * as assert from 'assert';
 import Module = require('module');
-import type { WorldMapData } from '../../src/previewdef/worldmap/definitions';
+import type { WorldMapData, WorldMapMessage } from '../../src/previewdef/worldmap/definitions';
+import type { LoaderSession } from '../../src/util/loader/loader';
+import type { WebviewPanel } from 'vscode';
+import { WorldMapLoadQueue } from '../../src/previewdef/worldmap/worldmaploadqueue';
+import type { WorldMapLoadRequest } from '../../src/previewdef/worldmap/worldmaploadqueue';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -28,6 +32,8 @@ interface TestController {
     loadGeneration: number;
     loadTimings?: { loadGeneration: number; loadStartedAt: number; dataCommittedAt?: number };
     commitPendingWorldMap(generation: number): void;
+    sendProvinceMapSummaryToWebview(force: boolean): Promise<void>;
+    loadWorldMapGeneration(request: WorldMapLoadRequest, signal: AbortSignal): Promise<void>;
 }
 interface DebugState {
     cachedWorldMap?: { retainedJsonBytes?: number };
@@ -88,5 +94,49 @@ describe('world map lightweight debug state', () => {
         const state = controller.getDebugState({ includeRetainedSize: false }) as DebugState;
         assert.ok(state.timings?.dataCommittedAt !== undefined && state.timings.dataCommittedAt >= before);
         assert.strictEqual(internals.committedWorldMap, data);
+    });
+
+    it('passes generation-owned cancellation into map loading and never posts superseded or disposed results', async () => {
+        for (const dispose of [false, true]) {
+            const posted: WorldMapMessage[] = [];
+            const signals: AbortSignal[] = [];
+            let loads = 0;
+            const controller = Object.create(WorldMap.prototype) as InstanceType<typeof WorldMap>;
+            const internals = controller as unknown as TestController;
+            const panel = { webview: { postMessage: async (message: WorldMapMessage) => { posted.push(message); return true; } } } as unknown as WebviewPanel;
+            const data = { width: 1, height: 1, warnings: [] } as unknown as WorldMapData;
+            const loader = {
+                clearCache() {},
+                async load(session: LoaderSession) {
+                    loads++;
+                    signals.push(session.signal!);
+                    if (loads === 1) {
+                        await new Promise<void>(resolve => session.signal!.addEventListener('abort', () => resolve(), { once: true }));
+                    }
+                    session.throwIfCancelled();
+                    return { result: data, dependencies: [] };
+                },
+            };
+            Object.assign(controller, {
+                panel, worldMapLoader: loader, loadGeneration: 0, progressLoadGeneration: 0,
+                loaderProgressGenerations: new WeakMap(),
+                loadQueue: new WorldMapLoadQueue((request, signal) => internals.loadWorldMapGeneration(request, signal)),
+                reloadChangedDependencies: { cancel() {} },
+            });
+            const loading = internals.sendProvinceMapSummaryToWebview(false);
+            assert.strictEqual(signals[0].aborted, false);
+            if (dispose) { controller.dispose(); }
+            else { void internals.sendProvinceMapSummaryToWebview(false); }
+            assert.strictEqual(signals[0].aborted, true);
+            await loading;
+            assert.deepStrictEqual(posted.map(message => message.command), dispose ? [] : ['provincemapsummary']);
+            if (!dispose) {
+                assert.strictEqual(signals[1].aborted, false);
+                assert.strictEqual('loadGeneration' in posted[0] && posted[0].loadGeneration, 2);
+                assert.strictEqual(internals.pendingWorldMap?.loadGeneration, 2);
+                assert.strictEqual(internals.committedWorldMap, undefined, 'acknowledgement is still the only host commit boundary');
+                controller.dispose();
+            }
+        }
     });
 });

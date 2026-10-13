@@ -7,8 +7,9 @@ import type { FocusSceneGeometryOptions, FocusSceneRect } from '../../src/previe
 import { getFocusTreeViewportAnchorId } from '../../src/previewdef/focustree/viewanchor';
 import type { FocusTreeView } from '../../src/previewdef/focustree/viewmodel';
 import { currentScale, getState, runSafely, scrollToState, setState, tryRun } from '../util/common';
+import { feLocalize } from '../util/i18n';
 import { onFocusSceneRendered, scheduleFocusAssetDemandCheck } from './assetloading';
-import { setFocusCardChecked } from './cards';
+import { getFocusCompletionLabel, setFocusCardChecked } from './cards';
 import {
     clearSelectedExprs,
     exprKeyToConditionItem,
@@ -231,13 +232,19 @@ export async function buildContent(options?: BuildContentOptions): Promise<boole
         geometryOptions: getFocusSceneGeometryOptions(layoutPlan.focusGridBoxItems),
         getCardInput: focusId => {
             const focus = focusTree.focuses[focusId];
-            return focus && {
+            if (!focus) {
+                return undefined;
+            }
+            const labelMode = document.body.dataset.previewLabelMode === 'name' ? 'name' : 'id';
+            const completable = completableFocusIds.has(focusId);
+            return {
                 focus,
                 template: focusTemplates[focusTemplateKeyById[focusId]],
                 exprs: renderExprs,
                 activeFile,
-                completable: completableFocusIds.has(focusId),
-                labelMode: document.body.dataset.previewLabelMode === 'name' ? 'name' : 'id',
+                completable,
+                labelMode,
+                completionLabel: completable ? getFocusCompletionLabel(focus, labelMode, formatFocusCompletionLabel) : undefined,
             };
         },
         isChecked: focusId => !!checkedFocuses[focusId],
@@ -314,6 +321,26 @@ export const rebuildContentSafely = tryRun(async (options?: BuildContentOptions)
     retriggerSearch();
     onFocusSceneRendered();
 });
+
+function formatFocusCompletionLabel(focusLabel: string): string {
+    return feLocalize('focustree.completion.checkbox', 'Mark {0} as completed', focusLabel);
+}
+
+/** Renames mounted completion checkboxes after the label mode changed; new cards follow it. */
+export function refreshFocusCompletionLabels(): void {
+    const focusTree = runtime.renderedFocusTree;
+    if (!focusTree) {
+        return;
+    }
+    const labelMode = document.body.dataset.previewLabelMode === 'name' ? 'name' : 'id';
+    focusScene.forEachCard((card, focusId) => {
+        const focus = focusTree.focuses[focusId];
+        if (focus && runtime.completableFocusIds.has(focusId)) {
+            card.querySelector(':scope > .focus-checkbox .checkbox-container')
+                ?.setAttribute('aria-label', getFocusCompletionLabel(focus, labelMode, formatFocusCompletionLabel));
+        }
+    });
+}
 
 /** Toggles completion checkboxes, which change `has_completed_focus` conditions. */
 export function subscribeFocusCheckboxDelegation(root: HTMLElement): void {

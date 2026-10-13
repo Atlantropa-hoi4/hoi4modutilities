@@ -4,6 +4,7 @@ import type { FocusTreeRenderBaseState } from '../../src/previewdef/focustree/co
 import type * as FocusSchema from '../../src/previewdef/focustree/schema';
 import type * as HoiParser from '../../src/hoiformat/hoiparser';
 import type * as FocusIconAssets from '../../src/previewdef/focustree/focusicongfx';
+import { FocusTreeStyleLedger } from '../../src/previewdef/focustree/stylesync';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -81,7 +82,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
                     : name === 'GFX_INLAY'
                         ? {
                             image: { width: 48, height: 48, uri: 'inlay-icon.png' },
-                            frames: [{ width: 48, height: 48, uri: 'inlay-icon.png' }],
+                            getFrame: (index: number) => index === 0 ? { width: 48, height: 48, uri: 'inlay-icon.png' } : undefined,
                         }
                     : undefined;
             },
@@ -199,7 +200,6 @@ describe('focustree contentbuilder', () => {
     });
 
     it('keeps an icon that focuses share real when one is materialized, also after merging another scene', async () => {
-        const { mergeFocusTreeStyleRules } = require('../../src/previewdef/focustree/renderpayloadpatch') as typeof import('../../src/previewdef/focustree/renderpayloadpatch');
         const trees = getFocusTree(parseHoi4File(`
             focus_tree = { id = tree_a
                 focus = { id = FOCUS_A icon = GFX_FOCUS_A x = 0 y = 0 }
@@ -234,18 +234,22 @@ describe('focustree contentbuilder', () => {
         const first = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_a'] }, undefined, undefined, undefined, ['FOCUS_A']);
         const firstRules = first.payload.dynamicStyleRules!;
         assert.match(firstRules.get(iconKey) ?? '', loaded);
+        const ledger = new FocusTreeStyleLedger({ createBaseId: () => 'base' });
+        const firstSync = ledger.sync(firstRules, first.payload.dynamicStyleRawCss);
+        assert.strictEqual(firstSync?.kind, 'full');
 
         // tree_b joins that scene without materialized focuses; FOCUS_SHARING uses the same icon.
         const second = await buildFocusTreeRenderPayloadFromBaseState(
-            { ...base, assetTreeIds: ['tree_b'] }, undefined, undefined, undefined, ['FOCUS_A'], firstRules);
+            { ...base, assetTreeIds: ['tree_b'] }, undefined, undefined, undefined, ['FOCUS_A'], ledger.rules);
         const secondRules = second.payload.dynamicStyleRules!;
         assert.strictEqual(secondRules.has(iconKey), false, 'no placeholder for an icon the joined scene already has');
         assert.match(secondRules.get('st-focus-icon-GFX_FOCUS_B') ?? '', /--focus-icon-state: placeholder/);
-        const merged = mergeFocusTreeStyleRules(first.payload.dynamicStyleCss, firstRules, secondRules);
-        assert.strictEqual(merged.dynamicStyleRules.get(iconKey), firstRules.get(iconKey));
-        assert.doesNotMatch(merged.appendedCss, /st-focus-icon-GFX_FOCUS_A/);
-        const cascaded = Array.from(merged.dynamicStyleCss.matchAll(/\.st-focus-icon-GFX_FOCUS_A \{([^}]*)\}/g)).at(-1)?.[1] ?? '';
-        assert.match(cascaded, loaded, 'the merged stylesheet still renders the shared icon for real');
+        const merged = ledger.sync(secondRules, second.payload.dynamicStyleRawCss);
+        assert.strictEqual(merged?.kind, 'delta');
+        assert.match(merged?.css ?? '', /st-focus-icon-GFX_FOCUS_B/);
+        assert.doesNotMatch(merged?.css ?? '', /st-focus-icon-GFX_FOCUS_A/, 'the shared icon neither travels nor is replaced');
+        assert.doesNotMatch(merged?.css ?? '', /st-focus-common/, 'shared template rules do not travel again');
+        assert.strictEqual(ledger.rules.get(iconKey), firstRules.get(iconKey));
 
         // A standalone build of tree_b still styles every icon it uses.
         const standalone = await buildFocusTreeRenderPayloadFromBaseState({ ...base, assetTreeIds: ['tree_b'] }, undefined, undefined, undefined, []);
@@ -300,13 +304,13 @@ describe('focustree contentbuilder', () => {
             existingStyleRules: new Map<string, string>(),
         };
         const first = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A], options);
-        assert.match(first.css, /\.st-focus-icon-GFX_FOCUS_A \{[^}]*test-icon\.png/);
+        assert.match(new Map(first.rules).get('st-focus-icon-GFX_FOCUS_A') ?? '', /test-icon\.png/);
 
         // The webview already shows A for real and B as a placeholder.
         const existingStyleRules = new Map([...first.rules, ['st-focus-icon-GFX_FOCUS_B', 'background: grey;'] as [string, string]]);
         const second = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A, tree.focuses.FOCUS_B], { ...options, existingStyleRules });
         assert.deepStrictEqual(second.rules.map(([key]) => key), ['st-focus-icon-GFX_FOCUS_B']);
-        assert.match(second.css, /second-icon\.png/);
+        assert.match(second.rules[0][1], /second-icon\.png/);
 
         const resent = await contentbuilder.renderFocusAssetStylePatch([tree.focuses.FOCUS_A], {
             ...options,
@@ -401,7 +405,9 @@ describe('focustree contentbuilder', () => {
         );
 
         assert.match(html, /id="inlay-window-container"[^>]*style="display:none;"/);
-        assert.match(html, /id="search-filters"[^>]*role="combobox"[^>]*aria-multiselectable="true"/);
+        assert.match(html, /id="search-filters"[^>]*role="combobox"/);
+        // Multi-selection is a property of the popup listbox, which the webview describes.
+        assert.doesNotMatch(html, /id="search-filters"[^>]*aria-multiselectable/);
         assert.doesNotMatch(html, /<select id="search-filters"/);
     });
 
@@ -637,12 +643,12 @@ describe('focustree contentbuilder', () => {
             loadDurationMs: 1,
             deferredAssetLoad: false,
         } as any, undefined, batch => {
-            assetStyleBatches.push(batch.css);
+            assetStyleBatches.push(batch.rules.map(([key, content]) => `${key}: ${content}`).join('\n'));
         });
 
         assert.match(result.payload.dynamicStyleCss, /test-icon\.png/);
         assert.strictEqual(assetStyleBatches.length, 1);
-        assert.match(assetStyleBatches[0], /test-icon\.png/);
+        assert.match(assetStyleBatches[0], /st-focus-icon-GFX_FOCUS_A: [\s\S]*test-icon\.png/);
         assert.deepStrictEqual(resolvedFileCalls, [
             { name: 'GFX_FOCUS_A', gfxFiles: ['interface/mapped_icons.gfx'] },
         ]);

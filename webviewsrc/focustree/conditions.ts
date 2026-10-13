@@ -26,6 +26,7 @@ export function replaceDivDropdownOptions(select: HTMLDivElement, options: reado
         const optionElement = document.createElement('div');
         optionElement.className = 'option';
         optionElement.setAttribute('value', option.value);
+        optionElement.setAttribute('aria-hidden', 'true');
         optionElement.textContent = option.text;
         return optionElement;
     });

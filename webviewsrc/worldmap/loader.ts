@@ -1,4 +1,4 @@
-import { WorldMapMessage, Province, WorldMapData, RequestMapItemMessage, State, Country, Point, ErrorMessage, ProgressMessage } from "./definitions";
+import { WorldMapMessage, MapItemMessage, Province, WorldMapData, RequestMapItemMessage, State, Country, Point, ErrorMessage, ProgressMessage } from "./definitions";
 import { copyArray } from "../util/common";
 import { inBBox } from "./graphutils";
 import { Subscriber } from "../util/event";
@@ -92,6 +92,7 @@ export class Loader extends Subscriber {
     private inFlightInitialRequests = 0;
     private initialLoadPending = false;
     private loadGeneration = 0;
+    private committedLoadGeneration = -1;
     private readonly maxConcurrentRequests = 4;
 
     constructor() {
@@ -113,7 +114,8 @@ export class Loader extends Subscriber {
             const message = event.data as WorldMapMessage;
             switch (message.command) {
                 case 'provincemapsummary':
-                    if (message.loadGeneration !== undefined && message.loadGeneration < this.loadGeneration) {
+                    if (message.loadGeneration !== undefined &&
+                        (message.loadGeneration < this.loadGeneration || message.loadGeneration <= this.committedLoadGeneration)) {
                         break;
                     }
                     this.loadGeneration = message.loadGeneration ?? this.loadGeneration + 1;
@@ -140,14 +142,15 @@ export class Loader extends Subscriber {
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
-                    this.receiveData(this.loadingProvinceMap?.states, message.start, message.end, message.data);
-                    this.completeMapItem();
-                    if (!this.initialLoadPending) {
-                        if (message.count !== undefined && this.loadingProvinceMap) {
-                            this.loadingProvinceMap.statesCount = message.count;
-                        }
-                        this.commitLiveUpdate();
+                    if (message.loadGeneration === undefined && !this.initialLoadPending) {
+                        this.commitLiveCollectionUpdate('states', message);
+                        break;
                     }
+                    this.receiveData(this.loadingProvinceMap?.states, message.start, message.end, message.data);
+                    if (message.count !== undefined && this.loadingProvinceMap) {
+                        this.loadingProvinceMap.statesCount = message.count;
+                    }
+                    this.completeMapItem();
                     break;
                 case 'countries':
                     if (!this.isCurrentLoadMessage(message)) {
@@ -160,14 +163,15 @@ export class Loader extends Subscriber {
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
                     }
-                    this.receiveData(this.loadingProvinceMap?.strategicRegions, message.start, message.end, message.data);
-                    this.completeMapItem();
-                    if (!this.initialLoadPending) {
-                        if (message.count !== undefined && this.loadingProvinceMap) {
-                            this.loadingProvinceMap.strategicRegionsCount = message.count;
-                        }
-                        this.commitLiveUpdate();
+                    if (message.loadGeneration === undefined && !this.initialLoadPending) {
+                        this.commitLiveCollectionUpdate('strategicRegions', message);
+                        break;
                     }
+                    this.receiveData(this.loadingProvinceMap?.strategicRegions, message.start, message.end, message.data);
+                    if (message.count !== undefined && this.loadingProvinceMap) {
+                        this.loadingProvinceMap.strategicRegionsCount = message.count;
+                    }
+                    this.completeMapItem();
                     break;
                 case 'supplyareas':
                     if (!this.isCurrentLoadMessage(message)) {
@@ -235,6 +239,7 @@ export class Loader extends Subscriber {
                 case 'mapupdatecomplete':
                     if (this.loadingProvinceMap && this.isCurrentLoadMessage(message) && !this.initialLoadPending) {
                         this.committedProvinceMap = this.loadingProvinceMap;
+                        this.committedLoadGeneration = this.loadGeneration;
                         this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
                         this.emitWorldMap();
                         this.loading$.next(false);
@@ -346,6 +351,7 @@ export class Loader extends Subscriber {
         this.initialLoadPending = false;
         this.progress = 1;
         this.committedProvinceMap = this.loadingProvinceMap;
+        this.committedLoadGeneration = this.loadGeneration;
         this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
         this.emitWorldMap();
         this.loading$.next(false);
@@ -372,15 +378,30 @@ export class Loader extends Subscriber {
     private isCurrentLoadMessage(message: WorldMapMessage): boolean {
         return !('loadGeneration' in message)
             || message.loadGeneration === undefined
-            || message.loadGeneration === this.loadGeneration;
+            || (message.loadGeneration === this.loadGeneration && message.loadGeneration > this.committedLoadGeneration);
     }
 
-    private commitLiveUpdate(): void {
-        if (!this.loadingProvinceMap) {
+    private commitLiveCollectionUpdate(
+        collection: 'states' | 'strategicRegions',
+        message: MapItemMessage,
+    ): void {
+        const map = this.cloneCommittedMap();
+        if (!map) {
             return;
         }
-        this.committedProvinceMap = this.loadingProvinceMap;
-        this.worldMap = new FEWorldMapClass(this.loadingProvinceMap);
+        this.receiveData<State | StrategicRegion | null | undefined>(map[collection], message.start, message.end, message.data);
+        if (message.count !== undefined) {
+            if (collection === 'states') {
+                map.statesCount = message.count;
+            } else {
+                map.strategicRegionsCount = message.count;
+            }
+        }
+        if (this.loadingProvinceMap === this.committedProvinceMap) {
+            this.loadingProvinceMap = map;
+        }
+        this.committedProvinceMap = map;
+        this.worldMap = new FEWorldMapClass(map);
         this.emitWorldMap();
     }
 
@@ -402,20 +423,29 @@ export class Loader extends Subscriber {
     }
 
     private prepareDiffStagingMap(): void {
+        this.loadingQueue.length = 0;
+        this.inFlightInitialRequests = 0;
+        this.initialLoadPending = false;
+        this.loadingProvinceMap = this.cloneCommittedMap();
+    }
+
+    private cloneCommittedMap(): WorldMapData | undefined {
         const source = this.committedProvinceMap;
         if (!source) {
-            return;
+            return undefined;
         }
 
-        this.loadingProvinceMap = {
+        // Array slices alone discard negative IDs used by malformed map items.
+        const cloneItems = <T>(items: T[]): T[] => Object.assign(items.slice(), items);
+        return {
             ...source,
-            provinces: source.provinces.slice(),
-            states: source.states.slice(),
-            countries: source.countries.slice(),
-            strategicRegions: source.strategicRegions.slice(),
-            supplyAreas: source.supplyAreas.slice(),
-            railways: source.railways.slice(),
-            supplyNodes: source.supplyNodes.slice(),
+            provinces: cloneItems(source.provinces),
+            states: cloneItems(source.states),
+            countries: cloneItems(source.countries),
+            strategicRegions: cloneItems(source.strategicRegions),
+            supplyAreas: cloneItems(source.supplyAreas),
+            railways: cloneItems(source.railways),
+            supplyNodes: cloneItems(source.supplyNodes),
         };
     }
 

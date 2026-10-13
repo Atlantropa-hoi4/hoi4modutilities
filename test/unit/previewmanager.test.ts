@@ -30,6 +30,7 @@ const watchedPatterns: unknown[] = [];
 const activeWatcherPatterns: unknown[] = [];
 const disposedWatcherPatterns: unknown[] = [];
 const selectedModSourceListeners: Array<() => void> = [];
+const localisationCommitListeners: Array<(event: { files: vscode.Uri[]; revision: number }) => void> = [];
 let selectedModRoots: FakeUri[] = [];
 let getSelectedModRoots = async () => selectedModRoots;
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
@@ -210,6 +211,23 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         };
     }
 
+    if ((request.endsWith('/util/localisationIndexEvents') || request === '../util/localisationIndexEvents')
+        && parent?.filename?.includes('previewmanager')) {
+        return {
+            onDidCommitWorkspaceLocalisationIndex: (listener: (event: { files: vscode.Uri[]; revision: number }) => void) => {
+                localisationCommitListeners.push(listener);
+                return {
+                    dispose: () => {
+                        const index = localisationCommitListeners.indexOf(listener);
+                        if (index >= 0) {
+                            localisationCommitListeners.splice(index, 1);
+                        }
+                    },
+                };
+            },
+        };
+    }
+
     if ((request.endsWith('/util/i18n') || request === '../util/i18n')
         && parent?.filename?.includes('previewmanager')) {
         return {
@@ -238,6 +256,7 @@ describe('preview manager', () => {
         activeWatcherPatterns.length = 0;
         disposedWatcherPatterns.length = 0;
         selectedModSourceListeners.length = 0;
+        localisationCommitListeners.length = 0;
         selectedModRoots = [];
         getSelectedModRoots = async () => selectedModRoots;
         activeTabState.activeTab = undefined;
@@ -711,6 +730,31 @@ describe('preview manager', () => {
                 [sharedDocument.uri.toString(), secondSharedDocument.uri.toString()]);
             await clock.advance(150);
             assert.strictEqual(preview.changeCount, 2);
+        });
+
+        it('replaces an active pre-commit localisation render with the latest root and ignores disposed commit callbacks', async () => {
+            const localisation = createDocument('file:///localisation/mod_l_english.yml');
+            preview.emitDependencies(['localisation/mod_l_english.yml']);
+            const gate = createDeferred<void>();
+            preview.refreshGate = gate.promise;
+            manager['onChangeTextDocument'](changeEvent(localisation));
+            await clock.advance(35);
+            assert.deepStrictEqual(preview.changedVersions, [1]);
+
+            document = createDocument(document.uri.toString(), 2);
+            const committed = localisationCommitListeners[0];
+            committed({ files: [localisation.uri as unknown as vscode.Uri], revision: 1 });
+            await clock.advance(150);
+            gate.resolve();
+            await clock.advance();
+            assert.deepStrictEqual(preview.changedVersions, [1, 2]);
+            assert.deepStrictEqual(preview.appliedVersions, [2]);
+            assert.deepStrictEqual(preview.lastChangedDependencies.map(change => change.uri.toString()), [localisation.uri.toString()]);
+
+            registration.dispose();
+            committed({ files: [localisation.uri as unknown as vscode.Uri], revision: 2 });
+            await clock.advance(150);
+            assert.deepStrictEqual(preview.appliedVersions, [2]);
         });
 
         it('serializes root and imported dependency refreshes through one running action', async () => {

@@ -15,6 +15,20 @@ export interface FocusCardRenderInput {
     activeFile: string;
     completable: boolean;
     labelMode: 'id' | 'name';
+    /** Accessible name of the completion checkbox of a completable focus. */
+    completionLabel?: string;
+}
+
+/**
+ * The completion checkbox name of a focus, naming it the way its card is labelled: by display
+ * name in name mode, by id otherwise. `format` localizes the sentence around the name.
+ */
+export function getFocusCompletionLabel(
+    focus: Pick<FocusView, 'id' | 'displayName'>,
+    labelMode: 'id' | 'name',
+    format: (focusLabel: string) => string,
+): string {
+    return format(labelMode === 'name' ? focus.displayName ?? focus.id : focus.id);
 }
 
 export function getFocusIconClassName(focus: FocusView, exprs: readonly ConditionItem[]): string {
@@ -109,7 +123,7 @@ export function finishFocusCard(card: HTMLElement, input: FocusCardRenderInput, 
         checkbox.dataset.focusCheckboxId = input.focus.id;
         checkbox.classList.add('hidden');
         checkbox.tabIndex = -1;
-        checkbox.after(createCheckboxChrome(checked));
+        checkbox.after(createCheckboxChrome(checked, input.completionLabel));
     }
 
     if (input.template !== undefined && input.labelMode === 'name' && card.dataset.previewTitleName) {
@@ -117,7 +131,7 @@ export function finishFocusCard(card: HTMLElement, input: FocusCardRenderInput, 
     }
 }
 
-function createCheckboxChrome(checked: boolean): HTMLDivElement {
+function createCheckboxChrome(checked: boolean, label: string | undefined): HTMLDivElement {
     const outer = document.createElement('div');
     outer.className = 'checkbox-container-out';
     const container = document.createElement('div');
@@ -125,6 +139,9 @@ function createCheckboxChrome(checked: boolean): HTMLDivElement {
     container.tabIndex = 0;
     container.setAttribute('role', 'checkbox');
     container.setAttribute('aria-checked', String(checked));
+    if (label) {
+        container.setAttribute('aria-label', label);
+    }
     const glyph = document.createElement('div');
     glyph.className = 'checkbox codicon codicon-check';
     container.append(glyph, document.createElement('div'));

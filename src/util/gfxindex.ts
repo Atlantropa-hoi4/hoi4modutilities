@@ -8,6 +8,7 @@ import { getFilePathFromMod, getSelectedModRootFolders, listFilesFromModOrHOI4, 
 import { localize } from './i18n';
 import { uniq } from 'lodash';
 import { IndexService } from '../services/indexService';
+import { isGfxIndexSnapshot } from '../services/indexSnapshotValidation';
 import { ConfigurationKey } from '../constants';
 import { LatestGeneration, LatestUpdateCoordinator } from './latestUpdate';
 import { getRelativePathWithinRoot } from './nodecommon';
@@ -31,6 +32,7 @@ const gfxIndexBuildConcurrency = 8;
 const gfxIndexService = new IndexService<GfxIndexSnapshot>({
     global: {
         cache: { folder: 'interface', extension: '.gfx', layer: 'global' },
+        validateCacheSnapshot: isGfxIndexSnapshot,
         build: (estimatedSize, signal) => buildGlobalGfxIndex(estimatedSize, signal),
         commit: snapshot => {
             globalGfxIndex = snapshot.index;
@@ -45,6 +47,7 @@ const gfxIndexService = new IndexService<GfxIndexSnapshot>({
     },
     workspace: {
         cache: { folder: 'interface', extension: '.gfx', layer: 'workspace' },
+        validateCacheSnapshot: isGfxIndexSnapshot,
         build: (estimatedSize, signal) => buildWorkspaceGfxIndex(estimatedSize, signal),
         commit: snapshot => {
             workspaceGfxUpdates.invalidateAll();

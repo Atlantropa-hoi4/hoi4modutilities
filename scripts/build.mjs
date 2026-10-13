@@ -136,6 +136,17 @@ async function buildHost() {
     });
 }
 
+async function buildIndexSerializationWorker() {
+    await buildTarget({
+        ...sharedOptions,
+        entryPoints: [path.join(rootDir, 'src/services/indexSerializationWorker.ts')],
+        outfile: path.join(distDir, 'index-serialization-worker.js'),
+        platform: 'node',
+        format: 'cjs',
+        target: 'node20',
+    });
+}
+
 async function buildWebviews() {
     await buildTarget({
         ...sharedOptions,
@@ -153,7 +164,7 @@ async function main() {
     await copyManifestLocalisations(rootDir);
     await copyStaticAssets();
     await buildRustCompute(rootDir, distDir);
-    await Promise.all([buildHost(), buildWebviews(), buildTarget(computeWorkerOptions(rootDir, distDir, isProd))]);
+    await Promise.all([buildHost(), buildWebviews(), buildIndexSerializationWorker(), buildTarget(computeWorkerOptions(rootDir, distDir, isProd))]);
     console.log(isWatch ? `Watching bundles (${mode}).` : `Build complete (${mode}).`);
 
     if (isWatch) {

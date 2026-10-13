@@ -18,7 +18,11 @@ export abstract class Loader<T, E = {}> {
     protected onLoadDoneEmitter = new vscode.EventEmitter<LoadResult<T, E>>();
     public onLoadDone = this.onLoadDoneEmitter.event;
 
-    private loadingPromise: Promise<LoadResult<T, E>> | undefined = undefined;
+    private loadingWork: {
+        promise: Promise<LoadResult<T, E>>;
+        controller: AbortController;
+        consumers: Map<LoaderSession, () => void>;
+    } | undefined;
 
     public disableTelemetry = false;
 
@@ -37,15 +41,10 @@ export abstract class Loader<T, E = {}> {
             try {
                 session.throwIfCancelled();
                 this.beforeLoadImpl(session);
-                if (this.loadingPromise === undefined) {
-                    this.cachedValue = await (this.loadingPromise = this.loadImpl(session));
-                } else {
-                    this.cachedValue = await this.loadingPromise;
-                }
+                this.cachedValue = await this.loadShared(session);
                 session.throwIfCancelled();
                 session.setLoaded(this);
             } finally {
-                this.loadingPromise = undefined;
                 session.endLoading(this);
             }
 
@@ -62,6 +61,70 @@ export abstract class Loader<T, E = {}> {
         this.onLoadDoneEmitter.fire(this.cachedValue);
         return this.cachedValue;
     };
+
+    private async loadShared(session: LoaderSession): Promise<LoadResult<T, E>> {
+        // A canceled flight must settle before another one can mutate this loader's caches.
+        while (this.loadingWork?.controller.signal.aborted) {
+            try {
+                await this.loadingWork.promise;
+            } catch {
+                // The next live consumer starts a new flight after retirement.
+            }
+            session.throwIfCancelled();
+        }
+
+        let work = this.loadingWork;
+        if (!work) {
+            const controller = new AbortController();
+            const consumers = new Map<LoaderSession, () => void>();
+            const cancelled = (): boolean => {
+                for (const consumer of consumers.keys()) {
+                    if (!consumer.isCancelled()) {
+                        return false;
+                    }
+                }
+                controller.abort();
+                return true;
+            };
+            const workSession = session.forChild(cancelled, controller.signal);
+            const promise = Promise.resolve().then(() => {
+                workSession.throwIfCancelled();
+                return this.loadImpl(workSession);
+            }).then(result => {
+                workSession.throwIfCancelled();
+                return result;
+            }).finally(() => {
+                for (const [consumer, listener] of consumers) {
+                    consumer.signal?.removeEventListener('abort', listener);
+                }
+                consumers.clear();
+                if (this.loadingWork?.promise === promise) {
+                    this.loadingWork = undefined;
+                }
+            });
+            work = this.loadingWork = { promise, controller, consumers };
+        }
+
+        // The flight owns its signal; one consumer can only abort its own lease.
+        const sharedWork = work;
+        const onAbort = (): void => {
+            for (const consumer of sharedWork.consumers.keys()) {
+                if (!consumer.isCancelled()) {
+                    return;
+                }
+            }
+            sharedWork.controller.abort();
+        };
+        work.consumers.set(session, onAbort);
+        session.signal?.addEventListener('abort', onAbort, { once: true });
+        onAbort();
+        try {
+            return await work.promise;
+        } finally {
+            session.signal?.removeEventListener('abort', onAbort);
+            work.consumers.delete(session);
+        }
+    }
 
     public async shouldReload(session: LoaderSession): Promise<boolean> {
         // Always return same value for shouldReload in one session
@@ -102,7 +165,6 @@ export abstract class Loader<T, E = {}> {
 
     public clearCache(): void {
         this.cachedValue = undefined;
-        this.loadingPromise = undefined;
     }
 
     protected abstract loadImpl(session: LoaderSession): Promise<LoadResult<T, E>>;

@@ -1,8 +1,9 @@
 import { enableZoom, runSafely, subscribeNavigatorDelegation, subscribePreviewLabelToggle, subscribeRefreshButton } from './util/common';
 import { installFocusAssetLoading } from './focustree/assetloading';
-import { rebuildContentSafely, subscribeFocusCheckboxDelegation } from './focustree/content';
-import { getFocusNavigationTarget, installFocusEditing } from './focustree/editing';
+import { rebuildContentSafely, refreshFocusCompletionLabels, subscribeFocusCheckboxDelegation } from './focustree/content';
+import { installFocusEditing } from './focustree/editing';
 import { handleHostMessage } from './focustree/hostsync';
+import { getFocusNavigationTarget } from './focustree/navigation';
 import { initializeFocusPresentation } from './focustree/presentation';
 import { runtime } from './focustree/runtime';
 import { focusScene, setSceneMaterializedListener } from './focustree/scenestore';
@@ -13,6 +14,10 @@ import { installToolbar, updateSelectedFocusTree } from './focustree/toolbar';
 window.addEventListener('load', runSafely(async function() {
     postFocusTreeWebviewTiming({ stage: 'load' });
     subscribePreviewLabelToggle('id');
+    // Runs after the shared toggle switched the label mode: checkbox names follow the labels.
+    document.querySelectorAll('[data-preview-label-mode-value]').forEach(control => {
+        control.addEventListener('click', refreshFocusCompletionLabels);
+    });
     initializeFocusPresentation(() => focusScene.measureAllMounted());
     setSceneMaterializedListener(() => postFocusTreeDiagnostics('sceneMaterialized', {
         focusGridBoxItemCount: Object.keys(runtime.focusPositions).length,

@@ -18,6 +18,14 @@ export function syncCheckbox(input: HTMLInputElement): void {
     checkboxes.find(checkbox => checkbox.input === input)?.syncAriaChecked();
 }
 
+export interface CheckboxOptions {
+    /**
+     * Draws only the check mark for an element that owns focus and state itself, such as a
+     * listbox option: the mark is no separate tab stop and no checkbox of its own.
+     */
+    presentational?: boolean;
+}
+
 export class Checkbox extends Subscriber {
     private checkboxContainer: HTMLDivElement | undefined;
 
@@ -26,13 +34,16 @@ export class Checkbox extends Subscriber {
         private text?: string,
         private glyphClassName?: string,
         private eventMode: 'direct' | 'delegated' = 'direct',
+        private readonly options: CheckboxOptions = {},
     ) {
         super();
         this.init();
     }
 
     public syncAriaChecked(): void {
-        this.checkboxContainer?.setAttribute('aria-checked', this.input.checked.toString());
+        if (!this.options.presentational) {
+            this.checkboxContainer?.setAttribute('aria-checked', this.input.checked.toString());
+        }
     }
 
     private init() {
@@ -54,9 +65,11 @@ export class Checkbox extends Subscriber {
         this.checkboxContainer = checkboxContainer;
         checkboxContainer.classList.add('checkbox-container');
         checkboxContainerOut.appendChild(checkboxContainer);
-        checkboxContainer.tabIndex = 0;
-        checkboxContainer.setAttribute('role', 'checkbox');
-        checkboxContainer.setAttribute('aria-checked', this.input.checked.toString());
+        if (!this.options.presentational) {
+            checkboxContainer.tabIndex = 0;
+            checkboxContainer.setAttribute('role', 'checkbox');
+            checkboxContainer.setAttribute('aria-checked', this.input.checked.toString());
+        }
 
         const checkbox = document.createElement('div');
         checkbox.classList.add('checkbox');
@@ -92,7 +105,7 @@ export class Checkbox extends Subscriber {
     private addEventHandlersForCheckBox(checkboxContainer: HTMLDivElement, checkbox: HTMLDivElement) {
         const toggleValue = () => {
             this.input.checked = !this.input.checked;
-            checkboxContainer.setAttribute('aria-checked', this.input.checked.toString());
+            this.syncAriaChecked();
             this.input.dispatchEvent(new Event('change'));
         };
 

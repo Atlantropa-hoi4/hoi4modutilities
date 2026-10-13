@@ -1,5 +1,7 @@
 import * as assert from 'assert';
 import Module = require('module');
+import type * as CacheModule from '../../src/services/indexCache';
+import { isEventIndexSnapshot, isLocalisationIndexSnapshot } from '../../src/services/indexSnapshotValidation';
 
 type Deferred<T> = {
     promise: Promise<T>;
@@ -244,6 +246,157 @@ describe('index service', () => {
         await staleEnsure;
         assert.deepStrictEqual(commits, ['current']);
     });
+
+    it('publishes the exact usable snapshot and settles ensure/warm before a held storage save', async () => {
+        await withCachePersistence(async harness => {
+            const snapshot = { index: { id: { l_korean: '실제 값', l_english: 'real value' } } };
+            let visible: typeof snapshot | undefined;
+            const service = new IndexService({ workspace: {
+                cache: { folder: 'localisation', extension: '.yml', layer: 'workspace' },
+                validateCacheSnapshot: (value): value is typeof snapshot => isLocalisationIndexSnapshot(value)
+                    && typeof value.index.id?.l_korean === 'string' && typeof value.index.id?.l_english === 'string',
+                build: async () => snapshot, commit: value => { visible = value; }, reset: () => { visible = undefined; },
+                statusMessage: 'Building', telemetryEvent: 'workspace',
+            } });
+            try {
+                await service.ensure('workspace', { showStatusBar: false });
+                assert.strictEqual(service.isReady('workspace'), true);
+                assert.strictEqual(visible, snapshot);
+                assert.ok(visible);
+                assert.strictEqual(visible.index.id.l_korean, '실제 값');
+                await service.warm(['workspace'], { showStatusBar: false });
+                await harness.entered.promise;
+                assert.strictEqual(harness.saves[0].value, snapshot);
+                assert.strictEqual(harness.finished, false, 'readiness must not wait for storage completion');
+                service.cancel('workspace');
+                assert.strictEqual(harness.saves[0].signal.aborted, true);
+                assert.strictEqual(service.isReady('workspace'), true, 'cache cancellation must not discard memory');
+            } finally {
+                harness.release.resolve();
+                service.dispose();
+            }
+        });
+    });
+
+    it('aborts detached saves on invalidation/disposal and only publishes the latest in-memory generation', async () => {
+        await withCachePersistence(async harness => {
+            let builds = 0;
+            const snapshots = [{ index: { current: 'old' } }, { index: { current: 'new' } }];
+            const commits: typeof snapshots = [];
+            const service = new IndexService({ workspace: {
+                cache: { folder: 'localisation', extension: '.yml', layer: 'workspace' },
+                validateCacheSnapshot: (value): value is (typeof snapshots)[number] => isEventIndexSnapshot(value)
+                    && typeof value.index.current === 'string',
+                build: async () => snapshots[builds++], commit: value => commits.push(value), reset: () => undefined,
+                statusMessage: 'Building', telemetryEvent: 'workspace',
+            } });
+            await service.ensure('workspace', { showStatusBar: false });
+            await harness.entered.promise;
+            service.invalidate('workspace');
+            assert.strictEqual(harness.saves[0].signal.aborted, true);
+            await service.ensure('workspace', { showStatusBar: false });
+            assert.deepStrictEqual(commits, snapshots);
+            assert.strictEqual(service.isReady('workspace'), true);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            assert.strictEqual(harness.saves.length, 2);
+            assert.strictEqual(harness.saves[1].value, snapshots[1]);
+            service.dispose();
+            assert.strictEqual(harness.saves[1].signal.aborted, true);
+            assert.strictEqual(service.isReady('workspace'), false);
+            harness.release.resolve();
+            await assert.rejects(service.ensure('workspace'), /cancelled/);
+        });
+    });
+
+    it('rejects cross-source snapshots before committing and rebuilds against the current fingerprint', async () => {
+        await withCachePersistence(async harness => {
+            harness.fingerprints = ['old', 'new', 'new', 'new'];
+            const commits: string[] = [];
+            let builds = 0;
+            const service = new IndexService({ workspace: {
+                cache: { folder: 'events', extension: '.txt', layer: 'all' },
+                validateCacheSnapshot: (value): value is string => typeof value === 'string',
+                build: async () => ++builds === 1 ? 'cross-source' : 'current',
+                commit: value => commits.push(value), reset: () => undefined,
+                statusMessage: 'Building', telemetryEvent: 'workspace',
+            } });
+            try {
+                await service.ensure('workspace', { showStatusBar: false });
+                assert.strictEqual(builds, 2);
+                assert.deepStrictEqual(commits, ['current']);
+                assert.strictEqual(service.isReady('workspace'), true);
+                await harness.entered.promise;
+                assert.strictEqual(harness.saves[0].fingerprint, 'new');
+            } finally { harness.release.resolve(); service.dispose(); }
+        });
+    });
+
+    it('contains detached persistence rejection without changing ready state', async () => {
+        await withCachePersistence(async harness => {
+            const service = new IndexService({ workspace: {
+                cache: { folder: 'events', extension: '.txt', layer: 'all' },
+                validateCacheSnapshot: isEventIndexSnapshot,
+                build: async () => ({ index: { id: 'value' } }), commit: () => undefined, reset: () => undefined,
+                statusMessage: 'Building', telemetryEvent: 'workspace',
+            } });
+            await service.ensure('workspace', { showStatusBar: false });
+            await harness.entered.promise;
+            harness.release.reject(new Error('storage failure'));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            assert.strictEqual(service.isReady('workspace'), true);
+            service.dispose();
+        });
+    });
+
+    it('validates cache target schemas before committing and rebuilds malformed persisted snapshots', async () => {
+        await withCachePersistence(async harness => {
+            const rebuiltIndex: Record<string, string> = Object.create(null);
+            rebuiltIndex['namespace.1'] = 'events/sample.txt';
+            const rebuilt = { index: rebuiltIndex };
+            const commits: { index: Record<string, string> }[] = [];
+            let builds = 0;
+            const service = new IndexService<{ index: Record<string, string> }>({ events: {
+                cache: { folder: 'events', extension: '.txt', layer: 'all' },
+                validateCacheSnapshot: isEventIndexSnapshot,
+                build: async () => { builds++; return rebuilt; },
+                commit: snapshot => commits.push(snapshot), reset: () => undefined,
+                statusMessage: 'Building', telemetryEvent: 'events',
+            } });
+            try {
+                for (const malformed of [{}, { index: [] }, { index: { id: 7 } }, { index: { id: { file: 'wrong target' } } }]) {
+                    harness.cached = malformed;
+                    service.invalidate('events');
+                    await service.ensure('events', { showStatusBar: false });
+                    assert.strictEqual(commits[commits.length - 1], rebuilt, 'a malformed cache must not be committed or replaced by an empty index');
+                }
+                assert.strictEqual(builds, 4);
+                assert.strictEqual(service.isReady('events'), true);
+            } finally { service.dispose(); }
+        });
+    });
+
+    it('commits a validated real event cache without rebuilding or fabricating a replacement snapshot', async () => {
+        await withCachePersistence(async harness => {
+            const cached = { index: { 'namespace.1': 'events/sample.txt' } };
+            harness.cached = cached;
+            let builds = 0;
+            let visible: { index: Record<string, string> } | undefined;
+            const service = new IndexService<{ index: Record<string, string> }>({ events: {
+                cache: { folder: 'events', extension: '.txt', layer: 'all' },
+                validateCacheSnapshot: isEventIndexSnapshot,
+                build: async () => { builds++; return cached; },
+                commit: snapshot => { visible = snapshot; }, reset: () => { visible = undefined; },
+                statusMessage: 'Building', telemetryEvent: 'events',
+            } });
+            try {
+                await service.ensure('events', { showStatusBar: false });
+                assert.strictEqual(builds, 0);
+                assert.strictEqual(visible, cached);
+                assert.strictEqual(service.isReady('events'), true);
+                assert.deepStrictEqual(harness.saves, []);
+            } finally { service.dispose(); }
+        });
+    });
 });
 
 async function waitForMicrotasks(): Promise<void> {
@@ -260,4 +413,34 @@ function createDeferred<T>(): Deferred<T> {
         reject = rejectPromise;
     });
     return { promise, resolve, reject };
+}
+
+interface PersistenceHarness {
+    entered: Deferred<void>;
+    release: Deferred<void>;
+    saves: { fingerprint: string; value: unknown; signal: AbortSignal }[];
+    fingerprints: string[];
+    finished: boolean;
+    cached?: unknown;
+}
+
+async function withCachePersistence(run: (harness: PersistenceHarness) => Promise<void>): Promise<void> {
+    const api = require('../../src/services/indexCache') as typeof CacheModule;
+    const original = { indexCacheUri: api.indexCacheUri, indexFingerprint: api.indexFingerprint,
+        readIndexCache: api.readIndexCache, saveIndexCache: api.saveIndexCache };
+    const harness: PersistenceHarness = { entered: createDeferred<void>(), release: createDeferred<void>(),
+        saves: [], fingerprints: [], finished: false };
+    Object.assign(api, {
+        indexCacheUri: () => ({ toString: () => 'cache://workspace' }),
+        indexFingerprint: async () => harness.fingerprints.shift() ?? 'stable',
+        readIndexCache: async () => harness.cached,
+        saveIndexCache: async (_uri: unknown, fingerprint: string, value: unknown, signal: AbortSignal) => {
+            harness.saves.push({ fingerprint, value, signal });
+            harness.entered.resolve();
+            await harness.release.promise;
+            harness.finished = true;
+        },
+    });
+    try { await run(harness); }
+    finally { harness.release.resolve(); Object.assign(api, original); }
 }

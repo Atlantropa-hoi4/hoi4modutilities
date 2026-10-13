@@ -347,14 +347,14 @@ export interface FocusTreeSceneAssetsApplyContext {
     getSnapshotVersion(): number;
     setSnapshotVersion(snapshotVersion: number): void;
     getLatestRequestId(): number;
-    appendDynamicStyleCss(css: string): void;
     addMaterializedFocusIds(focusIds: readonly string[]): void;
 }
 
 /**
- * Applies an asset patch of the current document. Messages arrive in posting order, so its rules
- * are never older than the scene shown; the snapshot version advances only from the patch's
- * base, otherwise later host deltas detect the divergence and request the scene again.
+ * Marks the focuses of an asset patch of the current document as loaded; its style sync was
+ * applied on arrival. Messages arrive in posting order, so its rules are never older than the
+ * scene shown; the snapshot version advances only from the patch's base, otherwise later host
+ * deltas detect the divergence and request the scene again.
  */
 export function applyFocusTreeSceneAssets(
     message: FocusTreeSceneAssetsMessage,
@@ -365,9 +365,6 @@ export function applyFocusTreeSceneAssets(
         || message.documentVersion !== context.getDocumentVersion()
         || message.requestId < context.getLatestRequestId()) {
         return false;
-    }
-    if (message.dynamicStyleCssPatch) {
-        context.appendDynamicStyleCss(message.dynamicStyleCssPatch);
     }
     context.addMaterializedFocusIds(message.materializedFocusIds ?? []);
     if (message.baseSnapshotVersion === context.getSnapshotVersion() && message.snapshotVersion > message.baseSnapshotVersion) {

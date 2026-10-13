@@ -1,6 +1,7 @@
 import type { BMP } from './bmpparser';
 import { tryRustCompute } from '../../compute/service';
 import type { ComputeResult } from '../../compute/protocol';
+import { finishCooperativeWork, runCooperatively, WorkBudget } from '../../cooperative';
 
 export interface ProvinceColorContainer {
     color: number;
@@ -14,6 +15,11 @@ export interface ProvinceColors {
 }
 
 export function scanProvinceColorsTypescript(image: BMP): ProvinceColors {
+    return finishCooperativeWork(scanProvinceColorSteps(image));
+}
+
+function* scanProvinceColorSteps(image: BMP): Generator<void, ProvinceColors> {
+    const work = new WorkBudget();
     const colorByPosition = new Uint32Array(image.width * image.height);
     const provinces: ProvinceColorContainer[] = [];
     const colorToProvince: Record<number, ProvinceColorContainer> = {};
@@ -28,6 +34,7 @@ export function scanProvinceColorsTypescript(image: BMP): ProvinceColors {
                 colorToProvince[color] = province;
             }
             colorByPosition[dx] = province.color;
+            if (work.shouldYield()) { yield; }
         }
     }
     return { colorByPosition, provinces, colorToProvince };
@@ -40,7 +47,7 @@ export async function scanProvinceColors(image: BMP, signal?: AbortSignal): Prom
     }, signal) : undefined;
     signal?.throwIfAborted();
     if (!result) {
-        return scanProvinceColorsTypescript(image);
+        return runCooperatively(scanProvinceColorSteps(image), signal);
     }
     return provinceColorsFromComputeResult(result);
 }

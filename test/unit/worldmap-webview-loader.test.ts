@@ -1,5 +1,12 @@
 import * as assert from 'assert';
-import { RequestMapItemMessage, WorldMapMessage } from '../../src/previewdef/worldmap/definitions';
+import type { RequestMapItemMessage, WorldMapMessage, WorldMapData } from '../../src/previewdef/worldmap/definitions';
+import type { Loader as WebviewLoader } from '../../webviewsrc/worldmap/loader';
+
+type IndexedCollection = 'provinces' | 'states' | 'countries' | 'strategicRegions' | 'supplyAreas' | 'railways' | 'supplyNodes';
+const testGlobals = global as unknown as {
+    acquireVsCodeApi: () => { postMessage(message: WorldMapMessage): void; getState(): unknown; setState(state: unknown): void };
+    window: EventTarget;
+};
 
 declare global {
     function acquireVsCodeApi(): {
@@ -228,6 +235,127 @@ describe('world map webview loader batching', () => {
             { command: 'mapready', loadGeneration: 2 },
             { command: 'mapready', loadGeneration: 3 },
         ]);
+        loader.dispose();
+    });
+
+    it('stages every generation-tagged collection, including states and regions, without mutating published aliases', () => {
+        const postedMessages: WorldMapMessage[] = [];
+        const windowTarget = new EventTarget();
+        testGlobals.acquireVsCodeApi = () => ({
+            postMessage: (message: WorldMapMessage) => postedMessages.push(message),
+            getState: () => ({}),
+            setState: () => undefined,
+        });
+        testGlobals.window = windowTarget;
+        const { Loader } = require('../../webviewsrc/worldmap/loader') as { Loader: typeof WebviewLoader };
+        const loader = new Loader();
+        let emits = 0;
+        loader.worldMap$.subscribe(() => emits++);
+        dispatchWindowMessage(windowTarget, { command: 'provincemapsummary', loadGeneration: 1, data: emptyWorldMapSummary() });
+        dispatchWindowMessage(windowTarget, { command: 'states', start: -1, end: 0, data: [{ id: -1, provinces: [] }] });
+        // The wrapper retains these private collection arrays from its WorldMapData constructor argument.
+        const published = loader.worldMap as unknown as WorldMapData;
+        const collections: Record<string, IndexedCollection> = {
+            provinces: 'provinces', states: 'states', countries: 'countries', strategicregions: 'strategicRegions',
+            supplyareas: 'supplyAreas', railways: 'railways', supplynodes: 'supplyNodes',
+        };
+        const previous = new Map<IndexedCollection, WorldMapData[IndexedCollection]>(
+            Object.values(collections).map(key => [key, published[key]]));
+        const diffItem = { id: 1, tag: 'NEW', provinces: [], states: [], level: 1 };
+        const replacements = {
+            warnings: [{ source: [], relatedFiles: [], text: 'New warning' }],
+            continents: ['new_continent'],
+            terrains: [{ name: 'new_terrain', color: 1, isNaval: false, file: 'map/terrain.txt' }],
+            resources: [{ name: 'new_resource', iconFrame: 0, imageUri: 'image.png', file: 'common/resources.txt' }],
+            rivers: [{ colors: { 1: 2 }, ends: [1], boundingBox: { x: 0, y: 0, w: 1, h: 1 } }],
+            conditionExprs: [{ scopeName: '', nodeContent: '1936.1.1.0' }],
+            bookmarks: [{ name: 'new_bookmark', date: { year: 1936, month: 1, day: 1, hour: 0 } }],
+        } satisfies Pick<WorldMapData, 'warnings' | 'continents' | 'terrains' | 'resources' | 'rivers' | 'conditionExprs' | 'bookmarks'>;
+        const beforeDiff = emits;
+        dispatchWindowMessage(windowTarget, { command: 'progress', loadGeneration: 2, data: 'Comparing changes...' });
+        for (const [command, collection] of Object.entries(collections)) {
+            dispatchWindowMessage(windowTarget, {
+                command, start: 1, end: 2, count: 2, loadGeneration: 2,
+                data: [diffItem],
+            } as WorldMapMessage);
+            assert.strictEqual(loader.worldMap, published, command);
+            assert.strictEqual(emits, beforeDiff, command);
+            assert.strictEqual(previous.get(collection)![1], undefined, `${command}: published array is not staging`);
+        }
+        for (const [key, data] of Object.entries(replacements)) {
+            // Keys come only from the checked WorldMapData collection fixture above.
+            const collection = key as keyof typeof replacements;
+            dispatchWindowMessage(windowTarget, {
+                command: collection === 'conditionExprs' ? 'conditionexprs' : collection,
+                data, start: 0, end: 0, loadGeneration: 2,
+            });
+            assert.strictEqual(loader.worldMap, published, collection);
+            assert.strictEqual(emits, beforeDiff, collection);
+            assert.deepStrictEqual(published[collection], [], `${collection}: published array remains untouched`);
+        }
+        assert.strictEqual(published.statesCount, 0);
+        assert.strictEqual(published.strategicRegionsCount, 0);
+        dispatchWindowMessage(windowTarget, { command: 'mapupdatecomplete', loadGeneration: 1 });
+        assert.strictEqual(emits, beforeDiff, 'stale completion must not publish staging');
+        dispatchWindowMessage(windowTarget, { command: 'mapupdatecomplete', loadGeneration: 2 });
+        assert.strictEqual(emits, beforeDiff + 1);
+        assert.strictEqual(loader.worldMap.statesCount, 2);
+        assert.strictEqual(loader.worldMap.strategicRegionsCount, 2);
+        const updated = loader.worldMap as unknown as WorldMapData;
+        assert.deepStrictEqual(updated.states[-1], { id: -1, provinces: [] }, 'negative IDs survive staging clones');
+        for (const collection of Object.values(collections)) {
+            assert.strictEqual(previous.get(collection)![1], undefined, `${collection}: old published alias remains immutable`);
+            assert.deepStrictEqual(updated[collection][1], diffItem);
+        }
+        for (const [key, data] of Object.entries(replacements)) {
+            const collection = key as keyof typeof replacements;
+            assert.deepStrictEqual(updated[collection], data);
+            assert.deepStrictEqual(published[collection], [], `${collection}: old published alias remains untouched after commit`);
+        }
+        dispatchWindowMessage(windowTarget, { command: 'mapupdatecomplete', loadGeneration: 2 });
+        dispatchWindowMessage(windowTarget, { command: 'states', start: 1, end: 2, loadGeneration: 2, data: [{ id: 99 }] });
+        assert.strictEqual(emits, beforeDiff + 1, 'duplicate completion publishes and acknowledges only once');
+        assert.strictEqual(loader.worldMap.getStateById(1)?.id, 1);
+        assert.strictEqual(postedMessages.filter(message => message.command === 'mapready' && message.loadGeneration === 2).length, 1);
+
+        const beforeEditor = loader.worldMap;
+        dispatchWindowMessage(windowTarget, { command: 'strategicregions', start: 1, end: 2, count: 3, data: [{ id: 1, provinces: [7] }] });
+        assert.strictEqual(emits, beforeDiff + 2, 'generationless region edits remain immediate');
+        assert.strictEqual(loader.worldMap.strategicRegionsCount, 3);
+        assert.deepStrictEqual(loader.worldMap.getStrategicRegionById(1)?.provinces, [7]);
+        assert.deepStrictEqual(beforeEditor.getStrategicRegionById(1)?.provinces, [], 'direct edits also preserve old published aliases');
+        loader.dispose();
+    });
+
+    it('ignores stale initial chunks without releasing current generation request slots', () => {
+        const postedMessages: WorldMapMessage[] = [];
+        const windowTarget = new EventTarget();
+        testGlobals.acquireVsCodeApi = () => ({
+            postMessage: (message: WorldMapMessage) => postedMessages.push(message),
+            getState: () => ({}),
+            setState: () => undefined,
+        });
+        testGlobals.window = windowTarget;
+        const { Loader } = require('../../webviewsrc/worldmap/loader') as { Loader: typeof WebviewLoader };
+        const loader = new Loader();
+        let emits = 0;
+        loader.worldMap$.subscribe(() => emits++);
+        const summary = { ...emptyWorldMapSummary(), provincesCount: 5000 };
+        dispatchWindowMessage(windowTarget, { command: 'provincemapsummary', loadGeneration: 1, data: summary });
+        dispatchWindowMessage(windowTarget, { command: 'provincemapsummary', loadGeneration: 2, data: summary });
+        const requestCount = postedMessages.length;
+        dispatchWindowMessage(windowTarget, { command: 'provinces', start: 0, end: 1000, data: [], loadGeneration: 1 });
+        assert.strictEqual(postedMessages.length, requestCount);
+        assert.strictEqual(emits, 0);
+        let index = postedMessages.findIndex(message => message.command === 'requestprovinces' && message.loadGeneration === 2);
+        while (loader.loading$.value) {
+            const request = postedMessages[index++] as RequestMapItemMessage;
+            dispatchWindowMessage(windowTarget, { command: 'provinces', start: request.start, end: request.end, data: [], loadGeneration: 2 });
+        }
+        assert.strictEqual(emits, 1);
+        assert.strictEqual(loader.batchStats.maxInFlightRequests, 4);
+        dispatchWindowMessage(windowTarget, { command: 'mapupdatecomplete', loadGeneration: 2 });
+        assert.strictEqual(emits, 1);
         loader.dispose();
     });
 

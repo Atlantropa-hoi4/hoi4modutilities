@@ -1,6 +1,6 @@
-import * as vscode from 'vscode';
+import type { Uri } from 'vscode';
 import { PNG } from "pngjs";
-import { NumberPosition } from "../common";
+import type { NumberPosition } from "../common";
 
 export class Image {
     private cachedUri: string | undefined = undefined;
@@ -8,7 +8,7 @@ export class Image {
         readonly pngBuffer: Buffer,
         readonly width: number,
         readonly height: number,
-        readonly path: vscode.Uri) {
+        readonly path: Uri) {
     }
 
     public get uri(): string {
@@ -21,34 +21,38 @@ export class Image {
 }
 
 export class Sprite {
-    private cachedFrames: Image[] | undefined = undefined;
+    private readonly cachedFrames = new Map<number, Image>();
+    private decodedImage: PNG | undefined;
     constructor(
         readonly id: string,
         readonly image: Image,
         readonly noOfFrames: number) {
     }
 
-    public get frames(): Image[] {
-        if (this.cachedFrames) {
-            return this.cachedFrames;
+    /** Materialize only the requested frame; keep decoded scratch for this synchronous batch. */
+    public getFrame(frameId: number): Image | undefined {
+        if (!Number.isSafeInteger(frameId) || frameId < 0 || frameId >= this.noOfFrames) {
+            return undefined;
         }
-
         if (this.noOfFrames === 1) {
-            return this.cachedFrames = [ this.image ];
+            return this.image;
+        }
+        const cached = this.cachedFrames.get(frameId);
+        if (cached) {
+            return cached;
         }
 
-        const png = pngRead(this.image.pngBuffer);
-        const frameWidth = this.width;
-        const framePng = new PNG({ width: frameWidth, height: png.height });
-        const result: Image[] = [];
-        const path = this.image.path;
-
-        for (var i = 0; i < this.noOfFrames; i++) {
-            png.bitblt(framePng, i * frameWidth, 0, frameWidth, png.height, 0, 0);
-            result.push(new Image(PNG.sync.write(framePng), frameWidth, png.height, path));
+        if (!this.decodedImage) {
+            this.decodedImage = pngRead(this.image.pngBuffer);
+            // Do not retain an uncompressed atlas for the lifetime of a cached sprite.
+            queueMicrotask(() => { this.decodedImage = undefined; });
         }
-
-        return this.cachedFrames = result;
+        const png = this.decodedImage;
+        const framePng = new PNG({ width: this.width, height: png.height });
+        png.bitblt(framePng, frameId * this.width, 0, this.width, png.height, 0, 0);
+        const frame = new Image(PNG.sync.write(framePng), this.width, png.height, this.image.path);
+        this.cachedFrames.set(frameId, frame);
+        return frame;
     }
 
     public get width(): number {
@@ -73,7 +77,7 @@ export class CorneredTileSprite extends Sprite {
     }
 
     public getTiles(frameId: number = 0): Image[] {
-        if (frameId >= this.noOfFrames) {
+        if (!Number.isSafeInteger(frameId) || frameId < 0 || frameId >= this.noOfFrames) {
             frameId = 0;
         }
 
@@ -83,7 +87,7 @@ export class CorneredTileSprite extends Sprite {
         }
 
         // TODO Commented out code below: don't know whether "size" of corneredtilespritetype works
-        const frame = this.frames[frameId];
+        const frame = this.getFrame(frameId)!;
         const sizeX = frame.width; // Math.max(this.size.x, frame.width);
         const sizeY = frame.height; // Math.max(this.size.y, frame.height);
         const framePng = pngRead(frame.pngBuffer);
@@ -139,7 +143,7 @@ function toDataUrl(buffer: Buffer): string {
     return 'data:image/png;base64,' + buffer.toString('base64');
 }
 
-function extractImageFromPng(png: PNG, x: number, y: number, w: number, h: number, path: vscode.Uri): Image {
+function extractImageFromPng(png: PNG, x: number, y: number, w: number, h: number, path: Uri): Image {
     const resultPng = new PNG({ width: w, height: h });
     if (w > 0 && h > 0) {
         png.bitblt(resultPng, x, y, w, h, 0, 0);

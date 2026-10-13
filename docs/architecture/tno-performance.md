@@ -442,3 +442,100 @@ launch 3회를 새로운 `--output` 경로로 실행한다. 모드·게임 파�
   [반복 편집 후 재방문](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-edit-revisits.json),
   [실제 DOM 좌표 전이](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/browser-position-transitions.json),
   [cropped 화면](../../.vscode-test/performance/comprehensive-1791691111454/stress-corrected-session/corrected-webview.png)
+
+## 2026-10-13: 추가 개선 8개와 검증 범위
+
+이 절은 앞의 실제 TNO 결과와 별도다. 이번에는 실제 VS Code의 소유한 합성
+workspace(130중점 트리와 1중점 트리), 현재 소스의 동작 smoke, 실제 캐시
+snapshot을 사용했다. TNO 전체 프리뷰의 새 전후 프로파일은 수행하지 않았다.
+앞 절의 미해결 목록 중 localisation commit 알림과 지도 in-flight 취소는
+아래 변경으로 해결했고, 1000ms localisation debounce 자체는 유지한다.
+
+### 적용한 계약
+
+- localisation 변경 직후 per-file revision을 무효화하고, 최신 파일 결과가
+  색인에 실제 공개된 뒤 URI/revision 알림으로 종속 preview를 다시 갱신한다.
+  이전 parse가 다음 debounce 전에 늦게 끝나도 최신 편집을 덮지 않는다.
+- 지도 generation diff는 matching completion까지 staging하고 한 번만
+  공개한다. stale/중복 completion을 무시하고, generationless 편집은 이전
+  공개 map의 alias를 바꾸지 않은 새 map으로 즉시 반영한다.
+- 중점 검색은 DOM snapshot 대신 전체 표시 가능한 ID를 순회하며 target을
+  mount한 뒤 이동한다. Enter/Shift+Enter, IME, Alt+Enter 소스 이동을 보존한다.
+- 색인 readiness는 디스크 저장과 분리했다. 별도 제한된 worker가
+  JSON/UTF-8/checksum을 처리하고, `unknown` cache 데이터는 색인별 shape
+  guard를 통과해야 사용한다. null-prototype 실제 색인과 special keys를
+  보존하며, v1 cache는 v2의 단일 JSON payload 형식으로 재구축한다.
+- 중점 CSS는 base/version이 일치하는 delta만 적용하고, mismatch는 full
+  resync한다. 모든 cached scene의 latest rule과 raw CSS를 보존한다.
+  superseded CSSOM body를 비우고 dead-history 임계값에서 full 교체한다.
+  교체 전 DOM text와 전체 scene/프로세스 메모리가 즉시 사라지는 것은 아니다.
+- sprite는 `getFrame`으로 요청된 frame만 crop/PNG encode한다. encoded
+  frame cache는 유지하고 decoded atlas scratch는 synchronous batch 뒤
+  해제한다. 이후 미요청 frame은 atlas를 다시 decode할 수 있다.
+- superseded 지도 요청은 consumer lease를 취소한다. 공유 flight는 모든
+  consumer가 취소돼야 compute를 중단한다. TS fallback/zone/region 루프는
+  `setImmediate`로 양보하고 abort를 검사한다. Rust zone 이식은 아니다.
+- 실제 Claude CLI의 `claude-design` 작성자가 공용 dropdown/listbox
+  키보드 동작, focus별 completion 이름, 경고의 focus/inert 전환을 구현했다.
+  화면의 임의 재설계나 public ID/설정/버전/의존성 변경은 하지 않았다.
+
+### 캐시 worker 실측
+
+Node 24.14.0, `l_english` 129,541개, JSON 13,948,863 characters를
+미리 읽은 뒤 3회 실행한 중앙값이다. 현재 built worker를 사용하며 파일 I/O와
+색인 구축 시간은 제외한다. 입력 SHA-256:
+`b28fa57ee2eec5a494d0b3e8fb155b6c3d21aa56b40c9019b2f15efa51e33a33`.
+
+| 관측 | 이전 inline v1 경로 | 이번 bounded worker v2 경로 |
+| --- | ---: | ---: |
+| 호스트 첫 0ms timer 지연 | 146.85ms | 63.49ms |
+| 직렬화 완료 wall time | 146.80ms | 215.46ms |
+| 저장 bytes | 14,531,850 | 13,999,313 |
+
+이전 시간은 직전 조사에서 기록한 같은 데이터의 메모리-only 경로이며,
+이번 실행에서 옛 번들을 재측정한 값은 아니다. worker 제출의 동기 비용은
+63.44ms였다. JSON/checksum은 off-thread지만 admission/structured clone은
+여전히 호스트를 점유한다. 전체 저장 wall time이 더 빠르다는 주장은 하지
+않는다. 실제 worker decode 결과는 입력 snapshot과 정확히 같았다.
+
+### 실제 surface와 회귀 검증
+
+- VS Code 1.141.0 / Node 24.21.0에서 native Enter로 130개 distinct ID를
+  순회했고 Shift+Enter와 Alt+Enter 소스 line 이동을 확인했다. 지연 mount
+  경계는 별도의 동작 회귀 테스트로 검증했다.
+- 미저장 localisation의 이름이 자동으로 갱신됐고 한 번의 Undo로 원래
+  이름이 돌아왔다. root 주석 편집도 한 번의 Undo로 정확히 복구했다.
+- 소유한 PNG를 바꾸자 실제 표시 pixel과 396-character style delta가
+  바뀌었다. 되돌린 뒤 live image rule은 하나였고, 이미 준비된 다른 트리
+  선택에는 style CSS가 0 characters였다. fresh webview는 새 full base와
+  원래 48px PNG를 받았다.
+- native combobox 열기/선택/Escape와 multiselect Space 선택/해제를
+  실행했다. nested checkbox의 Tab stop은 없었다. completion checkbox의
+  focus별 이름과 Space 토글을 확인했다.
+- 경고를 열면 entry로 focus가 들어가고 scene은 inert였다. Tab으로 가려진
+  scene에 들어가지 않았고 Escape는 toggle로 focus를 돌렸다. 비탐색 경고는
+  focus 가능한 DIV였고, 경고가 사라지는 automatic close는 refresh로
+  focus를 복구했다. cropped 실제 웹뷰 PNG도 확인했다.
+- 소유한 source/localisation 입력은 정확히 복구됐고 save event는 0회였다.
+  첫 브라우저 세션은 명시적 finish 전 smoke watchdog으로 끝났으며, 관측한
+  native 결과와 복구 기록을 보존했다. 별도의 최종 resync/surface 세션은
+  명시적 finish, 원문/disk bytes 검사와 exit 0을 완료했다.
+- 현재 소스의 지도 diff smoke는 interim publish 0회, matching completion
+  1회, stale/중복 무시와 alias 보존을 검사했다. cooperative zone smoke는
+  uniform/checkerboard/seam geometry·mass·순서 hash·경고 navigation을
+  golden과 비교하고 event-loop 양보와 완료 전 abort를 실행했다.
+- host/webview typecheck, production build, 전체 ESLint, Rust **54**,
+  unit **1,198**, desktop integration **22**가 통과했다. 최초 aggregate의
+  타입/fixture 계약 오류를 고친 뒤 관련 단계들을 실행한 결과이며,
+  `npm run verify` 전체 명령이 성공했다고 표현하지 않는다.
+
+실제 TNO 전체 map throughput, retained heap/장시간 endurance, screen reader
+낭독, 한국어·러시아어·중국어 실제 화면, 비Windows와 Node 20 standalone은
+이번에 새로 실측하지 않았다. worker의 host 비용과 atlas 재decode 비용도
+남는다. 실게임/모드 파일을 저장하거나 커밋·게시·배포하지 않았다.
+
+로컬 원시 기록:
+- [native 브라우저 증거](../../.vscode-test/performance/all-eight-1791872667014/browser-proof.json)
+- [최종 host 복구 증거](../../.vscode-test/performance/all-eight-1791872667014/desktop-proof.json)
+- [cache worker 표본](../../.vscode-test/performance/all-eight-1791872667014/cache-worker-benchmark.json)
+- [cropped 실제 웹뷰](../../.vscode-test/performance/all-eight-1791872667014/actual-webview.png)

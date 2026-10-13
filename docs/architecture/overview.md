@@ -50,6 +50,25 @@ queues are waiting. Resolution precedence and open-document reads remain in
 `fileloader.ts`; background indexes use the same scheduler, not a second limiter.
 `fileloader.read` separates `waitMs`, `resolveMs`, `contentMs` and `activeMs`.
 
+### Index publication and localisation commits
+
+`IndexService` publishes a source/generation-validated snapshot and resolves readiness
+before scheduling best-effort persistence. Detached saves remain cancellable and tracked;
+the per-URI save lane retires a stale rename before a newer snapshot can publish.
+`src/services/indexSerialization.ts` owns a separate lazy
+`dist/index-serialization-worker.js`: one active job, two queued jobs, a 128 MiB
+estimated clone budget, and a 64 MiB cache limit. JSON, UTF-8 and checksums run in
+the worker; admission traversal and structured clone still cost host CPU and memory.
+`indexes-v2/*.cache` contains a fixed header and one JSON payload, not escaped nested
+JSON. Older snapshots miss and rebuild. Decoded data stays `unknown` until each
+index target's `validateCacheSnapshot` accepts its domain shape.
+
+Workspace localisation changes invalidate their per-file revision immediately.
+The existing 1000ms typing debounce remains. `localisationIndexEvents.ts` emits
+affected URIs and a revision only after an incremental or full workspace snapshot
+commits. `PreviewManager` uses the existing dependency scheduler for a second refresh,
+so a preview built before the localisation commit is superseded rather than left stale.
+
 ### Preview host side
 
 - `src/previewdef/*`: preview detection, base classes, dependency tracking, focus tree loader/runtime helpers, and world map handling
@@ -68,7 +87,7 @@ queues are waiting. Resolution precedence and open-document reads remain in
 ### Focus tree update pipeline
 
 The host keeps the last render cache per preview and plans each refresh against it
-(`src/previewdef/focustree/renderpayloadpatch.ts`). Protocol v4 sends:
+(`src/previewdef/focustree/renderpayloadpatch.ts`). Protocol v5 sends:
 
 - full scenes (`focusTreeScene`) for the first render and layout changes;
 - patches (`focusTreeScenePatch`) with per-tree deltas: changed focus views, focus source
@@ -76,7 +95,10 @@ The host keeps the last render cache per preview and plans each refresh against 
   ids were added, removed, or reordered are replaced whole;
 - asset demand (`focusTreeAssetRequest`) and chunk replies (`focusTreeSceneAssets`) for
   on-screen and nearby hydration, carrying tree/request/document/snapshot identities,
-  materialized focus IDs and incremental CSS.
+  materialized focus IDs and versioned style updates;
+- style synchronization (`focusTreeStyleSync`, including style asset batches) with
+  `{ kind, baseId, version, baseVersion?, css }`; the browser requests `styleResync`
+  when it cannot apply a delta to its current base.
 
 The structural catalog and source graph remain complete. The first asset build prepares
 on-screen focuses; the browser then requests visible content before nearby content in
@@ -85,6 +107,14 @@ changes recompute demand. Already materialized focuses are retained; source/asse
 invalidation refreshes the loaded scope rather than leaving cached revisits stale.
 The loader retains one scoped asset base state rather than a source graph copy per
 visited tree, and the dependency manifest covers every loaded scene.
+
+The host `FocusTreeStyleLedger` keeps the latest keyed rules across all cached scenes
+and preserves raw CSS. First delivery, a recreated webview, raw-style changes, or
+ledger compaction sends a full base; ordinary updates send only changed/new rules.
+The receiver checks base/version identity before appending and clears superseded
+CSSOM rule bodies. Historical text may remain until a full replacement. Compaction
+uses dead-rule thresholds (2 Mi UTF-16 characters and at least half of live-rule
+characters); this is not a bound on total DOM, cached scenes or process memory.
 
 Readiness checks actual displayed icon CSS (`loaded`, `placeholder`, `unavailable`).
 `sceneRendered` follows the scene paint; `sceneAssetsReady` identifies each selected-tree
@@ -122,6 +152,26 @@ re-render it. The webview entry `webviewsrc/focustree.ts` wires these modules un
 - `editing.ts`, `toolbar.ts`, `search.ts`, `conditions.ts`, `inlays.ts`: interactions and toolbar
 - `assetdemand.ts`, `assetloading.ts`: viewport-priority demand, materialization requests, real-icon readiness, and accessible loading state
 - `hostsync.ts`, `messageapply.ts`, `telemetry.ts`: host protocol, delta application, and timings
+- `searchnavigation.ts`: full-catalog match traversal, current match restoration,
+  shown-condition/branch filtering and mount-before-scroll navigation
+- `stylesheet.ts`, `warningspanel.ts`, `../util/combobox.ts`: style base validation,
+  warning focus/inert transitions and shared keyboard listbox behavior
+
+### Images and World Map generations
+
+`Sprite.getFrame(index)` replaces eager frame arrays. Only valid requested frames are
+cropped and encoded; a single-frame sprite returns the original image. Encoded frames
+remain cached, while decoded atlas scratch is released after the synchronous batch.
+A later uncached frame can require another atlas decode.
+
+The map browser stages generation-tagged collection diffs until the matching completion
+and publishes once. Stale, late and duplicate completion messages do not publish;
+generationless editor updates still apply immediately to a cloned committed map.
+`WorldMapLoadQueue` aborts superseded generations. Shared loader flights own their
+compute signal and abort only after every consumer cancels; one cancelled preview
+cannot interrupt another consumer. `src/util/cooperative.ts` yields TypeScript map
+fallback/zone/region loops through `setImmediate` with a work/time budget, preserving
+province geometry, seam handling and warning navigation.
 
 ## Command Surface
 

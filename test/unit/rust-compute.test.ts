@@ -371,6 +371,30 @@ describe('Rust compute worker lifecycle', function() {
         } finally { service.dispose(); }
     });
 
+    it('retires canceled active and queued map work without canceling an unrelated image request', async () => {
+        const service = createService();
+        const activeMap = new AbortController();
+        const queuedMap = new AbortController();
+        const rasterBytes = new Uint8Array(512 * 512 * 4);
+        const mapInput: ComputeInput = { kind: 'edges', bytes: rasterBytes, width: 512, height: 512 };
+        const image = compressedSurface(512, 512, CompressFormat.bc1);
+        try {
+            const active = service.run(mapInput, activeMap.signal);
+            const queued = service.run(mapInput, queuedMap.signal);
+            const unrelated = service.run(inputFor(image));
+            const canceled = [assert.rejects(active, { name: 'AbortError' }), assert.rejects(queued, { name: 'AbortError' })];
+            queuedMap.abort();
+            activeMap.abort();
+            await Promise.all(canceled);
+            const result = await unrelated;
+            assert.ok(result);
+            assert.strictEqual(result.engine, 'rust-wasm');
+            assert.deepStrictEqual(result.pixels, image.getFullRgba());
+            assert.strictEqual(rasterBytes.buffer.byteLength, 512 * 512 * 4);
+            assert.ok(await service.run(mapInput), 'a later map task can use the restarted worker');
+        } finally { service.dispose(); }
+    });
+
     it('bounds queued tasks and survives worker timeouts', async () => {
         const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'hoi4mu-compute-'));
         const stalledWorker = path.join(temp, 'stalled.cjs');

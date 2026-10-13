@@ -1,0 +1,134 @@
+[
+  {
+    "provinces": [
+      {
+        "color": 7,
+        "zoneCount": 2,
+        "zoneOrderSha256": "4731a3da030c3a9532a27556db4e44ab999453dca4d65f5d0ed9d6ec959e920d",
+        "boundingBox": {
+          "x": 0,
+          "y": 0,
+          "w": 512,
+          "h": 256
+        },
+        "centerOfMass": {
+          "x": 256,
+          "y": 128
+        },
+        "mass": 131072
+      }
+    ],
+    "warningProvinceColors": [
+      [
+        7
+      ]
+    ]
+  },
+  {
+    "provinces": [
+      {
+        "color": 3,
+        "zoneCount": 65536,
+        "zoneOrderSha256": "92b45adc45d56e918fdea733d33b8364fcab105a9b678e381b58a05f9cd954e2",
+        "boundingBox": {
+          "x": 0,
+          "y": 0,
+          "w": 512,
+          "h": 256
+        },
+        "centerOfMass": {
+          "x": 256,
+          "y": 128
+        },
+        "mass": 65536
+      },
+      {
+        "color": 7,
+        "zoneCount": 65536,
+        "zoneOrderSha256": "bc1382278d48cb7d2cf600f2d7ac1f2f83553b18d6854294233b4cd76d75bcc4",
+        "boundingBox": {
+          "x": 0,
+          "y": 0,
+          "w": 512,
+          "h": 256
+        },
+        "centerOfMass": {
+          "x": 256,
+          "y": 128
+        },
+        "mass": 65536
+      }
+    ],
+    "warningProvinceColors": [
+      [
+        3
+      ],
+      [
+        7
+      ]
+    ]
+  },
+  {
+    "provinces": [
+      {
+        "color": 7,
+        "zoneCount": 512,
+        "zoneOrderSha256": "ff4e42c19cd8cfa9993022113e45449c01eb520c1e1d8dada5559fcbad8ea473",
+        "boundingBox": {
+          "x": 489,
+          "y": 0,
+          "w": 47,
+          "h": 256
+        },
+        "centerOfMass": {
+          "x": 0.5,
+          "y": 128
+        },
+        "mass": 12032
+      },
+      {
+        "color": 3,
+        "zoneCount": 385,
+        "zoneOrderSha256": "de3c7bf95d676dcff1a5b8419a9a621af9e36ac7d07d25b492d7fc27f90b9cf2",
+        "boundingBox": {
+          "x": 24,
+          "y": 0,
+          "w": 465,
+          "h": 256
+        },
+        "centerOfMass": {
+          "x": 256.5009408760228,
+          "y": 128.00004200339387
+        },
+        "mass": 119038
+      },
+      {
+        "color": 9,
+        "zoneCount": 2,
+        "zoneOrderSha256": "8d7c3eedce4f8cfccf06ea4333d551057e68cb05ba6656b3db610107d621c23c",
+        "boundingBox": {
+          "x": 100,
+          "y": 100,
+          "w": 201,
+          "h": 51
+        },
+        "centerOfMass": {
+          "x": 200.5,
+          "y": 125.5
+        },
+        "mass": 2
+      }
+    ],
+    "warningProvinceColors": [
+      [
+        7
+      ],
+      [
+        3
+      ],
+      [
+        9
+      ]
+    ]
+  }
+]

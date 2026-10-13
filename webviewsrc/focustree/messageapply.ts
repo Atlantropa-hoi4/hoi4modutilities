@@ -30,17 +30,16 @@ export interface FocusTreeMessageApplyContext {
     setGridBox: (gridBox: unknown) => void;
     setGridSizeX: (xGridSize: number) => void;
     setGridSizeY: (yGridSize: number) => void;
-    replaceDynamicStyleCss: (dynamicStyleCss: string | undefined) => void;
-    appendDynamicStyleCss?: (dynamicStyleCssPatch: string | undefined) => void;
     /** Replaces the materialized focus set; called before the scene is rebuilt. */
     setAssetMaterialization?: (materialization: FocusTreeAssetMaterialization) => void;
 }
 
+/**
+ * Applies the content of a host update. Its dynamic style sync is applied separately, before any
+ * staleness check, because the stylesheet follows every message the host posted.
+ */
 export function applyFocusTreeContentUpdate(
-    message: FocusTreeContentUpdateMessage & {
-        dynamicStyleCss?: string;
-        documentVersion?: number;
-    },
+    message: FocusTreeContentUpdateMessage,
     context: FocusTreeMessageApplyContext,
 ): boolean {
     if (message.snapshotVersion < context.getSnapshotVersion()) {
@@ -99,13 +98,6 @@ export function applyFocusTreeContentUpdate(
     }
     if (changedSlots.has('layout') && message.yGridSize !== undefined) {
         context.setGridSizeY(message.yGridSize);
-    }
-    if (changedSlots.has('styleDeps')) {
-        if (message.dynamicStyleCss !== undefined) {
-            context.replaceDynamicStyleCss(message.dynamicStyleCss);
-        } else {
-            context.appendDynamicStyleCss?.(message.dynamicStyleCssPatch);
-        }
     }
     if (message.assetMaterialization) {
         context.setAssetMaterialization?.(message.assetMaterialization);

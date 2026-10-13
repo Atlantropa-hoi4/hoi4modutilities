@@ -3,13 +3,14 @@ import { readFileFromModOrHOI4 } from "../../../util/fileloader";
 import { localize } from "../../../util/i18n";
 import { BMP, parseBmp } from "../../../util/image/bmp/bmpparser";
 import { Point, ProgressReporter, ProvinceBmp, ProvinceEdgeGraph, ProvinceGraph, Region, WorldMapWarning, Zone } from "../definitions";
-import { FileLoader, LoadResult, LoadResultOD, mergeRegions } from "./common";
+import { FileLoader, LoadResult, LoadResultOD, mergeRegionsSteps } from "./common";
 import { LoaderSession } from '../../../util/loader/loader';
 import { DefinesLoader } from './defines';
 import { ProvinceColorContainer, ProvinceColors, scanProvinceColors, scanProvinceColorsTypescript } from '../../../util/image/bmp/provincecolors';
-import { incrementPerfCounter, measureAsync, measureSync } from '../../../util/perf';
+import { incrementPerfCounter, measureAsync } from '../../../util/perf';
 import { tryRustCompute } from '../../../util/compute/service';
 import { decodeProvinceEdges } from '../../../util/compute/provinceedges';
+import { finishCooperativeWork, runCooperatively, WorkBudget } from '../../../util/cooperative';
 
 export class ProvinceBmpLoader extends FileLoader<ProvinceBmp> {
     private readonly definesLoader = new DefinesLoader();
@@ -60,21 +61,21 @@ async function loadProvincesBmp(
     session.throwIfCancelled();
     const tags = { width: provinceMapImage.width, height: provinceMapImage.height };
     const { colorByPosition, provinces: colorOnlyProvinces, colorToProvince } = await measureAsync('worldmap.provinceColors', tags, () =>
-        scanProvinceColors(provinceMapImage));
+        scanProvinceColors(provinceMapImage, session.signal));
     session.throwIfCancelled();
     
     const width = provinceMapImage.width;
     const height = provinceMapImage.height;
-    const provincesWithZone = measureSync('worldmap.provinceZones', tags, () =>
+    const provincesWithZone = await measureAsync('worldmap.provinceZones', tags, () =>
         fillProvinceZones(colorOnlyProvinces, colorToProvince, colorByPosition, width, height,
-            provincesFile, minimumProvinceSize, warnings));
+            provincesFile, minimumProvinceSize, warnings, session.signal, () => session.throwIfCancelled()));
     
     await progressReporter(localize('worldmap.progress.calculatingedge', 'Calculating province edges...'));
     
     session.throwIfCancelled();
     const provinces = await measureAsync('worldmap.provinceEdges', tags, () =>
         fillProvinceEdges(provincesWithZone, colorToProvince as Record<number, ColorContainer & ProvinceZoneDef>,
-            colorByPosition, width, height, provincesFile, warnings, () => session.throwIfCancelled()));
+            colorByPosition, width, height, provincesFile, warnings, () => session.throwIfCancelled(), session.signal));
     session.throwIfCancelled();
 
     return {
@@ -108,7 +109,7 @@ export function getProvinceColorsByPositionForTest(provinceMapImage: BMP): Uint3
 }
 
 type ProvinceZoneDef = { coverZones: Zone[] } & Region;
-function fillProvinceZones<T extends ColorContainer>(
+export async function fillProvinceZones<T extends ColorContainer>(
     provincesWithoutCoverZones: (T & Partial<ProvinceZoneDef>)[],
     colorToProvince: Record<number, T & Partial<ProvinceZoneDef>>,
     colorByPosition: Uint32Array,
@@ -117,17 +118,36 @@ function fillProvinceZones<T extends ColorContainer>(
     file: string,
     minimumProvinceSize: number,
     warnings: WorldMapWarning[],
-): (T & ProvinceZoneDef)[] {
+    signal?: AbortSignal,
+    checkCancelled?: () => void,
+): Promise<(T & ProvinceZoneDef)[]> {
+    return runCooperatively(fillProvinceZoneSteps(provincesWithoutCoverZones, colorToProvince,
+        colorByPosition, width, height, file, minimumProvinceSize, warnings), signal, checkCancelled);
+}
+
+function* fillProvinceZoneSteps<T extends ColorContainer>(
+    provincesWithoutCoverZones: (T & Partial<ProvinceZoneDef>)[],
+    colorToProvince: Record<number, T & Partial<ProvinceZoneDef>>,
+    colorByPosition: Uint32Array,
+    width: number,
+    height: number,
+    file: string,
+    minimumProvinceSize: number,
+    warnings: WorldMapWarning[],
+): Generator<void, (T & ProvinceZoneDef)[]> {
+    const work = new WorkBudget();
     const blockStack: Zone[] = [];
     const blockSize = 256;
     for (let x = 0; x < width; x += blockSize) {
         for (let y = 0; y < height; y += blockSize) {
             blockStack.push({ x, y, w: blockSize, h: blockSize });
+            if (work.shouldYield()) { yield; }
         }
     }
     
     for (const province of provincesWithoutCoverZones) {
         province.coverZones = [];
+        if (work.shouldYield()) { yield; }
     }
 
     const provinces = provincesWithoutCoverZones as (T & Partial<ProvinceZoneDef> & { coverZones: Zone[] })[];
@@ -142,6 +162,7 @@ function fillProvinceZones<T extends ColorContainer>(
         let sameColor = true;
         for (let y = t, yi = t * width; y < b; y++, yi += width) {
             for (let x = l, xi = yi + l; x < r; x++, xi++) {
+                if (work.shouldYield()) { yield; }
                 if (colorByPosition[xi] !== color) {
                     sameColor = false;
                     break;
@@ -161,10 +182,11 @@ function fillProvinceZones<T extends ColorContainer>(
             blockStack.push({ ...block, y: block.y + blockSize, w: blockSize, h: blockSize });
             blockStack.push({ x: block.x + blockSize, y: block.y + blockSize, w: blockSize, h: blockSize });
         }
+        if (work.shouldYield()) { yield; }
     }
 
     for (const provinceWithoutRegion of provinces) {
-        const province = Object.assign(provinceWithoutRegion, mergeRegions(provinceWithoutRegion.coverZones, width));
+        const province = Object.assign(provinceWithoutRegion, yield* mergeRegionsSteps(provinceWithoutRegion.coverZones, width, work));
         if (province.mass <= minimumProvinceSize) {
             warnings.push({
                 source: [{ type: 'province', color: province.color, id: -1 }],
@@ -181,6 +203,7 @@ function fillProvinceZones<T extends ColorContainer>(
                 text: localize('worldmap.warnings.provincetoolarge', 'The province is too large: {0}x{1}.', province.boundingBox.w, province.boundingBox.h),
             });
         }
+        if (work.shouldYield()) { yield; }
     }
 
     return provinces as (T & ProvinceZoneDef)[];
@@ -197,6 +220,7 @@ export async function fillProvinceEdges<T extends ColorContainer>(
     file: string,
     warnings: WorldMapWarning[],
     checkCancelled?: () => void,
+    signal?: AbortSignal,
 ): Promise<(T & EdgeDef)[]> {
     const nativeBytes = new Uint8Array(colorByPosition.buffer, colorByPosition.byteOffset, colorByPosition.byteLength);
     const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
@@ -205,12 +229,15 @@ export async function fillProvinceEdges<T extends ColorContainer>(
         const view = new DataView(bytes.buffer);
         colorByPosition.forEach((color, index) => view.setUint32(index * 4, color, true));
     }
+    signal?.throwIfAborted();
     checkCancelled?.();
-    const result = await tryRustCompute({ kind: 'edges', bytes, width, height });
+    const result = await tryRustCompute({ kind: 'edges', bytes, width, height }, signal);
+    signal?.throwIfAborted();
     checkCancelled?.();
     if (result?.provinceEdges) {
         try {
             const decoded = decodeProvinceEdges(result.provinceEdges, width, height, new Set(provincesWithoutEdges.map(province => province.color)));
+            signal?.throwIfAborted();
             checkCancelled?.();
             const provinces = provincesWithoutEdges as (T & EdgeDef)[];
             for (const province of provinces) { province.edges = decoded.byColor.get(province.color) ?? []; }
@@ -234,15 +261,17 @@ export async function fillProvinceEdges<T extends ColorContainer>(
             return provinces;
         } catch (error) {
             checkCancelled?.();
+            signal?.throwIfAborted();
             if (!(error instanceof Error && error.message === 'Invalid Rust province edge payload.')) { throw error; }
             incrementPerfCounter('rustcompute.fallback', { kind: 'edges', reason: 'invalid-result' });
         }
     }
     incrementPerfCounter('worldmap.provinceEdges.backend', { engine: 'typescript' });
     const tags = { width, height };
-    const provinces = measureSync('worldmap.provinceEdges.typescript', tags, () =>
-        fillEdges(provincesWithoutEdges, colorToProvince, colorByPosition, width, height, file, warnings));
-    measureSync('worldmap.provinceValidation.typescript', tags, () => validateProvince(colorByPosition, width, height, file, warnings));
+    const provinces = await measureAsync('worldmap.provinceEdges.typescript', tags, () =>
+        runCooperatively(fillEdgesSteps(provincesWithoutEdges, colorToProvince, colorByPosition, width, height, file, warnings), signal, checkCancelled));
+    await measureAsync('worldmap.provinceValidation.typescript', tags, () =>
+        runCooperatively(validateProvinceSteps(colorByPosition, width, height, file, warnings), signal, checkCancelled));
     return provinces;
 }
 
@@ -258,10 +287,25 @@ function fillEdges<T extends ColorContainer>(
     file: string,
     warnings: WorldMapWarning[],
 ): (T & EdgeDef)[] {
+    return finishCooperativeWork(fillEdgesSteps(provincesWithoutEdges, colorToProvinceWithoutEdges,
+        colorByPosition, width, height, file, warnings));
+}
+
+function* fillEdgesSteps<T extends ColorContainer>(
+    provincesWithoutEdges: (T & Partial<EdgeDef>)[],
+    colorToProvinceWithoutEdges: Record<number, T & Partial<EdgeDef>>,
+    colorByPosition: Uint32Array,
+    width: number,
+    height: number,
+    file: string,
+    warnings: WorldMapWarning[],
+): Generator<void, (T & EdgeDef)[]> {
+    const work = new WorkBudget();
     const accessedPixels = new Uint8Array(colorByPosition.length);
 
     for (const province of provincesWithoutEdges) {
         province.edges = [];
+        if (work.shouldYield()) { yield; }
     }
 
     const provinces = provincesWithoutEdges as (T & EdgeDef)[];
@@ -269,19 +313,20 @@ function fillEdges<T extends ColorContainer>(
 
     for (let y = 0, yi = 0; y < height; y++, yi += width) {
         for (let x = 0, xi = yi; x < width; x++, xi++) {
+            if (work.shouldYield()) { yield; }
             if (accessedPixels[xi]) {
                 continue;
             }
 
             accessedPixels[xi] = 1;
-            fillEdgesOfProvince(xi, colorToProvince, colorByPosition, accessedPixels, width, height, file, warnings);
+            yield* fillEdgesOfProvince(xi, colorToProvince, colorByPosition, accessedPixels, width, height, file, warnings, work);
         }
     }
 
     return provinces as (T & EdgeDef)[];
 }
 
-function fillEdgesOfProvince<T extends EdgeDef>(
+function* fillEdgesOfProvince<T extends EdgeDef>(
     index: number,
     colorToProvince: Record<number, T>,
     colorByPosition: Uint32Array,
@@ -290,9 +335,10 @@ function fillEdgesOfProvince<T extends EdgeDef>(
     height: number,
     file: string,
     warnings: WorldMapWarning[],
-): void {
+    work: WorkBudget,
+): Generator<void, void> {
     const color = colorByPosition[index];
-    const { edgePixels, pixelCount } = findEdgePixels(index, accessedPixels, color, colorByPosition, width, height);
+    const { edgePixels, pixelCount } = yield* findEdgePixels(index, accessedPixels, color, colorByPosition, width, height, work);
     if (pixelCount === 1) {
         warnings.push({
             source: [{ type: 'province', id: -1, color }],
@@ -301,21 +347,25 @@ function fillEdgesOfProvince<T extends EdgeDef>(
         });
     }
     const edgePixelsByAdjecentProvince: Record<number, [Point, Point][]> = {};
-    edgePixels.forEach(([p, line]) => {
+    for (const [p, line] of edgePixels) {
         let lines = edgePixelsByAdjecentProvince[p];
         if (lines === undefined) {
             edgePixelsByAdjecentProvince[p] = lines = [];
         }
         lines.push(line);
-    });
+        if (work.shouldYield()) { yield; }
+    }
 
     const province = colorToProvince[color]!;
     for (const [key, value] of Object.entries(edgePixelsByAdjecentProvince)) {
         const numKey = parseInt(key);
         const edgeSetIndex = province.edges.findIndex(e => e.toColor === numKey);
         const edgeSet: ProvinceEdgeGraph = edgeSetIndex !== -1 ? province.edges[edgeSetIndex] : { toColor: numKey, path: [] };
-        const concatedEdges = concatEdges(value);
-        edgeSet.path.push(...concatedEdges);
+        const concatedEdges = yield* concatEdgeSteps(value, work);
+        for (const edge of concatedEdges) {
+            edgeSet.path.push(edge);
+            if (work.shouldYield()) { yield; }
+        }
         if (edgeSetIndex === -1) {
             province.edges.push(edgeSet);
         }
@@ -328,7 +378,7 @@ const indicesToOffset: [number, number][][] = [
     [[1, 0], [1, 1]],
     [[1, 1], [0, 1]],
 ];
-function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number, colorByPosition: Uint32Array, width: number, height: number) {
+function* findEdgePixels(index: number, accessedPixels: Uint8Array, color: number, colorByPosition: Uint32Array, width: number, height: number, work: WorkBudget): Generator<void, { edgePixels: [number, [Point, Point]][]; pixelCount: number }> {
     const edgePixels: [number, [Point, Point]][] = [];
     const pixelStack: number[] = [ index ];
     const indices: number[] = new Array(4);
@@ -336,6 +386,7 @@ function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number
 
     while (pixelStack.length > 0) {
         const pixelIndex = pixelStack.pop()!;
+        if (work.shouldYield()) { yield; }
         const x = pixelIndex % width;
         const y = Math.floor(pixelIndex / width);
         pixelCount++;
@@ -365,11 +416,16 @@ function findEdgePixels(index: number, accessedPixels: Uint8Array, color: number
 }
 
 export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
+    return finishCooperativeWork(concatEdgeSteps(edges));
+}
+
+function* concatEdgeSteps(edges: [Point, Point][], work = new WorkBudget()): Generator<void, Point[][]> {
     const result: Point[][] = [];
     const accessedEdges = new Array<boolean>(edges.length).fill(false);
-    const edgesByStart = buildEdgesByEndpoint(edges, 0);
-    const edgesByEnd = buildEdgesByEndpoint(edges, 1);
+    const edgesByStart = yield* buildEdgesByEndpointSteps(edges, 0, work);
+    const edgesByEnd = yield* buildEdgesByEndpointSteps(edges, 1, work);
     for (let i = 0; i < edges.length; i++) {
+        if (work.shouldYield()) { yield; }
         if (accessedEdges[i]) {
             continue;
         }
@@ -383,6 +439,7 @@ export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
 
         let foundNew = true;
         while (foundNew) {
+            if (work.shouldYield()) { yield; }
             foundNew = false;
             const headTail = findUnaccessedEdge(edgesByEnd, head, accessedEdges);
             if (headTail !== -1) {
@@ -405,6 +462,7 @@ export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
         const newEdge: Point[] = [];
         let lastPoint: Point = edge[0];
         for (const point of edge) {
+            if (work.shouldYield()) { yield; }
             if (newEdge.length < 2) {
                 newEdge.push(point);
             } else {
@@ -423,14 +481,14 @@ export function concatEdgesForTest(edges: [Point, Point][]): Point[][] {
     return result;
 }
 
-const concatEdges = concatEdgesForTest;
-
-function buildEdgesByEndpoint(edges: [Point, Point][], endpointIndex: 0 | 1): Record<string, number[]> {
+function* buildEdgesByEndpointSteps(edges: [Point, Point][], endpointIndex: 0 | 1, work: WorkBudget): Generator<void, Record<string, number[]>> {
     const result: Record<string, number[]> = {};
-    edges.forEach((edge, index) => {
+    for (let index = 0; index < edges.length; index++) {
+        const edge = edges[index];
         const key = pointKey(edge[endpointIndex]);
         (result[key] ??= []).push(index);
-    });
+        if (work.shouldYield()) { yield; }
+    }
     return result;
 }
 
@@ -448,8 +506,14 @@ function pointKey(point: Point): string {
 }
 
 function validateProvince(colorByPosition: Uint32Array, width: number, height: number, file: string, warnings: WorldMapWarning[]) {
+    finishCooperativeWork(validateProvinceSteps(colorByPosition, width, height, file, warnings));
+}
+
+function* validateProvinceSteps(colorByPosition: Uint32Array, width: number, height: number, file: string, warnings: WorldMapWarning[]): Generator<void, void> {
+    const work = new WorkBudget();
     for (let y = 1, index = width; y < height; y++) {
         for (let x = 0; x < width; x++, index++) {
+            if (work.shouldYield()) { yield; }
             const nextXIndex = index + (x === width - 1 ? -width : 0) + 1;
             const bottomLeft = colorByPosition[index];
             const bottomRight = colorByPosition[nextXIndex];

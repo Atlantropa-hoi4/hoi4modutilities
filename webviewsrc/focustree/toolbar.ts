@@ -24,13 +24,18 @@ import {
 import { applyContinuousFocusElementPosition, applySearchFilters, rebuildContentSafely } from './content';
 import { refreshInlayWindowSelector, setSelectedInlayWindowId } from './inlays';
 import { runtime } from './runtime';
-import { installSearchbox } from './search';
+import { installSearchbox, refreshSearchNavigation } from './search';
 import {
     ensureSelectedFocusTreeIndex,
     getCurrentFocusTree,
     setSelectedFocusTreeByIndex,
 } from './selection';
 import { getHiddenBranches, setBranchVisibility } from './visualstate';
+import {
+    closeFocusWarningsPanelBecauseUnavailable,
+    installFocusWarningsPanel,
+    renderFocusWarningsPreservingFocus,
+} from './warnings';
 
 function refreshSearchFilterOptions(): void {
     const select = document.getElementById('search-filters') as HTMLDivElement | null;
@@ -105,7 +110,7 @@ export function updateSelectedFocusTree(clearCondition: boolean): void {
     }
 
     refreshInlayWindowSelector(focusTree);
-    renderWarningsPanel(focusTree);
+    renderFocusWarningsPreservingFocus(() => renderWarningsPanel(focusTree));
 }
 
 function getWarningPanelClassNames() {
@@ -136,18 +141,22 @@ function renderWarningsPanel(focusTree: FocusTreeView): void {
     const classes = getWarningPanelClassNames();
     const fragment = document.createDocumentFragment();
     focusTree.warnings.forEach((warning, index) => {
-        const hasNavigation = !!warning.navigations?.length;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = [
+        const navigation = warning.navigations?.[0];
+        // Warnings without a source location stay readable from the keyboard but offer no action.
+        const entry = document.createElement(navigation ? 'button' : 'div');
+        if (entry instanceof HTMLButtonElement) {
+            entry.type = 'button';
+        } else {
+            entry.tabIndex = 0;
+        }
+        entry.className = [
             classes.entry,
             warning.severity === 'warning' ? classes.warning : classes.info,
-            hasNavigation ? '' : classes.entryMuted,
+            navigation ? '' : classes.entryMuted,
         ].filter(Boolean).join(' ');
-        button.dataset.warningIndex = index.toString();
-        button.disabled = !hasNavigation;
+        entry.dataset.warningIndex = index.toString();
         const meta = `[${warning.severity}][${warning.code}][${warning.kind}][${warning.source}]`;
-        button.title = `${meta} ${warning.text}`;
+        entry.title = `${meta} ${warning.text}`;
 
         const metaElement = document.createElement('span');
         metaElement.className = classes.meta;
@@ -157,28 +166,26 @@ function renderWarningsPanel(focusTree: FocusTreeView): void {
         textElement.textContent = warning.text;
         const navigationElement = document.createElement('span');
         navigationElement.className = classes.meta;
-        navigationElement.textContent = hasNavigation
+        navigationElement.textContent = navigation
             ? feLocalize('TODO', 'Navigate')
             : feLocalize('TODO', 'No navigation');
 
-        button.append(metaElement, textElement, navigationElement);
-        button.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const navigation = warning.navigations?.[0];
-            if (!navigation) {
-                return;
-            }
-            vscode.postMessage({
-                command: 'navigate',
-                start: navigation.start,
-                end: navigation.end,
-                file: navigation.file,
-                select: false,
-                documentVersion: runtime.focusPositionDocumentVersion,
+        entry.append(metaElement, textElement, navigationElement);
+        if (navigation) {
+            entry.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                vscode.postMessage({
+                    command: 'navigate',
+                    start: navigation.start,
+                    end: navigation.end,
+                    file: navigation.file,
+                    select: false,
+                    documentVersion: runtime.focusPositionDocumentVersion,
+                });
             });
-        });
-        fragment.appendChild(button);
+        }
+        fragment.appendChild(entry);
     });
     warningsElement.replaceChildren(fragment);
 }
@@ -211,11 +218,7 @@ export function refreshWarningsButtonVisibility(): void {
     const hasWarnings = runtime.focusTreeCatalog.some(focusTree => focusTree.warningCount > 0);
     showWarningsButton.style.display = hasWarnings ? '' : 'none';
     if (!hasWarnings) {
-        const warnings = document.getElementById('warnings-container') as HTMLDivElement | null;
-        if (warnings) {
-            warnings.style.display = 'none';
-        }
-        document.body.style.overflow = '';
+        closeFocusWarningsPanelBecauseUnavailable();
     }
 }
 
@@ -322,6 +325,8 @@ function installAllowBranchSelector(): void {
         shown.forEach(value => setBranchVisibility(true, value));
         oldSelection.filter(value => !selected.has(value)).forEach(value => setBranchVisibility(false, value));
         oldSelection = selection;
+        // Search walks only matches outside hidden branches.
+        refreshSearchNavigation();
         if (shown.length > 0) {
             // Shown branches can reveal focuses whose icons are not loaded yet.
             scheduleFocusAssetDemandCheck(true);
@@ -460,14 +465,5 @@ export function installToolbar(): void {
     if (runtime.useConditionInFocus) {
         installConditionSelectors();
     }
-
-    const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement | null;
-    const warnings = document.getElementById('warnings-container') as HTMLDivElement | null;
-    if (showWarnings && warnings) {
-        showWarnings.addEventListener('click', () => {
-            const visible = warnings.style.display === 'block';
-            document.body.style.overflow = visible ? '' : 'hidden';
-            warnings.style.display = visible ? 'none' : 'block';
-        });
-    }
+    installFocusWarningsPanel();
 }

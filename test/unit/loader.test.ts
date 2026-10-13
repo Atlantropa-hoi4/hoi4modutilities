@@ -126,4 +126,63 @@ describe('loader error recovery', () => {
             clearImmediate(cancel);
         }
     });
+
+    it('keeps a shared flight alive while another consumer still owns a valid lease', async () => {
+        let complete!: () => void;
+        let workSignal: AbortSignal | undefined;
+        let loads = 0;
+        class SharedLoader extends Loader<string> {
+            protected override async loadImpl(session: InstanceType<typeof LoaderSession>) {
+                loads++;
+                workSignal = session.signal;
+                await new Promise<void>(resolve => { complete = resolve; });
+                session.throwIfCancelled();
+                return { result: 'shared', dependencies: [] };
+            }
+        }
+        const loader = new SharedLoader();
+        const owner = new AbortController();
+        const other = new AbortController();
+        const canceledLoad = loader.load(new LoaderSession(false, undefined, owner.signal));
+        const validLoad = loader.load(new LoaderSession(false, undefined, other.signal));
+        const rejected = assert.rejects(canceledLoad, /Load session cancelled/);
+        await Promise.resolve();
+        owner.abort();
+        assert.strictEqual(workSignal?.aborted, false, 'the shared flight must not inherit the first consumer signal');
+        complete();
+        assert.strictEqual((await validLoad).result, 'shared');
+        await rejected;
+        assert.strictEqual(loads, 1);
+    });
+
+    it('aborts shared work only after every signal lease is canceled and permits a fresh load', async () => {
+        let workSignal: AbortSignal | undefined;
+        let loads = 0;
+        class CancelableLoader extends Loader<string> {
+            protected override async loadImpl(session: InstanceType<typeof LoaderSession>) {
+                loads++;
+                workSignal = session.signal;
+                if (loads === 1) {
+                    await new Promise<void>(resolve => session.signal!.addEventListener('abort', () => resolve(), { once: true }));
+                }
+                session.throwIfCancelled();
+                return { result: 'fresh', dependencies: [] };
+            }
+        }
+        const loader = new CancelableLoader();
+        const first = new AbortController();
+        const second = new AbortController();
+        const firstLoad = loader.load(new LoaderSession(false, undefined, first.signal));
+        const secondLoad = loader.load(new LoaderSession(false, undefined, second.signal));
+        const rejected = [assert.rejects(firstLoad, /Load session cancelled/), assert.rejects(secondLoad, /Load session cancelled/)];
+        await Promise.resolve();
+        first.abort();
+        assert.strictEqual(workSignal?.aborted, false);
+        second.abort();
+        assert.strictEqual(workSignal?.aborted, true);
+        const fresh = loader.load(new LoaderSession(false));
+        await Promise.all(rejected);
+        assert.strictEqual((await fresh).result, 'fresh');
+        assert.strictEqual(loads, 2);
+    });
 });
