@@ -16,6 +16,8 @@ import { featureFlagsAsScript, isLocalisationIndexEnabled, isUseConditionInFocus
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
+import { renderButton } from '../../util/hoi4gui/button';
+import { inlaySourceNavigation, inlayWindowNavigation, type InlaySourceNavigation } from './inlaynavigation';
 import { fitFocusIconToBounds } from './focusiconlayout';
 import { FocusConditionPresetsByTree } from './conditionpresets';
 import { createEmptyFocusIconAssetResolution, FocusIconAssetResolution } from './focusicongfx';
@@ -1078,7 +1080,7 @@ async function prepareInlayGfxStyles(
     }
 }
 
-async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], styleTable: StyleTable, gfxFiles: string[]): Promise<string> {
+export async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], styleTable: StyleTable, gfxFiles: string[]): Promise<string> {
     if (!inlay.guiWindow) {
         return '';
     }
@@ -1099,22 +1101,27 @@ async function renderInlayWindow(inlay: FocusTree["inlayWindows"][number], style
         parentInfo,
         {
             styleTable,
-            enableNavigator: true,
-            classNames: 'focus-inlay-window navigator',
+            // GUI offsets belong to the GUI file. Ordinary children use the explicit
+            // reference navigator below instead of falling back to the active focus file.
+            enableNavigator: false,
+            classNames: 'focus-inlay-window',
             getSprite: (sprite) => getSpriteByGfxNameFromResolvedFiles(sprite, gfxFiles),
-            onRenderChild: async (type, child, parent) => renderInlayOverrideChild(type, child, parent, inlay, styleTable),
+            onRenderChild: async (type, child, parent) => renderInlayOverrideChild(type, child, parent, inlay, styleTable, gfxFiles),
         }
     );
 
-    return `<div class="${styleTable.style('focus-inlay-window-root', () => `
+    const navigation = inlayWindowNavigation(inlay);
+    return `<div class="${navigation ? 'navigator' : ''} ${styleTable.style('focus-inlay-window-root', () => `
         position: absolute;
         left: ${inlay.position.x}px;
         top: ${inlay.position.y}px;
         z-index: 5;
     `)}"
-        start="${inlay.token?.start}"
-        end="${inlay.token?.end}"
-        file="${inlay.file}">${content}</div>`;
+        data-inlay-id="${htmlAttributeEscape(inlay.id)}" ${inlayNavigationAttributes(navigation)}>${content}</div>`;
+}
+
+function inlayNavigationAttributes(navigation: InlaySourceNavigation | undefined): string {
+    return navigation ? `file="${htmlAttributeEscape(navigation.file)}" start="${navigation.start}" end="${navigation.end}"` : '';
 }
 
 async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
@@ -1123,13 +1130,21 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
     parentInfo: ParentInfo,
     inlay: FocusTree["inlayWindows"][number],
     styleTable: StyleTable,
+    gfxFiles: string[],
 ): Promise<string | undefined> {
     if ((type !== 'icon' && type !== 'button') || !child.name) {
         return undefined;
     }
 
     const slot = inlay.scriptedImages.find(scriptedImage => scriptedImage.id === child.name);
+    const scriptedButton = type === 'button' ? inlay.scriptedButtons.find(button => button.id === child.name) : undefined;
     if (!slot) {
+        if (scriptedButton) {
+            const navigation = inlaySourceNavigation(scriptedButton) ?? inlayWindowNavigation(inlay);
+            const content = await renderButton(child as HOIPartial<ButtonType>, parentInfo, { styleTable,
+                getSprite: sprite => getSpriteByGfxNameFromResolvedFiles(sprite, gfxFiles) });
+            return `<div class="${navigation ? 'navigator' : ''}" ${inlayNavigationAttributes(navigation)}>${content}</div>`;
+        }
         return undefined;
     }
 
@@ -1147,7 +1162,7 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
     }
 
     const gfxClassPlaceholder = `{{inlay_slot_class:${slot.id}}}`;
-    const spriteHtml = `<div class="navigator ${styleTable.style('positionAbsolute', () => `position: absolute;`)} ${styleTable.oneTimeStyle('inlay-slot-base', () => `
+    const spriteHtml = `<div class="${styleTable.style('positionAbsolute', () => `position: absolute;`)} ${styleTable.oneTimeStyle('inlay-slot-base', () => `
             left: 0;
             top: 0;
             width: 96px;
@@ -1166,10 +1181,9 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         orientation: toStringAsSymbolIgnoreCase('upper_left')
     }, parentInfo, { styleTable }) : '';
 
-    return `<div
-        start="${child._token?.start}"
-        end="${child._token?.end}"
-        class="navigator ${styleTable.style('positionAbsolute', () => `position: absolute;`)} ${styleTable.oneTimeStyle('inlay-gui-slot', () => `
+    const navigation = inlaySourceNavigation(scriptedButton ?? slot) ?? inlayWindowNavigation(inlay);
+    return `<div ${inlayNavigationAttributes(navigation)}
+        class="${navigation ? 'navigator' : ''} ${styleTable.style('positionAbsolute', () => `position: absolute;`)} ${styleTable.oneTimeStyle('inlay-gui-slot', () => `
             left: ${x}px;
             top: ${y}px;
             width: ${96 * scale}px;

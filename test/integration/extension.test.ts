@@ -208,6 +208,27 @@ suite('extension smoke', () => {
         await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'), 30000);
     });
 
+    test('keeps a preview for a hidden source tab and closes it with the last source tab', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+        assert.ok(workspaceRoot);
+        const uri = vscode.Uri.joinPath(workspaceRoot!, 'events', 'sample_events.txt');
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false });
+        await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Two, preview: false });
+        const other = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(workspaceRoot!, 'common', 'ideas', 'sample_ideas.txt'));
+        await vscode.window.showTextDocument(other, { viewColumn: vscode.ViewColumn.Two, preview: false });
+        await vscode.commands.executeCommand(Commands.Preview, uri);
+        await waitFor(() => hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'), 30000);
+        const sourceTabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs)
+            .filter(tab => tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString());
+        assert.strictEqual(sourceTabs().length, 2);
+        assert.strictEqual(await vscode.window.tabGroups.close(sourceTabs()[0], true), true);
+        await waitFor(() => sourceTabs().length === 1);
+        assert.ok(hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'));
+        assert.strictEqual(await vscode.window.tabGroups.close(sourceTabs()[0], true), true);
+        await waitFor(() => !hasPreviewTab(WebviewType.Preview, 'HOI4: sample_events.txt'), 30000);
+    });
+
     test('opens an idea preview webview for a representative fixture', async () => {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
         assert.ok(workspaceRoot);

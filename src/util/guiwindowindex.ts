@@ -1,10 +1,13 @@
 import { GuiFile, guiFileSchema, ContainerWindowType } from "../hoiformat/gui";
 import { convertNodeToJson, HOIPartial } from "../hoiformat/schema";
 import { listFilesFromModOrHOI4, parseAndResolveHoi4FileCached } from "./fileloader";
+import { findGuiFiles } from "./guiIndex";
+import { GuiFileLoader } from "../previewdef/gui/loader";
+import { LoaderSession } from "./loader/loader";
 
 // Finding a `containerwindowtype` by the name a script refers to it by. A focus inlay window and a
 // decision category's `scripted_gui` both name a window and leave the reader to find it, and the
-// game finds it the same way for both: by scanning the interface tree.
+// game finds it the same way for both: by finding its definition in the interface tree.
 //
 // Scripted GUI windows and their sprites can live anywhere under interface/ (e.g.
 // interface/GER_inner_circle_scripted_gui.gui, interface/inner_circle.gfx), not just
@@ -35,10 +38,8 @@ async function listInterfaceFiles(extension: string): Promise<string[]> {
 	}
 }
 
-// Resolves the given window names against the interface tree. Parsing stops as soon as every name
-// is accounted for, so asking for a handful of windows does not cost a parse of the whole tree. A
-// name that no file defines is simply absent from the result -- what to say about that is the
-// caller's to decide, since a focus inlay and a decision category word it differently.
+// The shared persistent name index narrows parsing to files defining the requested windows.
+// Callers that already have an explicit ordered file list retain their existing lookup order.
 export async function findContainerWindows(
 	names: Iterable<string>,
 	guiFiles?: string[],
@@ -49,7 +50,7 @@ export async function findContainerWindows(
 		return windowByName;
 	}
 
-	for (const guiFile of guiFiles ?? (await listGuiFiles())) {
+	for (const guiFile of guiFiles ?? (await findGuiFiles(unresolved))) {
 		if (unresolved.size === 0) {
 			break;
 		}
@@ -72,6 +73,45 @@ export async function findContainerWindows(
 	}
 
 	return windowByName;
+}
+
+export interface LoadedGuiWindows {
+	windows: Record<string, ResolvedGuiWindow>;
+	guiFiles: string[];
+	gfxFiles: string[];
+	dependencies: string[];
+}
+
+// Keep dependency headers and the conventional sibling GFX file when resolving an indexed GUI.
+export async function loadContainerWindows(names: Iterable<string>, session: LoaderSession): Promise<LoadedGuiWindows> {
+	const unresolved = new Set(names);
+	const windows: Record<string, ResolvedGuiWindow> = {};
+	const guiFiles = new Set<string>();
+	const gfxFiles = new Set<string>();
+	const dependencies = new Set<string>();
+	const candidates = await findGuiFiles(unresolved);
+	session.throwIfCancelled();
+	for (const file of candidates) {
+		session.throwIfCancelled();
+		try {
+			const loaded = await session.createOrGetCachedLoader(file, GuiFileLoader).load(session);
+			session.throwIfCancelled();
+			loaded.dependencies.forEach(dependency => dependencies.add(dependency));
+			loaded.result.gfxFiles.forEach(gfxFile => gfxFiles.add(gfxFile));
+			for (const guiFile of loaded.result.guiFiles) {
+				guiFiles.add(guiFile.file);
+				// The index chose the defining file in source order. Referenced GUI files
+				// remain dependencies, but must not override that choice while loading it.
+				if (guiFile.file !== file) { continue; }
+				for (const [name, window] of Object.entries(collectContainerWindows(guiFile.data))) {
+					if (unresolved.delete(name)) { windows[name] = { file: guiFile.file, window }; }
+				}
+			}
+		} catch {
+			session.throwIfCancelled();
+		}
+	}
+	return { windows, guiFiles: [...guiFiles], gfxFiles: [...gfxFiles], dependencies: [...dependencies] };
 }
 
 export function collectContainerWindows(

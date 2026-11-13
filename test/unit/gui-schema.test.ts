@@ -4,6 +4,17 @@ import { parseHoi4File } from '../../src/hoiformat/hoiparser';
 import { convertNodeToJson } from '../../src/hoiformat/schema';
 
 describe('GUI schema', () => {
+    it('parses named GUI positions as numeric coordinates', () => {
+        const gui = convertNodeToJson<GuiFile>(parseHoi4File(`
+            guiTypes = {
+                positionType = { name = "focus_spacing" position = { x = 144.5 y = 170 } }
+            }
+        `), guiFileSchema);
+        assert.strictEqual(gui.guitypes[0].positiontype[0].name, 'focus_spacing');
+        const { x, y } = gui.guitypes[0].positiontype[0].position!;
+        assert.deepStrictEqual({ x, y }, { x: 144.5, y: 170 });
+    });
+
     it('parses fullscreen windows', () => {
         const gui = convertNodeToJson<GuiFile>(parseHoi4File(`
             guiTypes = {

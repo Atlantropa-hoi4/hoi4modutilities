@@ -127,6 +127,7 @@ const {
     createFileLoaderCacheKey,
     createSelectedModSourceCacheKey,
     expiryToken,
+    getFilePathFromModOrHOI4,
     getModRootCandidatePaths,
     isPathCoveredByReplacePath,
     listFilesInDlcZipEntries,
@@ -342,6 +343,42 @@ describe('fileloader mod root helpers', () => {
         const backgroundResolved = await readFileFromModOrHOI4(relativePath, { hoi4: false, priority: 'background' });
         assert.strictEqual(backgroundResolved[0].toString(), 'selected');
         assert.strictEqual(backgroundResolved[1].fsPath, selectedFile);
+    });
+
+    it('reads unsaved selected and dependency GUI documents outside workspace folders', async () => {
+        const registryRoot = path.join('C:', 'hoi4-user', 'unsaved-gui-mods');
+        const selectedModFile = path.join(registryRoot, 'selected.mod');
+        const dependencyModFile = path.join(registryRoot, 'dependency.mod');
+        const selectedRoot = path.join('C:', 'external-selected-gui');
+        const dependencyRoot = path.join('C:', 'external-dependency-gui');
+        mockConfigurationModFile = selectedModFile;
+        for (const directory of [registryRoot, selectedRoot, dependencyRoot]) {
+            mockDirectories.add(normalizeMockPath(directory));
+        }
+        for (const file of [selectedModFile, dependencyModFile]) { mockFiles.add(normalizeMockPath(file)); }
+        mockDirectoryEntries.set(normalizeMockPath(registryRoot), [['selected.mod', 1], ['dependency.mod', 1]]);
+        mockReadContents.set(normalizeMockPath(selectedModFile), [
+            'name = "Selected GUI"', `path = "${selectedRoot.replace(/\\/g, '/')}"`, 'dependencies = { "Dependency GUI" }',
+        ].join('\n'));
+        mockReadContents.set(normalizeMockPath(dependencyModFile), [
+            'name = "Dependency GUI"', `path = "${dependencyRoot.replace(/\\/g, '/')}"`,
+        ].join('\n'));
+
+        for (const [root, name] of [[selectedRoot, 'selected'], [dependencyRoot, 'dependency']]) {
+            const relative = `interface/${name}.gui`;
+            const uri = createMockUri(path.join(root, relative));
+            mockFiles.add(normalizeMockPath(uri.fsPath));
+            mockReadContents.set(normalizeMockPath(uri.fsPath), 'disk GUI');
+            const document = { uri, version: 1, getText: () => `unsaved ${name} GUI` };
+            mockTextDocuments.push(document);
+            const resolved = await getFilePathFromModOrHOI4(relative, { hoi4: false, dlc: false });
+            assert.strictEqual(resolved?.fragment, ':opened');
+            const firstToken = await expiryToken(resolved);
+            assert.strictEqual((await readFileFromModOrHOI4(relative, { hoi4: false, dlc: false }))[0].toString(), document.getText());
+            document.version++;
+            assert.notStrictEqual(await expiryToken(resolved), firstToken);
+            assert.strictEqual(mockReadCounts.get(normalizeMockPath(uri.fsPath)) ?? 0, 0);
+        }
     });
 
     it('treats replace_path entries as covering their descendants', () => {

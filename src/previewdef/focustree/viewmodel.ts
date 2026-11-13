@@ -7,6 +7,7 @@ import type {
     FocusWarning,
 } from './schema';
 import type { ContinuousFocusPositionMeta, FocusTreeCreateMeta } from './positioneditcommon';
+import { inlayWindowNavigation, type InlaySourceNavigation } from './inlaynavigation';
 
 export const focusTreeProtocolVersion = 5 as const;
 
@@ -54,6 +55,7 @@ export interface FocusInlayImageSlotView {
 
 export interface FocusTreeInlayView {
     id: string;
+    navigation?: InlaySourceNavigation;
     visible: ConditionComplexExpr;
     position: { x: number; y: number };
     scriptedImages: FocusInlayImageSlotView[];
@@ -240,6 +242,7 @@ export function toFocusView(focus: Focus, displayName: string | undefined): Focu
 function toFocusTreeInlayView(inlay: FocusTreeInlay): FocusTreeInlayView {
     return {
         id: inlay.id,
+        navigation: inlayWindowNavigation(inlay),
         visible: inlay.visible,
         position: inlay.position,
         scriptedImages: inlay.scriptedImages.map(slot => ({

@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+* Support current allied-country, scientist, purchase-contract, collection and special-project scopes, preserving the previous purchase-contract spellings as aliases.
+* Persist the GUI name index and share nested-window lookup between Focus inlays and Decision previews, including referenced GUI and GFX files.
+* Search event option identifiers and translated labels, and restore open event details after preview updates and reloads.
+* Add optional shape-fitted World Map country names, rotated/curved labels, bitmap map fonts and export support, adapted from upstream PR #147 by 1985312383. Country-name resolution follows selected bookmark conditions, politics, cosmetic tags and subject relationships.
+
 ### Changed
 * Skip vanilla files by default in document, range, on-type, and workspace formatting and in lint Quick Fixes and `Source: Fix All` edits: files under `hoi4ModUtilities.installPath`, including DLC folders, and vanilla-derived folders (`interface`, `gfx`, `common/names`, `common/occupation_laws`, `common/special_projects`, `common/technologies`, `common/units` except division and ship name lists, and `history/states`), following the Kaiserreich formatter skip list. Lint warnings are still shown. Turn off `hoi4ModUtilities.skipVanillaFiles` to format and fix them; `hoi4ModUtilities.formatter.ignoreFiles` patterns apply to formatting independently.
 
@@ -23,6 +29,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Remove machine-local automation, private Office outputs and copied real-mod focus files from public tracking; use project-authored fixtures for desktop/schema tests, parameterize legacy utility paths, and keep profiling sessions private.
 
 ### Fixed
+* Read canonical GUI `positionType` focus spacing, including referenced GUI files, while retaining the existing direct-block syntax.
+* Load explicitly declared `#!focus_inlay_window` dependencies outside the standard inlay folder and track them for refresh.
+* Navigate inlay windows to the selected tree's source reference, retaining definition navigation for scripted images and buttons.
+* Close file previews when their last source text tab closes, retaining previews while the same file remains open in another tab group.
+* Read unsaved GUI and other text documents from selected and dependency mod roots outside the workspace.
 * Stop Focus Tree Preview stylesheets from growing with every edit, and keep search-filter dimming after hovering a focus.
 * Keep the latest requested Focus Tree selected when asynchronous scene loading finishes, and require real on-screen icons before reporting assets ready.
 * Preserve loaded shared-icon styles when merging a newly selected Focus Tree, so an off-screen placeholder cannot erase an already hydrated icon on cached revisits.

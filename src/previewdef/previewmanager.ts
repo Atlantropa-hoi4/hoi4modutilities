@@ -67,6 +67,7 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.commands.registerCommand(Commands.Preview, this.showPreview, this));
         disposables.push(vscode.commands.registerCommand(Commands.DebugFocusTreePreviewState, this.getPreviewDebugState, this));
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
+        disposables.push(vscode.window.tabGroups.onDidChangeTabs(this.onDidChangeTabs, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { void this.rebuildActiveDependencyWatchers(); }));
         disposables.push(onDidChangeSelectedModSource(() => {
@@ -116,13 +117,33 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
 
     private onCloseTextDocument(document: vscode.TextDocument): void {
         this.previewProviderResolver.clear(document.uri);
-        if (!vscode.window.visibleTextEditors.some(e => e.document.uri.toString() === document.uri.toString())) {
-            const key = document.uri.toString();
-            this.previews[key]?.panel.dispose();
-            debug(`dispose panel ${key} because text document closed`);
-        }
-
         this.updatePreviewItemsInSubscription(document.uri);
+    }
+
+    private onDidChangeTabs(event: vscode.TabChangeEvent): void {
+        const closedUris = new Set<string>();
+        for (const tab of event.closed) {
+            if (!(tab.input instanceof vscode.TabInputText)) {
+                continue;
+            }
+
+            const uri = tab.input.uri;
+            const key = uri.toString();
+            if (closedUris.has(key)) {
+                continue;
+            }
+            closedUris.add(key);
+            const stillOpen = vscode.window.tabGroups.all.some(group => group.tabs.some(openTab =>
+                openTab.input instanceof vscode.TabInputText && openTab.input.uri.toString() === key));
+            if (stillOpen) {
+                continue;
+            }
+
+            this.previewProviderResolver.clear(uri);
+            this.previews[key]?.panel.dispose();
+            debug(`dispose panel ${key} because last text tab closed`);
+            this.updatePreviewItemsInSubscription(uri);
+        }
     }
 
     private onChangeTextDocument(e: vscode.TextDocumentChangeEvent): void {

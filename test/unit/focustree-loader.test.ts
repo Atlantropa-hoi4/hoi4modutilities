@@ -76,6 +76,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
         || request === '../../util/fileloader'
         || request === '../fileloader') {
         return {
+            getFileContentSourceGeneration: () => 1,
             readFileFromModOrHOI4: async (file: string) => [Buffer.from(fileContents[file] ?? ''), file],
             hoiFileExpiryToken: async (file: string) => `token:${file}`,
             listFilesFromModOrHOI4: async () => [],
@@ -193,6 +194,49 @@ describe('focustree loader', () => {
         sharedFocusIndexReady = true;
         workspaceSharedFocusIds.clear();
         iconResolutionBarrier = undefined;
+    });
+
+    it('reads named spacing through explicit GUI references before deferred asset hydration', async () => {
+        const directGui = 'interface/compat_spacing.gui';
+        const nestedGui = 'interface/compat_spacing_nested.gui';
+        const originalMain = fileContents[mainFocusFile];
+        const originalGui = fileContents[focusTreeGuiFile];
+        try {
+            fileContents[mainFocusFile] = `#!gui:${directGui}\n${originalMain}`;
+            fileContents[focusTreeGuiFile] = 'guiTypes = {}';
+            fileContents[directGui] = `#!gui:${nestedGui}\n#!gfx:interface/spacing_unused.gfx\nguiTypes = {}`;
+            fileContents[nestedGui] = 'guiTypes = { positionType = { name = focus_spacing position = { x = 144 y = 170 } } }';
+            const result = await new FocusTreeLoader(mainFocusFile, undefined, 'deferred').load(new LoaderSession(true));
+            assert.deepStrictEqual(result.result.focusSpacing, { x: 144, y: 170 });
+            assert.ok(result.dependencies.includes(directGui));
+            assert.ok(result.dependencies.includes(nestedGui));
+            assert.ok(!result.dependencies.includes('interface/spacing_unused.gfx'));
+            assert.deepStrictEqual(focusIconResolutionCalls, []);
+            assert.deepStrictEqual(gfxIndexLookups, []);
+        } finally {
+            fileContents[mainFocusFile] = originalMain;
+            fileContents[focusTreeGuiFile] = originalGui;
+            delete fileContents[directGui];
+            delete fileContents[nestedGui];
+        }
+    });
+
+    it('keeps the primary GUI spacing ahead of later explicit GUI definitions', async () => {
+        const extraGui = 'interface/compat_spacing_override.gui';
+        const originalMain = fileContents[mainFocusFile];
+        const originalGui = fileContents[focusTreeGuiFile];
+        try {
+            fileContents[mainFocusFile] = `#!gui:${extraGui}\n${originalMain}`;
+            fileContents[focusTreeGuiFile] = 'guiTypes = { positionType = { name = focus_spacing position = { x = 110 y = 150 } } }';
+            fileContents[extraGui] = 'guiTypes = { positionType = { name = focus_spacing position = { x = 144 y = 170 } } }';
+            const result = await new FocusTreeLoader(mainFocusFile, undefined, 'deferred').load(new LoaderSession(true));
+            assert.deepStrictEqual(result.result.focusSpacing, { x: 110, y: 150 });
+            assert.ok(result.dependencies.includes(extraGui));
+        } finally {
+            fileContents[mainFocusFile] = originalMain;
+            fileContents[focusTreeGuiFile] = originalGui;
+            delete fileContents[extraGui];
+        }
     });
 
     it('propagates deferred asset loading to shared focus dependencies', async () => {

@@ -12,6 +12,7 @@ import { bookmarkToConditionItem, BookmarksLoader } from "./bookmarks";
 import { flatMap, uniqBy } from "lodash";
 import { sortConditionExprs } from "../../../hoiformat/condition";
 import { whenLocalisationIndexReady } from '../../../util/localisationIndex';
+import { loadCountryLabelsData } from './countrylabels';
 
 export class WorldMapLoader extends Loader<WorldMapData> {
     private defaultMapLoader: DefaultMapLoader;
@@ -133,6 +134,13 @@ export class WorldMapLoader extends Loader<WorldMapData> {
     public getWorldMap(force?: boolean): Promise<WorldMapData> {
         const session = new LoaderSession(force ?? false);
         return this.load(session).then(r => r.result);
+    }
+
+    public async loadCountryLabels(session: LoaderSession) {
+        const countries = await this.countriesLoader.load(session);
+        const bookmarks = await this.bookmarksLoader.load(session);
+        session.throwIfCancelled();
+        return loadCountryLabelsData(countries.result, bookmarks.result.bookmarks, session);
     }
 
     public shallowForceReload(): void {

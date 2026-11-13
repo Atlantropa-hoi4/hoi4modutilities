@@ -2,21 +2,80 @@ import type { EventGraphEventNode, EventGraphOptionNode } from '../src/previewde
 import { feLocalize } from './util/i18n';
 import { conditionPanel } from './util/conditiontree';
 
-export function appendEventDetails(card: HTMLElement, node: EventGraphEventNode | EventGraphOptionNode, localised: boolean): void {
-    const button = document.createElement('button');
-    button.className = 'event-details-button';
-    button.textContent = feLocalize('event.details', 'Details');
-    button.addEventListener('click', event => {
-        event.stopPropagation();
-        document.querySelector('.event-details-dialog')?.remove();
+type DetailsNode = EventGraphEventNode | EventGraphOptionNode;
+interface DetailsEntry { node: DetailsNode; localised: boolean; button: HTMLButtonElement; }
+
+export class EventDetailsController {
+    private dialog: HTMLDialogElement | undefined;
+    private readonly entries = new Map<string, DetailsEntry>();
+    private restoreFocus = false;
+
+    constructor(private readonly readState: () => Record<string, unknown>,
+        private readonly writeState: (state: Record<string, unknown>) => void) { }
+
+    public beginRender(): void {
+        this.restoreFocus = this.dialog?.contains(document.activeElement) ?? false;
+        this.removeDialog();
+        this.entries.clear();
+    }
+
+    public append(card: HTMLElement, node: DetailsNode, localised: boolean, key: string): void {
+        const button = document.createElement('button');
+        button.className = 'event-details-button';
+        button.textContent = feLocalize('event.details', 'Details');
+        button.setAttribute('aria-haspopup', 'dialog');
+        this.entries.set(key, { node, localised, button });
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            this.show(key);
+        });
+        card.append(button);
+    }
+
+    public restore(): void {
+        const state = this.readState();
+        if (state.eventDetailsOpen !== true) {
+            return;
+        }
+        const key = state.eventDetailsSelection;
+        if (typeof key === 'string' && this.entries.has(key)) {
+            this.show(key);
+        } else {
+            this.writeState({ eventDetailsOpen: false, eventDetailsSelection: undefined });
+            if (this.restoreFocus) {
+                document.getElementById('ev-searchbox')?.focus();
+            }
+        }
+    }
+
+    private removeDialog(): void {
+        const dialog = this.dialog;
+        this.dialog = undefined;
+        dialog?.remove();
+    }
+
+    private show(key: string): void {
+        const entry = this.entries.get(key);
+        if (!entry) { return; }
+        this.removeDialog();
+        const { node, localised, button } = entry;
         const dialog = document.createElement('dialog');
+        this.dialog = dialog;
         dialog.className = 'event-details-dialog';
         const title = document.createElement('h2');
+        title.id = 'event-details-title';
         title.textContent = node.kind === 'event' ? node.eventId : node.name.key;
+        dialog.setAttribute('aria-labelledby', title.id);
         const close = document.createElement('button');
         close.textContent = feLocalize('event.closeDetails', 'Close details');
         close.addEventListener('click', () => { dialog.close(); });
-        dialog.addEventListener('close', () => { dialog.remove(); button.focus(); });
+        dialog.addEventListener('close', () => {
+            if (this.dialog !== dialog) { return; }
+            this.removeDialog();
+            this.writeState({ eventDetailsOpen: false });
+            if (button.isConnected) { button.focus(); }
+            else { document.getElementById('ev-searchbox')?.focus(); }
+        });
         dialog.append(title, close);
         if (node.trigger !== true) {
             dialog.append(conditionPanel(node.trigger, feLocalize('eventtree.eventtrigger', 'Event trigger')));
@@ -41,6 +100,6 @@ export function appendEventDetails(card: HTMLElement, node: EventGraphEventNode 
         }
         document.body.append(dialog);
         dialog.showModal();
-    });
-    card.append(button);
+        this.writeState({ eventDetailsOpen: true, eventDetailsSelection: key });
+    }
 }

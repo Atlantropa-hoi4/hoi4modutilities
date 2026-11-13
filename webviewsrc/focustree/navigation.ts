@@ -27,6 +27,12 @@ export function getFocusNavigationTarget(card: HTMLElement): FocusNavigationTarg
     return getFocusNavigationTargetById(card.dataset.focusId || undefined, card.getAttribute('file') ?? undefined);
 }
 
+/** A shared inlay template must use the selected tree's current reference and source range. */
+export function getInlayNavigationTarget(navigator: HTMLElement): FocusNavigationTarget | undefined {
+    const id = navigator.dataset.inlayId;
+    return id === undefined ? undefined : runtime.renderedFocusTree?.inlayWindows.find(inlay => inlay.id === id)?.navigation;
+}
+
 /** Opens a focus definition in the editor. */
 export function navigateToFocus(target: FocusNavigationTarget): void {
     vscode.postMessage({

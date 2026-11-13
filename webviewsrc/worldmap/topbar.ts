@@ -38,6 +38,7 @@ export class TopBar extends Subscriber {
     public linkStateStrategicRegion: boolean = true;
 
     private searchBox: HTMLInputElement;
+    private disposed = false;
 
     constructor(private readonly canvas: HTMLCanvasElement, private viewPoint: ViewPoint, private loader: Loader, state: any) {
         super();
@@ -73,6 +74,7 @@ export class TopBar extends Subscriber {
             this.display.selectedValues$.next(state.display);
         } else {
             this.display.selectAll();
+            this.display.selectedValues$.next(this.display.selectedValues$.value.filter(value => value !== 'countryname'));
         }
 
         this.searchBox = document.getElementById("searchbox") as HTMLInputElement;
@@ -82,6 +84,7 @@ export class TopBar extends Subscriber {
     }
 
     public override dispose(): void {
+        this.disposed = true;
         super.dispose();
         this.viewMode$.complete();
         this.colorSet$.complete();
@@ -278,28 +281,38 @@ export class TopBar extends Subscriber {
         }));
         this.addSubscription(fromEvent<MessageEvent>(window, 'message').subscribe(event => {
             const message = event.data as WorldMapMessage;
-            if (message.command !== 'requestexportmap') {
-                return;
-            }
-
-            const worldMap = this.loader.worldMap;
-            if (!worldMap) {
-                return;
-            }
-
-            sendEvent('worldmap.export');
-            const scale = message.scale ?? 1;
-            const canvas = document.createElement("canvas");
-            canvas.width = Math.max(1, worldMap.width * scale);
-            canvas.height = Math.max(1, worldMap.height * scale);
-            const viewPoint = new ViewPoint(canvas, this.loader, 0, { x: 0, y: 0, scale });
-            try {
-                Renderer.renderMapImpl(canvas, this, viewPoint, worldMap, { preciseEdge: true, overwriteRenderPrecision: 1 });
-                vscode.postMessage({ command: 'exportmap', dataUrl: canvas.toDataURL() });
-            } finally {
-                viewPoint.dispose();
+            if (message.command === 'requestexportmap') {
+                void this.exportMap(message).catch(error => console.error(error));
             }
         }));
+    }
+
+    private async exportMap(message: import('../../src/previewdef/worldmap/definitions').ExportMapMessage): Promise<void> {
+        const worldMap = this.loader.worldMap;
+        const generation = this.loader.mapGeneration;
+        const isCurrent = () => !this.disposed && this.loader.isCurrentMap(worldMap, generation);
+        if (!isCurrent()) {
+            return;
+        }
+        if (this.colorSet$.value === 'owner' && this.display.selectedValues$.value.includes('countryname')) {
+            await this.loader.requestCountryLabels();
+            if (!isCurrent()) { return; }
+            await Renderer.prepareCountryLabels(worldMap.countryLabels?.mapFont, isCurrent);
+            if (!isCurrent()) { return; }
+        }
+
+        sendEvent('worldmap.export');
+        const scale = message.scale ?? 1;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, worldMap.width * scale);
+        canvas.height = Math.max(1, worldMap.height * scale);
+        const viewPoint = new ViewPoint(canvas, this.loader, 0, { x: 0, y: 0, scale });
+        try {
+            Renderer.renderMapImpl(canvas, this, viewPoint, worldMap, { preciseEdge: true, overwriteRenderPrecision: 1 });
+            vscode.postMessage({ command: 'exportmap', dataUrl: canvas.toDataURL() });
+        } finally {
+            viewPoint.dispose();
+        }
     }
 
     private loadEditControls() {

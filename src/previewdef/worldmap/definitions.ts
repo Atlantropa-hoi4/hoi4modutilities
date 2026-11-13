@@ -26,6 +26,7 @@ export interface WorldMapData {
     continents: string[];
     terrains: Terrain[];
     resources: Resource[];
+    countryLabels?: CountryLabelsData;
     rivers: River[];
     conditionExprs: ConditionItem[];
     bookmarks: Bookmark[];
@@ -192,6 +193,36 @@ export interface Country {
     file: string;
 }
 
+export interface MapFontGlyph {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    xOffset: number;
+    yOffset: number;
+    xAdvance: number;
+}
+
+export interface MapFont {
+    lineHeight: number;
+    imageUri: string;
+    glyphs: Record<number, MapFontGlyph | undefined>;
+}
+
+export interface CountryNameHistory {
+    tag: string;
+    rulingParty: WithCondition<string>[];
+    cosmeticTag: WithCondition<string>[];
+    autonomies: WithCondition<{ target: string; autonomousState: string }>[];
+}
+
+export interface CountryLabelsData {
+    histories: CountryNameHistory[];
+    localisations: Record<string, string>;
+    conditionExprs: ConditionItem[];
+    mapFont: MapFont | undefined;
+}
+
 export interface Terrain {
     name: string;
     color: number;
@@ -272,7 +303,21 @@ export interface TokenInFile {
 }
 
 export type WorldMapMessage = LoadedMessage | MapReadyMessage | RequestMapItemMessage | MapItemMessage | MapUpdateCompleteMessage | ErrorMessage |
-    ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage | MoveProvinceMessage | AddMapItemMessage | SelectMapItemMessage;
+    ProgressMessage | ProvinceMapSummaryMessage | OpenFileMessage | ExportMapMessage | MoveProvinceMessage | AddMapItemMessage | SelectMapItemMessage |
+    RequestCountryLabelsMessage | CountryLabelsMessage;
+
+export interface RequestCountryLabelsMessage {
+    command: 'requestcountrylabels';
+    loadGeneration: number;
+    requestId: number;
+}
+
+export interface CountryLabelsMessage {
+    command: 'countrylabels';
+    loadGeneration: number;
+    requestId: number;
+    data: CountryLabelsData | undefined;
+}
 
 export interface LoadedMessage {
     command: 'loaded';

@@ -86,6 +86,8 @@ export interface FocusTreeInlay {
     id: string;
     file: string;
     token: Token | undefined;
+    referenceFile?: string;
+    referenceToken?: Token;
     windowName?: string;
     guiFile?: string;
     guiWindow?: HOIPartial<ContainerWindowType>;

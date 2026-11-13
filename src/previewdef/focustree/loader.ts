@@ -16,7 +16,9 @@ import {
     addInlayGfxWarnings,
     getCachedInterfaceGfxFiles,
     getCachedInterfaceGfxSpriteNames,
+    FocusInlayFileLoader,
     loadFocusInlayWindows,
+    normalizeFocusInlayFile,
     resolveInlayGfxFiles,
     resolveInlayGuiWindows,
     resolveInlaysForTree,
@@ -42,6 +44,8 @@ export interface FocusTreeLoaderResult {
     /** Undefined retains the unscoped API; an empty list prepares structure only. */
     assetTreeIds?: string[];
     presentation?: FocusPresentation;
+    /** Explicit inlay dependency paths are forwarded through imported focus trees. */
+    inlayFiles?: string[];
 }
 
 export type FocusTreeAssetLoadMode = 'full' | 'deferred';
@@ -200,11 +204,12 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             : this.assetScope ? StructuralFocusTreeLoader : FullFocusTreeDependencyLoader;
         const focusTreeDepFiles = await this.loaderDependencies.loadMultiple(focusTreeDependencies, session, focusTreeDependencyLoaderType);
         session.throwIfCancelled();
-        const focusSpacingDepFiles = await this.loaderDependencies.loadMultiple([focusTreeGuiFile], session, FocusSpacingLoader);
+        const focusGuiDependencies = uniq([focusTreeGuiFile, ...dependencies.filter(d => d.type === 'gui').map(d => d.path)]);
+        const focusSpacingDepFiles = await this.loaderDependencies.loadMultiple(focusGuiDependencies, session, FocusSpacingLoader);
         session.throwIfCancelled();
-        const focusSpacing = focusSpacingDepFiles[0]?.result.focusSpacing;
+        const focusSpacing = focusSpacingDepFiles.map(file => file.result.focusSpacing).find(spacing => spacing !== undefined);
         const presentationGuiFiles = deferAssetLoad || this.assetScope?.treeId === '' ? [] : await this.loaderDependencies.loadMultiple(
-            uniq([focusTreeGuiFile, ...dependencies.filter(d => d.type === 'gui').map(d => d.path)]), session, GuiFileLoader);
+            focusGuiDependencies, session, GuiFileLoader);
         const styleFiles = deferAssetLoad ? [] : await this.loaderDependencies.loadMultiple(
             ['common/national_focus/00_titlebar_styles.txt'], session, FocusTitleStyleLoader);
         const windows = presentationGuiFiles.flatMap(f => f.result.guiFiles).flatMap(f => f.data.guitypes)
@@ -233,8 +238,12 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const assetTrees = !this.assetScope ? focusTrees : this.assetScope.treeId === '' ? []
             : assetTreeIds ? focusTrees.filter(tree => tree === selectedAssetTree || assetTreeIds.includes(tree.id))
             : selectedAssetTree ? [selectedAssetTree] : [];
+        const explicitInlayFiles = uniq([
+            ...focusTreeDepFiles.flatMap(dependency => dependency.result.inlayFiles ?? []),
+            ...dependencies.filter(dependency => dependency.type === 'focus_inlay_window').map(dependency => dependency.path),
+        ].map(normalizeFocusInlayFile));
         const hasInlayRefs = !deferAssetLoad && focusTrees.some(focusTree => focusTree.inlayWindowRefs.length > 0);
-        let loadedInlayFiles: string[] = [];
+        let loadedInlayFiles: string[] = explicitInlayFiles;
         if (!hasInlayRefs) {
             for (const focusTree of focusTrees) {
                 session.throwIfCancelled();
@@ -243,9 +252,11 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                 focusTree.warnings = sortFocusWarnings(focusTree.warnings);
             }
         } else {
-            const loadedInlays = await loadFocusInlayWindows();
+            const inlayDepFiles = await this.loaderDependencies.loadMultiple(explicitInlayFiles, session, FocusInlayFileLoader);
             session.throwIfCancelled();
-            loadedInlayFiles = loadedInlays.inlays.map(inlay => inlay.file);
+            const loadedInlays = await loadFocusInlayWindows(inlayDepFiles.map(dependency => dependency.result), session);
+            session.throwIfCancelled();
+            loadedInlayFiles = uniq([...explicitInlayFiles, ...loadedInlays.files]);
             for (const focusTree of focusTrees) {
                 session.throwIfCancelled();
                 const resolved = resolveInlaysForTree(focusTree.inlayWindowRefs, loadedInlays.inlays);
@@ -261,8 +272,8 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
 
         const allInlays = assetTrees.flatMap(ft => ft.inlayWindows);
         const guiResolution = deferAssetLoad
-            ? { guiFiles: [], warnings: [] as ReturnType<typeof sortFocusWarnings> }
-            : await resolveInlayGuiWindows(allInlays);
+            ? { guiFiles: [], gfxFiles: [], dependencies: [], warnings: [] as ReturnType<typeof sortFocusWarnings> }
+            : await resolveInlayGuiWindows(allInlays, session);
         session.throwIfCancelled();
         if (!deferAssetLoad) {
             for (const focusTree of assetTrees) {
@@ -303,6 +314,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         ]));
         const explicitGfxDependencies = uniq([
             ...presentationGuiFiles.flatMap(f => f.result.gfxFiles),
+            ...guiResolution.gfxFiles,
             ...dependencies.filter(d => d.type === 'gfx').map(d => d.path),
             ...flatten(focusTreeDepFiles.map(f => f.result.gfxFiles)),
         ]);
@@ -342,7 +354,6 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
         const gfxDependencies = [
             ...explicitGfxDependencies,
             ...iconGfxAssets.gfxFiles,
-            ...guiResolution.guiFiles,
             ...inlayGfxResolution.resolvedFiles,
         ];
         const textureDependencies = iconGfxAssets.textureFiles;
@@ -363,12 +374,16 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                     ...assetTrees.filter(tree => tree !== selectedAssetTree),
                 ].map(tree => tree.id) : undefined,
                 presentation,
+                inlayFiles: explicitInlayFiles,
             },
             dependencies: uniq([
                 this.file,
                 focusesGFX,
                 focusTreeGuiFile,
+                ...focusGuiDependencies,
                 ...gfxDependencies,
+                ...guiResolution.guiFiles,
+                ...guiResolution.dependencies,
                 ...textureDependencies,
                 ...uniqueInlayFiles,
                 ...focusTreeDependencies,

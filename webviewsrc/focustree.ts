@@ -3,7 +3,7 @@ import { installFocusAssetLoading } from './focustree/assetloading';
 import { rebuildContentSafely, refreshFocusCompletionLabels, subscribeFocusCheckboxDelegation } from './focustree/content';
 import { installFocusEditing } from './focustree/editing';
 import { handleHostMessage } from './focustree/hostsync';
-import { getFocusNavigationTarget } from './focustree/navigation';
+import { getFocusNavigationTarget, getInlayNavigationTarget } from './focustree/navigation';
 import { initializeFocusPresentation } from './focustree/presentation';
 import { runtime } from './focustree/runtime';
 import { focusScene, setSceneMaterializedListener } from './focustree/scenestore';
@@ -33,7 +33,7 @@ window.addEventListener('load', runSafely(async function() {
         const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
         subscribeNavigatorDelegation(contentElement, navigator => navigator.dataset.focusId !== undefined
             ? getFocusNavigationTarget(navigator)
-            : undefined);
+            : getInlayNavigationTarget(navigator));
         subscribeFocusCheckboxDelegation(contentElement);
         enableZoom(contentElement, 0, runtime.focusToolbarHeight);
         subscribeRefreshButton();

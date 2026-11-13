@@ -69,6 +69,23 @@ affected URIs and a revision only after an incremental or full workspace snapsho
 commits. `PreviewManager` uses the existing dependency scheduler for a second refresh,
 so a preview built before the localisation commit is superseded rather than left stale.
 
+`src/util/guiIndex.ts` indexes GUI names to source files through the same `IndexService`
+and disk-snapshot lifecycle. Per-file expiry tokens allow unchanged GUI definitions to
+be reused after invalidation. Nested windows and fileloader order remain part of the
+lookup contract. Focus inlays and Decision scripted GUI requests load matched files
+through `GuiFileLoader`, retaining referenced GUI/GFX files and conventional sidecar
+GFX dependencies. The initial uncached index still scans interface GUI files.
+
+Named GUI `positionType` definitions are indexed alongside windows; the GUI snapshot
+version rejects older caches that omit positions. Focus spacing follows the primary
+GUI and explicit `#!gui` references through a lightweight loader before asset hydration.
+Explicit `#!focus_inlay_window` files share parsing with standard-folder discovery and
+remain tracked dependencies during deferred loading and while files are missing.
+
+File preview disposal follows text-tab closure and checks every tab group before
+closing a preview. Document-close events still invalidate resolver and dependency
+state, independently of whether a source tab remains open.
+
 ### Preview host side
 
 - `src/previewdef/*`: preview detection, base classes, dependency tracking, focus tree loader/runtime helpers, and world map handling
@@ -111,6 +128,11 @@ Already materialized focuses are retained; source/asset invalidation refreshes t
 loaded scope rather than leaving cached revisits stale.
 The loader retains one scoped asset base state rather than a source graph copy per
 visited tree, and the dependency manifest covers every loaded scene.
+
+Inlay templates can be shared across trees. Window navigation resolves the displayed
+tree's reference from its view model; scripted image and button navigation retains
+the definition file and source range. Reference ranges participate in updates so an
+edit above a reference cannot leave a stale click target.
 
 The host `FocusTreeStyleLedger` keeps the latest keyed rules across all cached scenes
 and preserves raw CSS. First delivery, a recreated webview, raw-style changes, or
@@ -185,6 +207,16 @@ compute signal and abort only after every consumer cancels; one cancelled previe
 cannot interrupt another consumer. `src/util/cooperative.ts` yields TypeScript map
 fallback/zone/region loops through `setImmediate` with a work/time budget, preserving
 province geometry, seam handling and warning navigation.
+
+Owner-colored maps can request optional country-name data after the map is committed.
+Replies carry both request and map-generation identities; history/font/localisation
+edits invalidate the source revision before reload debouncing. Refresh and disposal
+settle pending browser requests, and late font preparation or export work cannot
+publish against a different map. Country names resolve bookmark-guarded politics,
+cosmetic tags and subject relationships. The browser caches shape-fitted label layouts
+per map and selected conditions, with horizontal seam and disconnected-land handling.
+Only required map-font glyphs enter the bounded atlas; a native-font fallback remains
+available. Screen rendering and export use the same label renderer.
 
 ## Command Surface
 

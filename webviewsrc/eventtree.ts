@@ -10,7 +10,10 @@ import {
 	subscribeRefreshButton,
 } from "./util/common";
 import { SearchBox } from "./util/searchbox";
-import { appendEventDetails } from './eventdetails';
+import { EventDetailsController } from './eventdetails';
+import { eventDetailsKeys } from './eventdetailsstate';
+import { matchesQuery } from './eventsearch';
+export { matchesQuery } from './eventsearch';
 import { applyNav, badge } from "./util/card";
 import { FilterControl, gateToggle, readFilterList, toggleBinder } from "./util/toolbar";
 import { feLocalize } from "./util/i18n";
@@ -58,6 +61,9 @@ export {
 } from "./util/graphlayout";
 
 initCommon();
+
+const eventDetails = new EventDetailsController(getState, setState);
+let detailsKeys = new Map<string, string>();
 
 // Marker on every hover-picture popup (appended to body, outside #eventtreecontent) so a re-render
 // can sweep any that were stranded by replacing their host node mid-hover.
@@ -353,23 +359,6 @@ export function filteredGraph(
 	return { nodes: source.nodes.filter((n) => kept.has(n.id)), edges, roots };
 }
 
-// Case-insensitive substring over what identifies an event: its id, and its title in both forms.
-// Both forms, not the one the localisation toggle happens to show -- the toggle decides what is
-// drawn, not what the event is called, and matching only the displayed form would make the same
-// query find different cards depending on an unrelated toggle. With the localisation index off the
-// two are equal anyway, so the second field is free.
-//
-// Options are deliberately not searchable: the reader is looking for an event.
-export function matchesQuery(node: EventGraphNode, query: string): boolean {
-	if (query === "" || node.kind === "option") {
-		return false;
-	}
-	const title = node.title;
-	return [node.eventId, title?.text ?? "", title?.key ?? ""].some((field) =>
-		field.toLowerCase().includes(query),
-	);
-}
-
 //#endregion
 
 //#region Node markup
@@ -523,7 +512,7 @@ function buildEventCard(node: EventGraphEventNode): HTMLDivElement {
 	}
 
 	applyEffectsDot(card, node.effectsRef, node.afterEffectsRef);
-	appendEventDetails(card, node, showLocalisation);
+	eventDetails.append(card, node, showLocalisation, detailsKeys.get(node.id)!);
 	return card;
 }
 
@@ -564,7 +553,7 @@ function buildOptionCard(node: EventGraphOptionNode): HTMLDivElement {
 	}
 
 	applyEffectsDot(card, node.effectsRef);
-	appendEventDetails(card, node, showLocalisation);
+	eventDetails.append(card, node, showLocalisation, detailsKeys.get(node.id)!);
 	return card;
 }
 
@@ -631,7 +620,7 @@ let isolation: IsolationHandle | undefined = undefined;
 let skippedByEvent = new Map<string, string[]>();
 
 function buildContent(): void {
-	document.querySelector('.event-details-dialog')?.remove();
+	eventDetails.beginRender();
 	const content = document.getElementById("eventtreecontent") as HTMLDivElement | null;
 	if (!content) {
 		return;
@@ -650,6 +639,7 @@ function buildContent(): void {
 	applyToolbarFlags();
 
 	const graph = filteredGraph(payload, filters);
+	detailsKeys = eventDetailsKeys(payload.nodes, payload.edges, payload.effectBlocks);
 	// The cards are built below and the arrows only afterwards, so what each card has to say about
 	// the events missing beneath it is collected from the edges first.
 	skippedByEvent = skippedByEventOf(graph);
@@ -661,6 +651,7 @@ function buildContent(): void {
 		// Nothing to highlight, but the counter still has to stop claiming the matches of the graph
 		// that was on screen a moment ago.
 		search.refresh(rendered);
+		eventDetails.restore();
 		return;
 	}
 
@@ -687,6 +678,7 @@ function buildContent(): void {
 	// The query survives every rebuild -- a toggle change, an in-place update, the first load -- so
 	// the highlight is re-applied to the cards that were just built. Class flipping only, no layout.
 	search.refresh(rendered);
+	eventDetails.restore();
 }
 
 // Everything an arrow says next to itself: the scope it fires in, its delay, its random_list weight

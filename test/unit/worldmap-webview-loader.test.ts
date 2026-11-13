@@ -396,7 +396,86 @@ describe('world map webview loader batching', () => {
         assert.strictEqual(loader.loading$.value, false);
         loader.dispose();
     });
+    it('coalesces country-label requests and accepts only matching request IDs and generations', async () => {
+        const harness = countryLabelHarness();
+        const { loader, target, messages } = harness;
+        dispatchWindowMessage(target, { command: 'provincemapsummary', loadGeneration: 1, data: emptyWorldMapSummary() });
+        const first = loader.requestCountryLabels();
+        assert.strictEqual(loader.requestCountryLabels(), first);
+        const request = messages.find(message => message.command === 'requestcountrylabels')! as
+            import('../../src/previewdef/worldmap/definitions').RequestCountryLabelsMessage;
+        let completed = false;
+        void first.then(() => { completed = true; });
+        const data = { histories: [], localisations: { AAA: 'Country A' }, conditionExprs: [], mapFont: undefined };
+        dispatchWindowMessage(target, { command: 'countrylabels', requestId: request.requestId + 1, loadGeneration: 1, data });
+        await Promise.resolve();
+        assert.strictEqual(completed, false);
+        assert.strictEqual(loader.worldMap.countryLabels, undefined);
+        dispatchWindowMessage(target, { command: 'countrylabels', requestId: request.requestId, loadGeneration: 1, data });
+        await first;
+        assert.strictEqual(loader.worldMap.countryLabels, data);
+        await loader.requestCountryLabels();
+        assert.strictEqual(messages.filter(message => message.command === 'requestcountrylabels').length, 1);
+        loader.dispose();
+    });
+
+    it('settles pending label work on refresh and disposal without accepting stale replies', async () => {
+        const { loader, target, messages } = countryLabelHarness();
+        dispatchWindowMessage(target, { command: 'provincemapsummary', loadGeneration: 1, data: emptyWorldMapSummary() });
+        const map = loader.worldMap;
+        const pending = loader.requestCountryLabels();
+        const old = messages.find(message => message.command === 'requestcountrylabels')! as
+            import('../../src/previewdef/worldmap/definitions').RequestCountryLabelsMessage;
+        loader.refresh();
+        await pending;
+        assert.strictEqual(loader.isCurrentMap(map, 1), false);
+        dispatchWindowMessage(target, { command: 'provincemapsummary', loadGeneration: 2, data: emptyWorldMapSummary() });
+        const current = loader.requestCountryLabels();
+        let completed = false;
+        void current.then(() => { completed = true; });
+        dispatchWindowMessage(target, { command: 'countrylabels', requestId: old.requestId, loadGeneration: 1,
+            data: { histories: [], localisations: { OLD: 'Stale' }, conditionExprs: [], mapFont: undefined } });
+        await Promise.resolve();
+        assert.strictEqual(completed, false);
+        assert.strictEqual(loader.worldMap.countryLabels, undefined);
+        const currentMap = loader.worldMap;
+        loader.dispose();
+        await current;
+        assert.strictEqual(loader.isCurrentMap(currentMap, 2), false);
+    });
+
+    it('drops lazy label metadata and its extra conditions when a new diff generation commits', async () => {
+        const { loader, target, messages } = countryLabelHarness();
+        const base = { scopeName: '', nodeContent: '1936.1.1.12' };
+        const extra = { scopeName: 'AAA', nodeContent: 'has_country_flag = label' };
+        dispatchWindowMessage(target, { command: 'provincemapsummary', loadGeneration: 1,
+            data: { ...emptyWorldMapSummary(), conditionExprs: [base] } });
+        const pending = loader.requestCountryLabels();
+        const request = messages.find(message => message.command === 'requestcountrylabels')! as
+            import('../../src/previewdef/worldmap/definitions').RequestCountryLabelsMessage;
+        dispatchWindowMessage(target, { command: 'countrylabels', requestId: request.requestId, loadGeneration: 1,
+            data: { histories: [], localisations: {}, conditionExprs: [base, extra], mapFont: undefined } });
+        await pending;
+        assert.deepStrictEqual(loader.worldMap.conditionExprs, [base, extra]);
+        dispatchWindowMessage(target, { command: 'progress', loadGeneration: 2, data: 'Reloading history' });
+        dispatchWindowMessage(target, { command: 'mapupdatecomplete', loadGeneration: 2 });
+        assert.strictEqual(loader.worldMap.countryLabels, undefined);
+        assert.deepStrictEqual(loader.worldMap.conditionExprs, [base]);
+        const reloaded = loader.requestCountryLabels();
+        assert.strictEqual(messages.filter(message => message.command === 'requestcountrylabels').length, 2);
+        loader.dispose();
+        await reloaded;
+    });
 });
+
+function countryLabelHarness() {
+    const messages: WorldMapMessage[] = [];
+    const target = new EventTarget();
+    testGlobals.acquireVsCodeApi = () => ({ postMessage: message => { messages.push(message); }, getState: () => ({}), setState: () => undefined });
+    testGlobals.window = target;
+    const { Loader } = require('../../webviewsrc/worldmap/loader') as typeof import('../../webviewsrc/worldmap/loader');
+    return { loader: new Loader(), target, messages };
+}
 
 function emptyWorldMapSummary(): any {
     return {

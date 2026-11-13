@@ -1,6 +1,7 @@
-import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
+import { Node, parseHoi4File, resolveScriptVariables } from "../../hoiformat/hoiparser";
+import { readNodeAsString } from "../../hoiformat/schema";
 import { NumberPosition } from "../../util/common";
-import { ContentLoader, LoadResultOD, LoaderSession } from "../../util/loader/loader";
+import { ContentLoader, Dependency, LoadResultOD, LoaderSession } from "../../util/loader/loader";
 import { localize } from "../../util/i18n";
 
 export interface FocusSpacingLoaderResult {
@@ -8,15 +9,23 @@ export interface FocusSpacingLoaderResult {
 }
 
 export class FocusSpacingLoader extends ContentLoader<FocusSpacingLoaderResult> {
-    protected async postLoad(content: string | undefined, _dependencies: never[], error: any, _session: LoaderSession): Promise<LoadResultOD<FocusSpacingLoaderResult>> {
+    protected async postLoad(content: string | undefined, dependencies: Dependency[], error: any, session: LoaderSession): Promise<LoadResultOD<FocusSpacingLoaderResult>> {
         if (error || content === undefined) {
             throw error;
         }
 
+        session.throwIfCancelled();
+        const guiDependencies = dependencies.filter(dependency => dependency.type === 'gui').map(dependency => dependency.path);
+        const loaded = await this.loaderDependencies.loadMultiple(guiDependencies, session, FocusSpacingLoader);
+        session.throwIfCancelled();
+        // Match GuiFileLoader's referenced-files-first order without loading GUI assets.
+        const inheritedSpacing = loaded.map(result => result.result.focusSpacing).find(spacing => spacing !== undefined);
+        const focusSpacing = inheritedSpacing ?? extractFocusSpacing(parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file)));
         return {
             result: {
-                focusSpacing: extractFocusSpacing(parseHoi4File(content, localize('infile', 'In file {0}:\n', this.file))),
+                focusSpacing,
             },
+            dependencies: [...new Set([this.file, ...guiDependencies, ...loaded.flatMap(result => result.dependencies)])],
         };
     }
 
@@ -26,21 +35,29 @@ export class FocusSpacingLoader extends ContentLoader<FocusSpacingLoaderResult> 
 }
 
 export function extractFocusSpacing(root: Node): NumberPosition | undefined {
-    for (const node of iterateNodes(root)) {
-        if (node.name?.toLowerCase() !== 'focus_spacing' || !Array.isArray(node.value)) {
+    let legacySpacing: NumberPosition | undefined;
+    for (const node of iterateNodes(resolveScriptVariables(root))) {
+        if (!Array.isArray(node.value)) {
             continue;
         }
-
-        const x = readNumberChildValue(node, 'x');
-        const y = readNumberChildValue(node, 'y');
-        if (x === undefined || y === undefined) {
-            continue;
+        if (node.name?.toLowerCase() === 'positiontype') {
+            const name = node.value.find(child => child.name?.toLowerCase() === 'name');
+            if (name && readNodeAsString(name)?.toLowerCase() === 'focus_spacing') {
+                const position = node.value.find(child => child.name?.toLowerCase() === 'position');
+                const spacing = position && readSpacing(position);
+                if (spacing) { return spacing; }
+            }
+        } else if (node.name?.toLowerCase() === 'focus_spacing' && !legacySpacing) {
+            legacySpacing = readSpacing(node);
         }
-
-        return { x, y };
     }
+    return legacySpacing;
+}
 
-    return undefined;
+function readSpacing(node: Node): NumberPosition | undefined {
+    const x = readNumberChildValue(node, 'x');
+    const y = readNumberChildValue(node, 'y');
+    return x === undefined || y === undefined ? undefined : { x, y };
 }
 
 function* iterateNodes(node: Node): Generator<Node> {
@@ -65,7 +82,7 @@ function readNumberChildValue(node: Node, expectedName: string): number | undefi
     }
 
     if (typeof child.value === 'number') {
-        return child.value;
+        return Number.isFinite(child.value) ? child.value : undefined;
     }
 
     if (typeof child.value === 'object' && child.value !== null && 'name' in child.value) {

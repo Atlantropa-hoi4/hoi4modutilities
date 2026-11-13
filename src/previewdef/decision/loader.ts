@@ -23,7 +23,7 @@ import {
 	scriptedGuisByName,
 	scriptedGuisFolder,
 } from "./scriptedgui";
-import { ResolvedGuiWindow, findContainerWindows } from "../../util/guiwindowindex";
+import { ResolvedGuiWindow, loadContainerWindows } from "../../util/guiwindowindex";
 import { ModifierDefinitions, loadModifierDefinitions } from "../../util/modifiers";
 
 export interface DecisionsLoaderResult {
@@ -119,9 +119,7 @@ export class DecisionsLoader extends ContentLoader<DecisionsLoaderResult> {
 			}
 		}
 
-		// Only the scripted GUIs this file's categories name are resolved: the interface tree is
-		// large, and findContainerWindows stops parsing as soon as the names it was asked for are
-		// accounted for.
+		// Resolve only the named GUI files through the shared persistent index.
 		const allScriptedGuis = scriptedGuisByName(scriptedGuiDefs.result);
 		const scriptedGuis: Record<string, ScriptedGuiDef> = {};
 		for (const category of Object.values(categories)) {
@@ -137,8 +135,8 @@ export class DecisionsLoader extends ContentLoader<DecisionsLoaderResult> {
 				.map((g) => g.windowName)
 				.filter((n): n is string => n !== undefined),
 		);
-		const [guiWindows, modifierDefinitions] = await Promise.all([
-			findContainerWindows(windowNames),
+		const [loadedGuiWindows, modifierDefinitions] = await Promise.all([
+			loadContainerWindows(windowNames, session),
 			loadModifierDefinitions(),
 		]);
 
@@ -153,6 +151,7 @@ export class DecisionsLoader extends ContentLoader<DecisionsLoaderResult> {
 			.filter((n): n is string => n !== undefined);
 
 		const gfxDependencies = [
+			...loadedGuiWindows.gfxFiles,
 			...dependencies.filter((d) => d.type === "gfx").map((d) => d.path),
 			...flatten(decisionDepFiles.map((f) => f.result.gfxFiles)),
 			...(await getGfxContainerFiles(uniq([...icons, ...categoryIcons]))),
@@ -163,7 +162,7 @@ export class DecisionsLoader extends ContentLoader<DecisionsLoaderResult> {
 				decisions: merged,
 				categories,
 				scriptedGuis,
-				guiWindows,
+				guiWindows: loadedGuiWindows.windows,
 				modifierDefinitions,
 				gfxFiles: uniq([...gfxDependencies, ...decisionsGFX]),
 			},
@@ -171,6 +170,7 @@ export class DecisionsLoader extends ContentLoader<DecisionsLoaderResult> {
 				this.file,
 				...decisionDependencies,
 				...mergeInLoadResult(decisionDepFiles, "dependencies"),
+				...loadedGuiWindows.dependencies,
 				`${decisionCategoriesFolder}/*`,
 				`${scriptedGuisFolder}/*`,
 			]),

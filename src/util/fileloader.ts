@@ -193,7 +193,8 @@ export async function getFilePathFromModOrHOI4(
         }
 
         if (absolutePath !== undefined) {
-            return absolutePath;
+            const document = vscode.workspace.textDocuments.find(d => isSameUri(d.uri, absolutePath!));
+            return document ? document.uri.with({ fragment: ':opened' }) : absolutePath;
         }
 
         const replacePaths = await getReplacePaths();

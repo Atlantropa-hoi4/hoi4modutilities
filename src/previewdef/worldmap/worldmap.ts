@@ -4,7 +4,7 @@ import worldmapviewstyles from './worldmapview.css';
 import { localize, localizeText, i18nTableAsScript } from '../../util/i18n';
 import { html } from '../../util/html';
 import { error, debug } from '../../util/debug';
-import { WorldMapMessage, WorldMapData, MapItemMessage, RequestMapItemMessage } from './definitions';
+import { WorldMapMessage, WorldMapData, MapItemMessage, RequestMapItemMessage, RequestCountryLabelsMessage, CountryLabelsData } from './definitions';
 import { matchPathEnd } from '../../util/nodecommon';
 import { writeFile, mkdirs, getDocumentByUri, dirUri, showQuickPickAnyString } from '../../util/vsccommon';
 import { slice, forceError } from '../../util/common';
@@ -39,6 +39,9 @@ export class WorldMap {
     private progressLoadGeneration = 0;
     private loaderProgressGenerations = new WeakMap<WorldMapLoader, number>();
     private readonly loadQueue: WorldMapLoadQueue;
+    private countryLabelsFlight: { generation: number; sourceRevision: number; promise: Promise<CountryLabelsData | undefined> } | undefined;
+    private countryLabelsRequested = false;
+    private countryLabelsSourceRevision = 0;
 
     private lastRequestedExportUri: vscode.Uri | undefined;
 
@@ -64,7 +67,15 @@ export class WorldMap {
     }, 1000, { trailing: true });
 
     public onDocumentChange = (uri: vscode.Uri): void => {
-        if (this.worldMapDependencies?.some(dependency => matchPathEnd(uri.toString(), dependency.split('/')))) {
+        // Lazy label sources must invalidate in-flight work before their exact dependency
+        // manifest is available, including nested histories and newly added font definitions.
+        const labelsChanged = this.countryLabelsRequested && (
+            /\/(?:history\/countries\/.*\.txt|interface\/.*\.gfx|locali[sz]ation\/.*\.ya?ml)$/i.test(uri.path.replace(/\\/g, '/'))
+            || /\.(?:fnt|dds|tga|png)$/i.test(uri.path));
+        if (labelsChanged) {
+            this.countryLabelsSourceRevision++;
+        }
+        if (labelsChanged || this.worldMapDependencies?.some(dependency => matchPathEnd(uri.toString(), dependency.split('/')))) {
             this.reloadChangedDependencies();
         }
     };
@@ -81,6 +92,8 @@ export class WorldMap {
         this.loadTimings = undefined;
         this.committedWorldMap = undefined;
         this.pendingWorldMap = undefined;
+        this.countryLabelsFlight = undefined;
+        this.countryLabelsRequested = false;
         this.panel = undefined;
     }
 
@@ -140,6 +153,9 @@ export class WorldMap {
                     break;
                 case 'mapready':
                     this.commitPendingWorldMap(msg.loadGeneration);
+                    break;
+                case 'requestcountrylabels':
+                    await this.sendCountryLabels(msg);
                     break;
                 case 'requestprovinces':
                 case 'requeststates':
@@ -204,6 +220,36 @@ export class WorldMap {
             end: msg.end,
             loadGeneration: msg.loadGeneration,
         } as WorldMapMessage);
+    }
+
+    private async sendCountryLabels(message: RequestCountryLabelsMessage): Promise<void> {
+        const generation = message.loadGeneration;
+        if (!Number.isSafeInteger(generation) || !Number.isSafeInteger(message.requestId) ||
+            !this.isCurrentLoadGeneration(generation) || !this.cachedWorldMap) {
+            return;
+        }
+        this.countryLabelsRequested = true;
+        this.worldMapDependencies = [...new Set([...(this.worldMapDependencies ?? []),
+            'history/countries/*', 'history/countries/**/*', 'interface/*', 'interface/**/*', 'gfx/fonts/*', 'gfx/fonts/**/*'])];
+        const sourceRevision = this.countryLabelsSourceRevision;
+        if (this.countryLabelsFlight?.generation !== generation || this.countryLabelsFlight.sourceRevision !== sourceRevision) {
+            const loader = this.worldMapLoader;
+            const session = new LoaderSession(false, () => !this.panel || !this.isCurrentLoadGeneration(generation)
+                || sourceRevision !== this.countryLabelsSourceRevision);
+            const promise = loader.loadCountryLabels(session).then(result => {
+                session.throwIfCancelled();
+                this.worldMapDependencies = [...new Set([...(this.worldMapDependencies ?? []), ...result.dependencies])];
+                return result.result;
+            }).catch(e => {
+                if (this.isCurrentLoadGeneration(generation) && this.panel && sourceRevision === this.countryLabelsSourceRevision) { error(e); }
+                return undefined;
+            });
+            this.countryLabelsFlight = { generation, sourceRevision, promise };
+        }
+        const data = await this.countryLabelsFlight.promise;
+        if (this.panel && this.isCurrentLoadGeneration(generation) && sourceRevision === this.countryLabelsSourceRevision) {
+            await this.postMessageToWebview({ command: 'countrylabels', data, loadGeneration: generation, requestId: message.requestId });
+        }
     }
 
     private createWorldMapLoader(): WorldMapLoader {

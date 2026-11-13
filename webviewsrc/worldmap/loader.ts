@@ -6,6 +6,7 @@ import { WorldMapWarning, WorldMapWarningSource, Terrain, StrategicRegion, Suppl
 import { vscode } from "../util/vscode";
 import { BehaviorSubject, fromEvent, Observable, ObservedValueOf, Subject } from 'rxjs';
 import { ConditionItem } from "../../src/hoiformat/condition";
+import type { CountryLabelsData } from '../../src/previewdef/worldmap/definitions';
 
 interface ExtraMapData {
     provincesCount: number;
@@ -94,6 +95,10 @@ export class Loader extends Subscriber {
     private loadGeneration = 0;
     private committedLoadGeneration = -1;
     private readonly maxConcurrentRequests = 4;
+    private disposed = false;
+    private nextCountryLabelsRequest = 0;
+    private countryLabelsRequest: { generation: number; id: number; map: FEWorldMapClass; promise: Promise<void>; resolve(): void } | undefined;
+    private countryLabelBaseConditions: ConditionItem[] | undefined;
 
     constructor() {
         super();
@@ -103,10 +108,39 @@ export class Loader extends Subscriber {
     }
 
     public refresh() {
+        this.cancelCountryLabels();
         this.worldMap = new FEWorldMapClass();
         this.emitWorldMap();
         vscode.postMessage({ command: 'loaded', force: true } as WorldMapMessage);
         this.loading$.next(true);
+    }
+
+    public get mapGeneration(): number { return this.loadGeneration; }
+
+    public isCurrentMap(map: FEWorldMap, generation: number): boolean {
+        return !this.disposed && this.worldMap === map && this.loadGeneration === generation
+            && this.committedLoadGeneration === generation && !this.loading$.value;
+    }
+
+    public requestCountryLabels(): Promise<void> {
+        const map = this.worldMap;
+        if (!this.isCurrentMap(map, this.loadGeneration) || map.countryLabels) { return Promise.resolve(); }
+        if (this.countryLabelsRequest?.map === map && this.countryLabelsRequest.generation === this.loadGeneration) {
+            return this.countryLabelsRequest.promise;
+        }
+        this.cancelCountryLabels();
+        let resolve!: () => void;
+        const promise = new Promise<void>(done => { resolve = done; });
+        const request = { map, generation: this.loadGeneration, id: ++this.nextCountryLabelsRequest, promise, resolve };
+        this.countryLabelsRequest = request;
+        vscode.postMessage({ command: 'requestcountrylabels', requestId: request.id, loadGeneration: request.generation } as WorldMapMessage);
+        return promise;
+    }
+
+    private cancelCountryLabels(): void {
+        const request = this.countryLabelsRequest;
+        this.countryLabelsRequest = undefined;
+        request?.resolve();
     }
 
     private load() {
@@ -118,6 +152,8 @@ export class Loader extends Subscriber {
                         (message.loadGeneration < this.loadGeneration || message.loadGeneration <= this.committedLoadGeneration)) {
                         break;
                     }
+                    this.cancelCountryLabels();
+                    this.countryLabelBaseConditions = undefined;
                     this.loadGeneration = message.loadGeneration ?? this.loadGeneration + 1;
                     this.loadingProvinceMap = { ...message.data };
                     this.loadingProvinceMap.conditionExprs ??= [];
@@ -131,6 +167,27 @@ export class Loader extends Subscriber {
                     this.loadingProvinceMap.supplyNodes = new Array(this.loadingProvinceMap.supplyNodesCount);
                     this.startLoading();
                     break;
+                case 'countrylabels': {
+                    const request = this.countryLabelsRequest;
+                    if (!request || message.requestId !== request.id || message.loadGeneration !== request.generation
+                        || !this.isCurrentMap(request.map, request.generation)) { break; }
+                    this.countryLabelsRequest = undefined;
+                    const data: CountryLabelsData | undefined = message.data;
+                    if (data) {
+                        this.countryLabelBaseConditions = [...this.worldMap.conditionExprs];
+                        const seen = new Set(this.worldMap.conditionExprs.map(item => JSON.stringify(item)));
+                        const conditions = [...this.worldMap.conditionExprs, ...data.conditionExprs.filter(item => !seen.has(JSON.stringify(item)))];
+                        this.worldMap.countryLabels = data;
+                        this.worldMap.conditionExprs = conditions;
+                        if (this.committedProvinceMap) {
+                            this.committedProvinceMap.countryLabels = data;
+                            this.committedProvinceMap.conditionExprs = conditions;
+                        }
+                        this.emitWorldMap();
+                    }
+                    request.resolve();
+                    break;
+                }
                 case 'provinces':
                     if (!this.isCurrentLoadMessage(message)) {
                         break;
@@ -416,6 +473,7 @@ export class Loader extends Subscriber {
         }
 
         if (loadGeneration > this.loadGeneration) {
+            this.cancelCountryLabels();
             this.prepareDiffStagingMap();
         }
         this.loadGeneration = loadGeneration;
@@ -427,6 +485,11 @@ export class Loader extends Subscriber {
         this.inFlightInitialRequests = 0;
         this.initialLoadPending = false;
         this.loadingProvinceMap = this.cloneCommittedMap();
+        if (this.loadingProvinceMap) {
+            this.loadingProvinceMap.countryLabels = undefined;
+            this.loadingProvinceMap.conditionExprs = this.countryLabelBaseConditions ?? this.loadingProvinceMap.conditionExprs;
+        }
+        this.countryLabelBaseConditions = undefined;
     }
 
     private cloneCommittedMap(): WorldMapData | undefined {
@@ -450,6 +513,8 @@ export class Loader extends Subscriber {
     }
 
     public override dispose(): void {
+        this.disposed = true;
+        this.cancelCountryLabels();
         super.dispose();
         this.loadingQueue.length = 0;
         this.initialLoadPending = false;
@@ -486,6 +551,7 @@ export class FEWorldMapClass implements FEWorldMap {
     continents!: string[];
     terrains!: Terrain[];
     resources!: Resource[];
+    countryLabels?: CountryLabelsData;
     rivers!: River[];
     conditionExprs!: ConditionItem[];
     bookmarks!: Bookmark[];

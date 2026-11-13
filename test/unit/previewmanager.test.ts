@@ -31,6 +31,8 @@ const activeWatcherPatterns: unknown[] = [];
 const disposedWatcherPatterns: unknown[] = [];
 const selectedModSourceListeners: Array<() => void> = [];
 const localisationCommitListeners: Array<(event: { files: vscode.Uri[]; revision: number }) => void> = [];
+const tabChangeListeners = new Set<(event: vscode.TabChangeEvent) => void>();
+const openTabGroups: Array<{ tabs: Array<{ input: unknown }> }> = [];
 let selectedModRoots: FakeUri[] = [];
 let getSelectedModRoots = async () => selectedModRoots;
 const activeTabState: { activeTab: { input: unknown } | undefined } = {
@@ -119,9 +121,14 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
                 onDidChangeActiveTextEditor: () => new Disposable(),
                 onDidChangeVisibleTextEditors: () => new Disposable(),
                 tabGroups: {
+                    all: openTabGroups,
                     activeTabGroup: activeTabState,
                     onDidChangeTabGroups: () => new Disposable(),
-                    onDidChangeTabs: () => new Disposable(),
+                    onDidChangeTabs: (listener: (event: vscode.TabChangeEvent) => void, thisArg?: unknown) => {
+                        const bound = thisArg ? listener.bind(thisArg) : listener;
+                        tabChangeListeners.add(bound);
+                        return new Disposable(() => tabChangeListeners.delete(bound));
+                    },
                 },
                 registerWebviewPanelSerializer: () => new Disposable(),
                 createWebviewPanel: () => {
@@ -240,6 +247,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { PreviewManager } = require('../../src/previewdef/previewmanager') as typeof import('../../src/previewdef/previewmanager');
+nodeModule._load = originalLoad;
 
 describe('preview manager', () => {
     beforeEach(() => {
@@ -257,6 +265,8 @@ describe('preview manager', () => {
         disposedWatcherPatterns.length = 0;
         selectedModSourceListeners.length = 0;
         localisationCommitListeners.length = 0;
+        tabChangeListeners.clear();
+        openTabGroups.length = 0;
         selectedModRoots = [];
         getSelectedModRoots = async () => selectedModRoots;
         activeTabState.activeTab = undefined;
@@ -275,6 +285,75 @@ describe('preview manager', () => {
         assert.strictEqual(createdPanels[0].revealCount, 1);
         assert.strictEqual(duplicatePanel.disposeCount, 1);
         assert.deepStrictEqual(sentEvents, ['preview.show.focus']);
+    });
+
+    it('keeps a preview when its text document closes while the source tab remains hidden', async () => {
+        const document = createDocument('file:///common/hidden.txt');
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        openTabGroups.push({ tabs: [{ input: createTabInputText(document.uri) }] });
+        await manager['showPreviewImpl'](document.uri as any);
+
+        manager['onCloseTextDocument'](document as any);
+
+        assert.strictEqual(createdPanels[0].disposeCount, 0);
+    });
+
+    it('closes the preview when the final text tab closes even while its document stays cached', async () => {
+        const source = createDocument('file:///workspace/common/source.txt');
+        const dependent = createDocument('file:///workspace/common/dependent.txt');
+        const previews: FakePreview[] = [];
+        const manager = createManager([createPanelProvider('focus', () => 0, (uri, panel) => {
+            const preview = new FakePreview(uri, panel);
+            previews.push(preview);
+            return preview as any;
+        })]);
+        const registration = manager.register();
+        try {
+            await manager['showPreviewImpl'](source.uri as any);
+            await manager['showPreviewImpl'](dependent.uri as any);
+            previews[1].emitDependencies(['common/source.txt']);
+            emitClosedTabs([{ input: createTabInputText(source.uri) }]);
+            await Promise.resolve();
+
+            assert.strictEqual(documents.has(source.uri.toString()), true);
+            assert.strictEqual(createdPanels[0].disposeCount, 1);
+            assert.strictEqual(createdPanels[1].disposeCount, 0);
+            assert.strictEqual(previews[1].changeCount, 1);
+        } finally {
+            registration.dispose();
+        }
+    });
+
+    it('keeps a preview until every source tab across editor groups has closed', async () => {
+        const document = createDocument('file:///common/split.txt');
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const registration = manager.register();
+        try {
+            await manager['showPreviewImpl'](document.uri as any);
+            openTabGroups.push({ tabs: [{ input: { kind: 'webview' } }] },
+                { tabs: [{ input: createTabInputText(document.uri) }] });
+            emitClosedTabs([{ input: createTabInputText(document.uri) }]);
+            assert.strictEqual(createdPanels[0].disposeCount, 0);
+
+            openTabGroups[1].tabs.length = 0;
+            emitClosedTabs([{ input: createTabInputText(document.uri) }, { input: createTabInputText(document.uri) }]);
+            assert.strictEqual(createdPanels[0].disposeCount, 1);
+        } finally {
+            registration.dispose();
+        }
+    });
+
+    it('ignores non-text tab closures and stops synchronizing after registration disposal', async () => {
+        const document = createDocument('file:///common/source.txt');
+        const manager = createManager([createPanelProvider('focus', () => 0)]);
+        const registration = manager.register();
+        await manager['showPreviewImpl'](document.uri as any);
+
+        emitClosedTabs([{ input: { uri: document.uri } }]);
+        assert.strictEqual(createdPanels[0].disposeCount, 0);
+        registration.dispose();
+        emitClosedTabs([{ input: createTabInputText(document.uri) }]);
+        assert.strictEqual(createdPanels[0].disposeCount, 0);
     });
 
     it('refreshes dependent previews when a subscribed document changes', async () => {
@@ -1063,8 +1142,15 @@ function createUri(uriValue: string): FakeUri {
 }
 
 function createTabInputText(uri: FakeUri): unknown {
-    const vscode = require('vscode') as { TabInputText?: new (uri: FakeUri) => unknown };
-    return vscode.TabInputText ? new vscode.TabInputText(uri) : { uri };
+    const vscodeMock = mockedVscodeModule as { TabInputText: new (uri: FakeUri) => unknown };
+    return new vscodeMock.TabInputText(uri);
+}
+
+function emitClosedTabs(closed: Array<{ input: unknown }>): void {
+    const event = { closed, opened: [], changed: [] } as unknown as vscode.TabChangeEvent;
+    for (const listener of tabChangeListeners) {
+        listener(event);
+    }
 }
 
 function createPanel(): FakePanel {
