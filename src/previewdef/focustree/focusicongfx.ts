@@ -135,7 +135,8 @@ export async function resolveFocusIconGfxAssets(
         });
     }
 
-    const fallbackGfxFiles = prioritizeFallbackGfxFiles(
+    // Zero disables fallback scans entirely; even enumerating the catalog can be expensive.
+    const fallbackGfxFiles = resolver.fallbackScanLimit === 0 ? [] : prioritizeFallbackGfxFiles(
         await resolver.listInterfaceGfxFiles(),
         resolver.priorityGfxFiles ?? [],
         resolver.fallbackScanLimit,

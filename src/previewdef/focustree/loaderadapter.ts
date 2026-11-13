@@ -25,9 +25,9 @@ export interface FocusTreeLoaderAdapterOptions {
 }
 
 /**
- * Cache key of the trees an asset scope prepares. The loader prepares the selected tree plus
- * `treeIds`, so `{ treeId: 'A' }` and `{ treeId: 'A', treeIds: ['A'] }` share one key; a refresh
- * after hydration then reuses the hydrated state instead of loading it again.
+ * Cache key of the trees and focus assets a scope prepares. The loader prepares the selected tree
+ * plus `treeIds`, so equivalent tree lists and focus sets share a key. A later viewport chunk
+ * must not reuse an earlier state that resolved only different focuses.
  */
 export function getFocusTreeAssetScopeKey(assetScope: FocusTreeAssetScope | undefined): string {
     if (!assetScope) {
@@ -36,7 +36,8 @@ export function getFocusTreeAssetScopeKey(assetScope: FocusTreeAssetScope | unde
     const additionalTreeIds = Array.from(new Set(assetScope.treeIds ?? []))
         .filter(treeId => treeId !== assetScope.treeId)
         .sort();
-    return JSON.stringify([assetScope.treeId ?? null, additionalTreeIds]);
+    const focusIds = assetScope.focusIds === undefined ? null : Array.from(new Set(assetScope.focusIds)).sort();
+    return JSON.stringify([assetScope.treeId ?? null, additionalTreeIds, focusIds]);
 }
 
 export class FocusTreeLoaderAdapter {

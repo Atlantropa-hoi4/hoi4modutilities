@@ -49,6 +49,8 @@ export type FocusTreeAssetLoadMode = 'full' | 'deferred';
 export interface FocusTreeAssetScope {
     treeId?: string;
     treeIds?: readonly string[];
+    /** Resolve icon assets only for these focuses; all tree structure and GUI templates remain. */
+    focusIds?: readonly string[];
 }
 
 const focusesGFX = 'interface/goals.gfx';
@@ -282,15 +284,18 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
             }
         }
 
+        const assetFocusIds = this.assetScope?.focusIds && new Set(this.assetScope.focusIds);
         const focusIconNames = deferAssetLoad
             ? []
             : assetTrees
                 .flatMap(ft => Object.values(ft.focuses))
+                .filter(focus => !assetFocusIds || assetFocusIds.has(focus.id))
                 .flatMap(focus => [
                     ...focus.icon.map(icon => icon.icon),
                     focus.overlay,
                     ...focus.searchFilters.map(getGfxNameForSearchFilter),
                 ])
+                .concat(assetTrees.flatMap(tree => (tree.searchFilters ?? []).map(filter => `GFX_${filter}`)))
                 .filter((icon): icon is string => icon !== undefined);
         const uniqueInlayFiles = Array.from(new Set([
             ...loadedInlayFiles,

@@ -3,7 +3,7 @@ import { Node, parseHoi4File } from '../../hoiformat/hoiparser';
 import { convertNodeToJson, HOIPartial } from '../../hoiformat/schema';
 import { ContentLoader, LoadResultOD } from '../../util/loader/loader';
 import { StyleTable } from '../../util/styletable';
-import { calculateBBox, ParentInfo } from '../../util/hoi4gui/common';
+import { calculateBBox, normalizeMargin, ParentInfo } from '../../util/hoi4gui/common';
 import { renderContainerWindow, RenderContainerWindowOptions } from '../../util/hoi4gui/containerwindow';
 import { renderIcon } from '../../util/hoi4gui/icon';
 import { renderButton } from '../../util/hoi4gui/button';
@@ -141,8 +141,34 @@ async function renderFocusGuiTemplate(item: HOIPartial<ContainerWindowType>, bac
         }
         return undefined;
     };
-    const offset = styleTable.oneTimeStyle('focus-gui-offset', () => `position:absolute;left:${(xGridSize - width) / 2}px;top:${(yGridSize - height) / 2}px;pointer-events:none;`);
+    // Grid slots, hit testing, snapping, and connection lines share the slot's center column, so
+    // the symbol is placed on it rather than the middle of the window, e.g. x = 87.5 of 165.
+    const anchorX = findFocusSymbolCenterX(item, screen, 0) ?? width / 2;
+    const offset = styleTable.oneTimeStyle('focus-gui-offset', () => `position:absolute;left:${xGridSize / 2 - anchorX}px;top:${(yGridSize - height) / 2}px;pointer-events:none;`);
     return `<div class="${offset}">${await renderContainerWindow(item, screen, { ...common, ignorePosition: true, onRenderChild })}</div>`;
+}
+
+/**
+ * Horizontal center of the focus symbol in window coordinates, following the same margins and
+ * nested window positions as `renderContainerWindow`. Undefined when the GUI has no symbol or
+ * draws it from its corner, which makes its center depend on each focus's icon size.
+ */
+function findFocusSymbolCenterX(window: HOIPartial<ContainerWindowType>, parent: ParentInfo, left: number): number | undefined {
+    const [,, width, height, orientation] = calculateBBox(window, parent);
+    const margin = normalizeMargin(window.margin, { width, height });
+    const info: ParentInfo = { size: { width: width - margin[1] - margin[3], height: height - margin[0] - margin[2] }, orientation };
+    const childrenLeft = left + margin[3];
+    const symbol = [...window.icontype, ...window.buttontype, ...window.checkboxtype, ...window.guibuttontype]
+        .find(child => child.name === 'symbol');
+    if (symbol) {
+        return symbol.centerposition ? childrenLeft + calculateBBox(symbol, info)[0] : undefined;
+    }
+    for (const child of [...window.containerwindowtype, ...window.windowtype]) {
+        if (child.name && runtimeFocusControls.has(child.name)) { continue; }
+        const center = findFocusSymbolCenterX(child, info, childrenLeft + calculateBBox(child, info)[0]);
+        if (center !== undefined) { return center; }
+    }
+    return undefined;
 }
 
 export async function renderContinuousFocusGui(presentation: FocusPresentation | undefined, styleTable: StyleTable, gfxFiles: string[]): Promise<string> {

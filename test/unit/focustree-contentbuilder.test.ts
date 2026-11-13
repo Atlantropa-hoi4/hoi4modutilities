@@ -5,6 +5,7 @@ import type * as FocusSchema from '../../src/previewdef/focustree/schema';
 import type * as HoiParser from '../../src/hoiformat/hoiparser';
 import type * as FocusIconAssets from '../../src/previewdef/focustree/focusicongfx';
 import { FocusTreeStyleLedger } from '../../src/previewdef/focustree/stylesync';
+import { Sprite, type Image } from '../../src/util/image/sprite';
 
 const nodeModule = Module as typeof Module & { _load: (request: string, parent: NodeModule | undefined, isMain: boolean) => unknown };
 const originalLoad = nodeModule._load;
@@ -14,6 +15,24 @@ const localisationCalls: string[] = [];
 let localisationIndexEnabled = false;
 /** The game's default unknown-focus icon can be decoded. */
 let defaultFocusIconAvailable = true;
+/** Sprites the mocked gfx files define, by name. */
+const spritesByName = new Map<string, Sprite>();
+
+/** A sprite as the image cache decodes it; `uri` stands in for the atlas's data URL. */
+function createSprite(
+    name: string,
+    image: { width: number; height: number; uri: string },
+    noOfFrames = 1,
+): Sprite {
+    return new Sprite(name, image as unknown as Image, noOfFrames);
+}
+
+function resetSprites(): void {
+    spritesByName.clear();
+    spritesByName.set('GFX_FOCUS_A', createSprite('GFX_FOCUS_A', { width: 64, height: 64, uri: 'test-icon.png' }));
+    spritesByName.set('GFX_FOCUS_B', createSprite('GFX_FOCUS_B', { width: 64, height: 64, uri: 'second-icon.png' }));
+    spritesByName.set('GFX_INLAY', createSprite('GFX_INLAY', { width: 48, height: 48, uri: 'inlay-icon.png' }));
+}
 
 function mockLoad(this: unknown, request: string, parent: NodeModule | undefined, isMain: boolean) {
     if (request === 'vscode') {
@@ -75,16 +94,7 @@ function mockLoad(this: unknown, request: string, parent: NodeModule | undefined
         return {
             getSpriteByGfxNameFromResolvedFiles: async (name: string, gfxFiles: string[]) => {
                 resolvedFileCalls.push({ name, gfxFiles });
-                return name === 'GFX_FOCUS_A'
-                    ? { image: { width: 64, height: 64, uri: 'test-icon.png' } }
-                    : name === 'GFX_FOCUS_B'
-                        ? { image: { width: 64, height: 64, uri: 'second-icon.png' } }
-                    : name === 'GFX_INLAY'
-                        ? {
-                            image: { width: 48, height: 48, uri: 'inlay-icon.png' },
-                            getFrame: (index: number) => index === 0 ? { width: 48, height: 48, uri: 'inlay-icon.png' } : undefined,
-                        }
-                    : undefined;
+                return spritesByName.get(name);
             },
             getSpriteByGfxName: async (name: string) => {
                 broadScanCalls.push(name);
@@ -101,10 +111,48 @@ nodeModule._load = mockLoad;
 
 const {
     buildFocusTreeRenderPayloadFromBaseState,
+    renderFocusAssetStylePatch,
 } = require('../../src/previewdef/focustree/contentbuilder') as typeof import('../../src/previewdef/focustree/contentbuilder');
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof FocusSchema;
 const { parseHoi4File } = require('../../src/hoiformat/hoiparser') as typeof HoiParser;
 const { createEmptyFocusIconAssetResolution } = require('../../src/previewdef/focustree/focusicongfx') as typeof FocusIconAssets;
+
+/** A horizontal strip of seven 97x202 state frames reproduces the whole-atlas sizing bug. */
+function createFilmstrip(name: string, noOfFrames: number): Sprite {
+    return createSprite(name, { width: 97 * noOfFrames, height: 202, uri: `${name}.png` }, noOfFrames);
+}
+
+/** The icon rule a webview asking for `iconName`'s focus receives. */
+async function renderIconRule(iconName: string, useNativeSize = false): Promise<string> {
+    const [tree] = getFocusTree(parseHoi4File(`
+        focus_tree = { id = tree_a focus = { id = FOCUS_ICON icon = ${iconName} x = 0 y = 0 } }
+    `), [], 'common/national_focus/test.txt');
+    const patch = await renderFocusAssetStylePatch([tree.focuses.FOCUS_ICON], {
+        focusIconAssetResolution: {
+            ...createEmptyFocusIconAssetResolution(),
+            gfxFileByIconName: { [iconName]: 'interface/custom_icons.gfx' },
+        },
+        xGridSize: 96,
+        yGridSize: 130,
+        useNativeSize,
+        existingStyleRules: new Map<string, string>(),
+    });
+    const rule = new Map(patch.rules).get(`st-focus-icon-${iconName}`);
+    assert.ok(rule !== undefined, `${iconName} has an icon rule`);
+    return rule;
+}
+
+/** Declarations of a rule body by property. Test image URLs contain no separators. */
+function parseDeclarations(content: string): Map<string, string> {
+    const declarations = new Map<string, string>();
+    for (const declaration of content.split(';')) {
+        const separator = declaration.indexOf(':');
+        if (separator > 0) {
+            declarations.set(declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim());
+        }
+    }
+    return declarations;
+}
 
 describe('focustree contentbuilder', () => {
     beforeEach(() => {
@@ -114,6 +162,7 @@ describe('focustree contentbuilder', () => {
         localisationCalls.length = 0;
         localisationIndexEnabled = false;
         defaultFocusIconAvailable = true;
+        resetSprites();
     });
 
     after(() => {
@@ -318,6 +367,24 @@ describe('focustree contentbuilder', () => {
             resendFocusIds: new Set(['FOCUS_A']),
         });
         assert.deepStrictEqual(resent.rules.map(([key]) => key), ['st-focus-icon-GFX_FOCUS_A']);
+    });
+
+    it('sizes and crops a multi-frame icon to one frame for fitted cards and native focus GUIs', async () => {
+        spritesByName.set('GFX_FILMSTRIP', createFilmstrip('GFX_FILMSTRIP', 7));
+
+        // One 97x202 frame fits the 72x71 icon slot as 34x71; the whole 679x202 strip would be 72x21.
+        const fitted = await renderIconRule('GFX_FILMSTRIP');
+        assert.deepStrictEqual([parseDeclarations(fitted).get('width'), parseDeclarations(fitted).get('height')], ['34px', '71px']);
+        const native = await renderIconRule('GFX_FILMSTRIP', true);
+        assert.deepStrictEqual([parseDeclarations(native).get('width'), parseDeclarations(native).get('height')], ['97px', '202px']);
+        assert.match(native, /background-image: url\(GFX_FILMSTRIP\.png\);[\s\S]*--focus-icon-state: loaded/);
+        for (const rule of [fitted, native]) {
+            const declarations = parseDeclarations(rule);
+            assert.strictEqual(declarations.get('background-size'), '700% 100%');
+            assert.strictEqual(declarations.get('background-position'), '0 0');
+            assert.strictEqual(declarations.has('--focus-icon-animation'), false,
+                'ordinary state frames are not an animation');
+        }
     });
 
     it('renders a hidden polite status region for focus icon loading', () => {

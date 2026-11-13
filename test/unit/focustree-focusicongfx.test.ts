@@ -141,6 +141,21 @@ describe('focus icon gfx resolver', () => {
         assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_late']);
     });
 
+    it('does not wait for interface enumeration when fallback scans are disabled', async () => {
+        let listed = false;
+        const result = await resolveFocusIconGfxAssets(['GFX_missing'], {
+            resolveIndexedFile: async () => undefined,
+            listInterfaceGfxFiles: async () => {
+                listed = true;
+                throw new Error('Disabled fallback must not enumerate unrelated assets');
+            },
+            readSpriteNames: async () => [],
+            fallbackScanLimit: 0,
+        });
+        assert.strictEqual(listed, false);
+        assert.deepStrictEqual(result.unresolvedIconNames, ['GFX_missing']);
+    });
+
     it('scans explicit priority gfx files before applying the fallback scan limit', async () => {
         const scannedFiles: string[] = [];
         const result = await resolveFocusIconGfxAssets(

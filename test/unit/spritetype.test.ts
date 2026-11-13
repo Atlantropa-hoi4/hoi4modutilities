@@ -46,6 +46,53 @@ describe('sprite types', () => {
         ]);
     });
 
+    it('distinguishes animated sheets from static state frames and preserves playback settings', () => {
+        const sprites = getSpriteTypes(parseHoi4File(`
+            spriteTypes = {
+                spriteType = {
+                    name = GFX_states texturefile = states.dds noOfFrames = 3
+                    animation_rate_fps = 99 looping = yes
+                }
+                frameAnimatedSpriteType = {
+                    name = GFX_once texturefile = once.dds noOfFrames = 6
+                    animation_rate_fps = 12 looping = no play_on_show = no pause_on_loop = 0.25
+                }
+                textSpriteType = { name = GFX_text texturefile = text.dds noOfFrames = 2 }
+            }
+        `));
+        const [states, once, text] = sprites;
+        assert.deepStrictEqual(sprites.map(sprite => sprite.name), ['GFX_states', 'GFX_once', 'GFX_text']);
+        assert.strictEqual('animation' in states, false);
+        assert.strictEqual('animation' in text, false);
+        assert.ok('animation' in once);
+        assert.deepStrictEqual(once.animation, {
+            framesPerSecond: 12, looping: false, playOnShow: false, pauseOnLoop: 0.25,
+        });
+        assert.strictEqual(once.noofframes, 6);
+    });
+
+    it('keeps missing or unusable animation timing playable without altering valid fractional rates', () => {
+        const sprites = getSpriteTypes(parseHoi4File(`
+            spriteTypes = {
+                frameAnimatedSpriteType = { name = GFX_default texturefile = a.dds noOfFrames = 4 }
+                frameAnimatedSpriteType = {
+                    name = GFX_zero texturefile = b.dds noOfFrames = 4
+                    animation_rate_fps = 0 pause_on_loop = -1
+                }
+                frameAnimatedSpriteType = {
+                    name = GFX_fraction texturefile = c.dds noOfFrames = 4
+                    animation_rate_fps = 7.5 pause_on_loop = 1.5
+                }
+            }
+        `));
+        const animations = sprites.map(sprite => 'animation' in sprite ? sprite.animation : undefined);
+        assert.deepStrictEqual(animations, [
+            { framesPerSecond: 15, looping: true, playOnShow: true, pauseOnLoop: 0 },
+            { framesPerSecond: 15, looping: true, playOnShow: true, pauseOnLoop: 0 },
+            { framesPerSecond: 7.5, looping: true, playOnShow: true, pauseOnLoop: 1.5 },
+        ]);
+    });
+
     it('encodes only requested frames and preserves distinct pixels and cached results', async () => {
         const png = new PNG({ width: 64, height: 2 });
         for (let y = 0; y < png.height; y++) {

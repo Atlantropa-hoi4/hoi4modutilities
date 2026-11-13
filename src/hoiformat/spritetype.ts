@@ -5,7 +5,7 @@ import { NumberPosition } from "../util/common";
 interface SpriteTypes {
     spritetype: SpriteTypeDef[];
     corneredtilespritetype: CorneredTileSpriteTypeDef[];
-    frameanimatedspritetype: SpriteTypeDef[];
+    frameanimatedspritetype: FrameAnimatedSpriteTypeDef[];
     textspritetype: SpriteTypeDef[];
     progressbartype: ProgressBarTypeDef[];
 }
@@ -26,6 +26,13 @@ interface SpriteTypeDef {
     _token: Token | undefined;
 }
 
+interface FrameAnimatedSpriteTypeDef extends SpriteTypeDef {
+    animation_rate_fps: number;
+    looping: boolean;
+    play_on_show: boolean;
+    pause_on_loop: number;
+}
+
 interface CorneredTileSpriteTypeDef {
     name: DetailValue<string>;
     texturefile: string;
@@ -36,11 +43,19 @@ interface CorneredTileSpriteTypeDef {
     _token: Token | undefined;
 }
 
+export interface SpriteAnimation {
+    framesPerSecond: number;
+    looping: boolean;
+    playOnShow: boolean;
+    pauseOnLoop: number;
+}
+
 export interface SpriteType {
     name: string;
     texturefile: string;
     noofframes: number;
     token: Token | undefined;
+    animation?: SpriteAnimation;
 }
 
 export interface CorneredTileSpriteType {
@@ -95,6 +110,14 @@ const spriteTypeSchema: SchemaDef<SpriteTypeDef> = {
     noofframes: "number",
 };
 
+const frameAnimatedSpriteTypeSchema: SchemaDef<FrameAnimatedSpriteTypeDef> = {
+    ...spriteTypeSchema,
+    animation_rate_fps: "number",
+    looping: "boolean",
+    play_on_show: "boolean",
+    pause_on_loop: "number",
+};
+
 const progressBarTypeSchema: SchemaDef<ProgressBarTypeDef> = {
     name: {
         _innerType: "string",
@@ -119,7 +142,7 @@ const spriteTypesSchema: SchemaDef<SpriteTypes> = {
         _type: "array",
     },
     frameanimatedspritetype: {
-        _innerType: spriteTypeSchema,
+        _innerType: frameAnimatedSpriteTypeSchema,
         _type: "array",
     },
     textspritetype: {
@@ -144,16 +167,31 @@ export function getSpriteTypes(node: Node): AnySpriteType[] {
     const result: AnySpriteType[] = [];
 
     for (const spritetypes of file.spritetypes) {
-        for (const sprite of spritetypes.spritetype.concat(spritetypes.frameanimatedspritetype).concat(spritetypes.textspritetype)) {
-            const name = sprite.name?._value;
-            const texturefile = sprite.texturefile;
-            if (name && texturefile) {
-                result.push({
-                    name,
-                    texturefile,
-                    noofframes: sprite.noofframes ?? 1,
-                    token: sprite.name!._startToken,
-                });
+        for (const sprites of [spritetypes.spritetype, spritetypes.frameanimatedspritetype, spritetypes.textspritetype]) {
+            for (const sprite of sprites) {
+                const name = sprite.name?._value;
+                const texturefile = sprite.texturefile;
+                if (name && texturefile) {
+                    const type: SpriteType = {
+                        name,
+                        texturefile,
+                        noofframes: sprite.noofframes ?? 1,
+                        token: sprite.name!._startToken,
+                    };
+                    if (sprites === spritetypes.frameanimatedspritetype) {
+                        const animated = sprite as typeof spritetypes.frameanimatedspritetype[number];
+                        // Preview defaults autoplay; explicit game animation settings take precedence.
+                        type.animation = {
+                            framesPerSecond: Number.isFinite(animated.animation_rate_fps) && animated.animation_rate_fps! > 0
+                                ? animated.animation_rate_fps! : 15,
+                            looping: animated.looping ?? true,
+                            playOnShow: animated.play_on_show ?? true,
+                            pauseOnLoop: Number.isFinite(animated.pause_on_loop) && animated.pause_on_loop! >= 0
+                                ? animated.pause_on_loop! : 0,
+                        };
+                    }
+                    result.push(type);
+                }
             }
         }
         

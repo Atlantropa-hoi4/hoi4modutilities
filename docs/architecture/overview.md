@@ -100,11 +100,15 @@ The host keeps the last render cache per preview and plans each refresh against 
   `{ kind, baseId, version, baseVersion?, css }`; the browser requests `styleResync`
   when it cannot apply a delta to its current base.
 
-The structural catalog and source graph remain complete. The first asset build prepares
-on-screen focuses; the browser then requests visible content before nearby content in
-32-focus chunks, with one latest pending demand. Scroll, zoom, condition and branch
-changes recompute demand. Already materialized focuses are retained; source/asset
-invalidation refreshes the loaded scope rather than leaving cached revisits stale.
+The structural catalog and source graph remain complete. Initial hydration scopes GFX
+lookup and texture metadata to on-screen focuses and previously materialized focuses,
+not every icon of the selected tree. The browser then requests visible content before
+nearby content in 32-focus chunks, with one latest pending demand. Each chunk resolves
+its own assets before rendering and publication; new demand releases obsolete nearby
+work without allowing its late result to decode or publish. Required GFX indexes still
+gate lookup readiness. Scroll, zoom, condition and branch changes recompute demand.
+Already materialized focuses are retained; source/asset invalidation refreshes the
+loaded scope rather than leaving cached revisits stale.
 The loader retains one scoped asset base state rather than a source graph copy per
 visited tree, and the dependency manifest covers every loaded scene.
 
@@ -163,6 +167,15 @@ re-render it. The webview entry `webviewsrc/focustree.ts` wires these modules un
 cropped and encoded; a single-frame sprite returns the original image. Encoded frames
 remain cached, while decoded atlas scratch is released after the synchronous batch.
 A later uncached frame can require another atlas decode.
+
+Focus icons retain `frameAnimatedSpriteType` playback metadata through the image cache.
+Both GUI-native and fitted cards use one frame's dimensions and a clipped atlas background;
+ordinary multi-frame state sprites stay on frame zero. Shared shell keyframes and per-icon
+CSS timing keep animation available to class-only asset/style deltas without per-icon timers
+or frame PNG encoding. `animation_rate_fps`, `looping`, `play_on_show`, and `pause_on_loop`
+control playback; missing/invalid rates use 15 FPS, and omitted looping/play-on-show flags
+default to true for the preview. Non-looping animations hold their last frame, loop pauses
+hold the last frame, and game-event-only or reduced-motion animations stay on the first.
 
 The map browser stages generation-tagged collection diffs until the matching completion
 and publishes once. Stale, late and duplicate completion messages do not publish;

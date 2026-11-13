@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { FocusTree, Focus } from './schema';
 import type { FocusWarning } from './schema';
-import { getSpriteByGfxNameFromResolvedFiles, Image, getImageByPath } from '../../util/image/imagecache';
+import { getSpriteByGfxNameFromResolvedFiles, Image, type Sprite, getImageByPath } from '../../util/image/imagecache';
+import type { SpriteAnimation } from '../../hoiformat/spritetype';
 import { localize, i18nTableAsScript } from '../../util/i18n';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
@@ -43,10 +44,17 @@ import { FocusGuiRenderer, FocusPresentation, renderContinuousFocusGui } from '.
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
 const focusTreeAssetRenderBatchSize = 32;
+/** Keyframes of the shell that step a frame-animated icon through its horizontal atlas. */
+const focusIconFramesAnimationName = 'focus-icon-frames';
+/** Icon rules name their frame animation here; style syncs carry class rules only. */
+const focusIconAnimationProperty = '--focus-icon-animation';
 
 export interface FocusTreeAssetStyleBatch {
     batchIndex: number;
-    /** Class rules of the batch's icons, keyed like the payload's dynamic style rules. */
+    /**
+     * Class rules of the batch's icons, keyed like the payload's dynamic style rules. The first
+     * batch leads with the payload's rules registered before its icons, in the payload's order.
+     */
     rules: Array<[key: string, content: string]>;
     assetNames: string[];
 }
@@ -723,6 +731,12 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw('#focustreeplaceholder .focus.focus-search-match', 'outline: 1px solid #E33; background: rgba(255, 0, 0, 0.5);');
     styleTable.raw('#focustreeplaceholder .focus.focus-search-match.focus-search-current', 'outline-width: 3px;');
     styleTable.raw('#focustreeplaceholder .focus-branch-hidden', 'display: none !important;');
+    // Frame-animated icons play the animation their class rule names. The keyframes live in the
+    // shell because style syncs carry class rules only, so every icon delta finds them here.
+    const iconImageSelector = '.st-focus-icon-image, .focus-gui-symbol';
+    styleTable.raw(iconImageSelector, `animation: var(${focusIconAnimationProperty}, none);`);
+    styleTable.raw(`@keyframes ${focusIconFramesAnimationName}`,
+        'from { background-position-x: 0%; } to { background-position-x: 100%; }');
     // Icons still rendering structural placeholders pulse gently; nothing moves or resizes.
     const pendingIconSelector = '#focustreeplaceholder [data-focus-id].focus-asset-pending .st-focus-icon-image, '
         + '#focustreeplaceholder [data-focus-id].focus-asset-pending .focus-gui-symbol';
@@ -735,8 +749,10 @@ function renderFocusTreeBody(payload: FocusTreeRenderPayload): string {
     styleTable.raw('#focus-asset-status[data-state="failed"]', 'border-color:var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));');
     styleTable.raw('#focus-asset-status button', 'width:auto;height:20px;padding:0 6px;flex-shrink:0;');
     styleTable.raw('#focus-asset-status button:focus-visible', 'outline:1px solid var(--vscode-focusBorder);outline-offset:1px;');
+    // Without motion, frame-animated icons rest on their first frame.
     styleTable.raw('@media (prefers-reduced-motion: reduce)',
-        `${pendingIconSelector} { animation: none; opacity: 0.6; } #focus-asset-status .codicon { animation: none; }`);
+        `${iconImageSelector} { animation: none; } `
+        + `${pendingIconSelector} { animation: none; opacity: 0.6; } #focus-asset-status .codicon { animation: none; }`);
 
     const shellMarkup =
         `<div id="dragger" class="${styleTable.oneTimeStyle('dragger', () => `
@@ -1193,6 +1209,18 @@ export async function prepareFocusIconStyles(
     };
 
     let batchIndex = 0;
+    // Batches can be the first rules a webview receives, e.g. from an eager full build before any
+    // structural paint. The first batch leads with the rules registered before the icons, such as
+    // the shared card rules, so icon rules follow them in the cascade and their sizes win.
+    let leadingRules: Array<[key: string, content: string]> = onAssetStyleBatch ? styleTable.rules() : [];
+    const emitAssetStyleBatch = async (batchStyleTable: StyleTable, assetNames: string[]) => {
+        if (!onAssetStyleBatch || assetNames.length === 0) {
+            return;
+        }
+        const rules = [...leadingRules, ...batchStyleTable.rules()];
+        leadingRules = [];
+        await onAssetStyleBatch({ batchIndex: batchIndex++, rules, assetNames });
+    };
     for (let start = 0; start < uniqueIconNames.length; start += focusTreeAssetRenderBatchSize) {
         const iconNames = uniqueIconNames.slice(start, start + focusTreeAssetRenderBatchSize);
         const batchStyleTable = new StyleTable();
@@ -1209,31 +1237,27 @@ export async function prepareFocusIconStyles(
                 iconDiagnostics.unresolvedGfxNames.push(iconName);
             }
 
-            const displaySize = iconResolution.image
-                ? useNativeSize ? { width: iconResolution.image.width, height: iconResolution.image.height }
-                    : fitFocusIconToBounds(iconResolution.image.width, iconResolution.image.height, maxFocusIconWidth, maxFocusIconHeight)
+            const icon = getFocusIconFrames(iconResolution);
+            // Icons are sized by one frame, never by their whole atlas.
+            const displaySize = icon
+                ? useNativeSize ? { width: icon.width, height: icon.height }
+                    : fitFocusIconToBounds(icon.width, icon.height, maxFocusIconWidth, maxFocusIconHeight)
                 : { width: focusPlaceholderSize, height: focusPlaceholderSize };
 
             const styleName = 'focus-icon-' + normalizeForStyle(iconName);
-            const iconState: FocusIconRenderState = iconResolution.image ? 'loaded' : 'unavailable';
+            const iconState: FocusIconRenderState = icon ? 'loaded' : 'unavailable';
             const styleContent = `
                 width: ${displaySize.width}px;
                 height: ${displaySize.height}px;
                 background-repeat: no-repeat;
-                background-size: contain;
-                ${iconResolution.image ? `background-image: url(${iconResolution.image.uri});` : 'background: grey;'}
+                ${icon ? renderFocusIconFrameStyle(icon) : 'background-size: contain;'}
+                ${icon ? `background-image: url(${icon.image.uri});` : 'background: grey;'}
                 ${focusIconStateProperty}: ${iconState};
             `;
             styleTable.style(styleName, () => styleContent);
             batchStyleTable.style(styleName, () => styleContent);
         }));
-        if (onAssetStyleBatch && iconNames.length > 0) {
-            await onAssetStyleBatch({
-                batchIndex: batchIndex++,
-                rules: batchStyleTable.rules(),
-                assetNames: iconNames,
-            });
-        }
+        await emitAssetStyleBatch(batchStyleTable, iconNames);
         if (start + focusTreeAssetRenderBatchSize < uniqueIconNames.length) {
             await yieldToFocusTreeRenderCancellation(isCancelled);
         } else {
@@ -1257,13 +1281,7 @@ export async function prepareFocusIconStyles(
             styleTable.style(styleName, () => styleContent);
             batchStyleTable.style(styleName, () => styleContent);
         }));
-        if (onAssetStyleBatch && overlayNames.length > 0) {
-            await onAssetStyleBatch({
-                batchIndex: batchIndex++,
-                rules: batchStyleTable.rules(),
-                assetNames: overlayNames,
-            });
-        }
+        await emitAssetStyleBatch(batchStyleTable, overlayNames);
         if (start + focusTreeAssetRenderBatchSize < uniqueOverlayNames.length) {
             await yieldToFocusTreeRenderCancellation(isCancelled);
         } else {
@@ -1345,7 +1363,7 @@ export async function prepareDeferredFocusIconStyles(
 }
 
 type FocusIconResolution =
-    | { kind: 'resolved-files'; image: Image }
+    | { kind: 'resolved-files'; sprite: Sprite }
     | { kind: 'default'; image: Image | undefined };
 
 async function resolveFocusIcon(name: string, mappedGfxFile?: string, isUnresolved: boolean = false): Promise<FocusIconResolution> {
@@ -1354,7 +1372,7 @@ async function resolveFocusIcon(name: string, mappedGfxFile?: string, isUnresolv
         if (resolvedFileSprite !== undefined) {
             return {
                 kind: 'resolved-files',
-                image: resolvedFileSprite.image,
+                sprite: resolvedFileSprite,
             };
         }
     }
@@ -1363,4 +1381,92 @@ async function resolveFocusIcon(name: string, mappedGfxFile?: string, isUnresolv
         kind: 'default',
         image: await getImageByPath(defaultFocusIcon),
     };
+}
+
+/** An icon image as a horizontal atlas of equally wide frames; `width` and `height` are one frame's. */
+interface FocusIconFrames {
+    image: Image;
+    frameCount: number;
+    width: number;
+    height: number;
+    animation?: SpriteAnimation;
+}
+
+function getFocusIconFrames(resolution: FocusIconResolution): FocusIconFrames | undefined {
+    if (resolution.kind === 'default') {
+        const image = resolution.image;
+        return image && { image, frameCount: 1, width: image.width, height: image.height };
+    }
+
+    const sprite = resolution.sprite;
+    if (!Number.isSafeInteger(sprite.noOfFrames) || sprite.noOfFrames <= 1) {
+        // One frame, or a frame count no atlas can have: the whole image is the icon.
+        return { image: sprite.image, frameCount: 1, width: sprite.image.width, height: sprite.image.height };
+    }
+    return {
+        image: sprite.image,
+        frameCount: sprite.noOfFrames,
+        width: sprite.width,
+        height: sprite.height,
+        animation: sprite.animation,
+    };
+}
+
+/**
+ * Background declarations that show one frame of the icon's atlas. The atlas is scaled to
+ * `frameCount` boxes, so a background-position-x of k / (frameCount - 1) shows frame k. Without
+ * an animation that plays on show, the icon rests on frame zero.
+ */
+function renderFocusIconFrameStyle(icon: FocusIconFrames): string {
+    if (icon.frameCount === 1) {
+        return 'background-size: contain;';
+    }
+
+    const animation = icon.animation && getFocusIconFrameAnimation(icon.frameCount, icon.animation);
+    return `background-size: ${icon.frameCount * 100}% 100%;
+        background-position: 0 0;${animation ? `
+        ${focusIconAnimationProperty}: ${animation};` : ''}`;
+}
+
+/**
+ * The game's frame animation: one frame per 1 / fps seconds. A looping animation rests on its last
+ * frame for `pauseOnLoop` seconds before it starts over; any other holds its last frame once played.
+ * An animation that does not play on show waits for a game event, so the preview never plays it.
+ */
+function getFocusIconFrameAnimation(frameCount: number, animation: SpriteAnimation): string | undefined {
+    if (!animation.playOnShow) {
+        return undefined;
+    }
+
+    const framesSeconds = frameCount / animation.framesPerSecond;
+    const pauseSeconds = animation.looping ? animation.pauseOnLoop : 0;
+    const iterationSeconds = framesSeconds + pauseSeconds;
+    // steps(N, jump-none) outputs floor(progress * N) / (N - 1), capped at 1: N equal holds of
+    // 1 / N of the iteration, here 1 / fps each, with its N - 1 jumps at k / fps.
+    const easing = pauseSeconds > 0
+        ? getFrameHoldEasing(frameCount, framesSeconds / iterationSeconds)
+        : `steps(${frameCount}, jump-none)`;
+    return `${focusIconFramesAnimationName} ${formatCssNumber(iterationSeconds)}s ${easing} `
+        + (animation.looping ? 'infinite' : '1 forwards');
+}
+
+/**
+ * Steps through `frameCount` frames over the first `framesFraction` of an iteration, one frame
+ * per equal share, and holds the last frame for the rest of it.
+ */
+function getFrameHoldEasing(frameCount: number, framesFraction: number): string {
+    const stops = ['0 0%'];
+    for (let frame = 1; frame < frameCount; frame++) {
+        const input = `${formatCssNumber(frame / frameCount * framesFraction * 100)}%`;
+        stops.push(
+            `${formatCssNumber((frame - 1) / (frameCount - 1))} ${input}`,
+            `${formatCssNumber(frame / (frameCount - 1))} ${input}`,
+        );
+    }
+    stops.push('1 100%');
+    return `linear(${stops.join(', ')})`;
+}
+
+function formatCssNumber(value: number): string {
+    return String(Math.round(value * 1e6) / 1e6);
 }

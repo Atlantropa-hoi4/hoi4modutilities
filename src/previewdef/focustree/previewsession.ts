@@ -101,7 +101,7 @@ export interface FocusTreeSnapshotBuilderLike {
 /** Icon resolution of the loaded scenes for one document version, used by asset requests. */
 interface FocusTreeAssetContext {
     documentVersion: number;
-    /** Trees whose icon names the merged resolution covers. */
+    /** Trees whose source focuses are available; icon mappings cover materialized/requested focuses only. */
     treeIds: Set<string>;
     focusById: Record<string, Focus>;
     xGridSize: number;
@@ -157,6 +157,8 @@ export class FocusTreePreviewSession {
     private assetGeneration = 0;
     private queuedAssetRequest: FocusTreeAssetRequest | undefined;
     private assetWorkerRunning = false;
+    /** Releases a nearby chunk's wait when the next viewport has more urgent demand. */
+    private supersedeNearbyAssetWork: (() => void) | undefined;
     /** Refreshes, hydrations, and scene requests in progress; asset requests wait for them. */
     private activeRenderWork = 0;
     /** Exactly the dynamic style rules posted to the webview's current document. */
@@ -381,6 +383,7 @@ export class FocusTreePreviewSession {
             try {
                 const baseState = await this.snapshotBuilder.buildBaseState(document, 'full', isCancelled, {
                     treeId, treeIds: cache.deferredAssetLoad ? cache.assetTreeIds : undefined,
+                    focusIds: this.resolveMaterializedFocusIds(cache),
                 });
                 if (isCancelled()) { return; }
                 // Focuses of different trees share icon rules by asset name. The new scene's
@@ -1105,7 +1108,11 @@ export class FocusTreePreviewSession {
 
     private getRefreshAssetScope(): FocusTreeAssetScope {
         const cache = this.runtimeState.lastRenderCache;
-        return { treeId: this.preferredTreeId, treeIds: cache?.deferredAssetLoad ? undefined : cache?.assetTreeIds };
+        return {
+            treeId: this.preferredTreeId,
+            treeIds: cache?.deferredAssetLoad ? undefined : cache?.assetTreeIds,
+            focusIds: this.resolveMaterializedFocusIds(cache),
+        };
     }
 
     private createRefreshCancellationPredicate(
@@ -1209,6 +1216,7 @@ export class FocusTreePreviewSession {
     private cancelAssetWork(): void {
         this.assetGeneration += 1;
         this.queuedAssetRequest = undefined;
+        this.supersedeNearbyAssetWork?.();
     }
 
     /**
@@ -1233,6 +1241,7 @@ export class FocusTreePreviewSession {
             }
         }
         this.queuedAssetRequest = normalized;
+        this.supersedeNearbyAssetWork?.();
         this.drainAssetRequests();
     }
 
@@ -1313,42 +1322,21 @@ export class FocusTreePreviewSession {
         }
 
         let expectedCache = cache;
+        let superseded = false;
+        let releaseNearby: (() => void) | undefined;
         const isCancelled = () => this.disposed
+            || superseded
             || this.assetGeneration !== generation
             || this.activeRenderWork > 0
             || this.runtimeState.latestRefreshRequestId !== refreshRequestId
             || this.runtimeState.lastRenderCache !== expectedCache
             || this.getLatestDocumentVersion() !== expectedCache.focusPositionDocumentVersion;
-        let ensuredContext: FocusTreeAssetContext | undefined;
-        try {
-            ensuredContext = await this.ensureAssetContext(document, cache, request.treeId, isCancelled);
-        } catch (error) {
-            if (isCancelled()) {
-                return;
-            }
-            this.trace('assetRequestFailed', {
-                assetRequestId: request.assetRequestId,
-                message: error instanceof Error ? error.message : String(error),
-            });
-            await this.postSceneAssets(request, cache, 'failed', true);
-            return;
-        }
-        if (isCancelled()) {
-            return;
-        }
-        if (!ensuredContext) {
-            this.trace('assetRequestStale', { assetRequestId: request.assetRequestId, treeId: request.treeId, reason: 'context' });
-            await this.postSceneAssets(request, cache, 'stale', true);
-            return;
-        }
-
-        const context = ensuredContext;
         this.preferredTreeId = request.treeId;
         const materialized = new Set(cache.materializedFocusIds);
         const planned = new Set<string>();
         const resend = new Set<string>();
         const plan = (focusIds: readonly string[]) => focusIds.filter(focusId => {
-            if (planned.has(focusId) || !tree.focuses[focusId] || !context.focusById[focusId]) {
+            if (planned.has(focusId) || !tree.focuses[focusId]) {
                 return false;
             }
             if (materialized.has(focusId)) {
@@ -1371,11 +1359,6 @@ export class FocusTreePreviewSession {
             return;
         }
 
-        const resolution = {
-            ...createEmptyFocusIconAssetResolution(),
-            gfxFileByIconName: context.gfxFileByIconName,
-            unresolvedIconNames: Array.from(context.unresolvedIconNames),
-        };
         let appliedChunks = 0;
         let status: FocusTreeSceneAssetsStatus | 'cancelled' | 'superseded' = 'applied';
         try {
@@ -1390,8 +1373,31 @@ export class FocusTreePreviewSession {
                     status = 'superseded';
                     return;
                 }
+                const supersededWork = chunk.tier === 'nearby'
+                    ? new Promise<undefined>(resolve => {
+                        releaseNearby = () => { superseded = true; resolve(undefined); };
+                        this.supersedeNearbyAssetWork = releaseNearby;
+                    })
+                    : undefined;
+                // Resolve this tier only when it is about to render. A slow offscreen icon must
+                // not delay publishing the visible tier, including its GFX and texture metadata.
+                const contextWork = this.ensureAssetContext(document, expectedCache, request.treeId, chunk.focusIds, isCancelled);
+                const context = await (supersededWork ? Promise.race([contextWork, supersededWork]) : contextWork);
+                if (isCancelled()) {
+                    status = superseded ? 'superseded' : 'cancelled';
+                    return;
+                }
+                if (!context) {
+                    await this.postSceneAssets(request, expectedCache, 'stale', true);
+                    return;
+                }
+                const resolution = {
+                    ...createEmptyFocusIconAssetResolution(),
+                    gfxFileByIconName: context.gfxFileByIconName,
+                    unresolvedIconNames: Array.from(context.unresolvedIconNames),
+                };
 
-                const patch = await renderAssetPatch(chunk.focusIds.map(focusId => context.focusById[focusId]), {
+                const patchWork = renderAssetPatch(chunk.focusIds.map(focusId => context.focusById[focusId]), {
                     focusIconAssetResolution: resolution,
                     xGridSize: context.xGridSize,
                     yGridSize: context.yGridSize,
@@ -1400,10 +1406,12 @@ export class FocusTreePreviewSession {
                     resendFocusIds: resend,
                     isCancelled,
                 });
-                if (isCancelled()) {
-                    status = 'cancelled';
+                const patch = await (supersededWork ? Promise.race([patchWork, supersededWork]) : patchWork);
+                if (isCancelled() || !patch) {
+                    status = superseded ? 'superseded' : 'cancelled';
                     return;
                 }
+                this.supersedeNearbyAssetWork = undefined;
 
                 // Commit before posting with no await in between, so a refresh that starts later
                 // plans against the cache this patch produced.
@@ -1438,6 +1446,9 @@ export class FocusTreePreviewSession {
             });
             await this.postSceneAssets(request, this.runtimeState.lastRenderCache ?? expectedCache, 'failed', true);
         } finally {
+            if (this.supersedeNearbyAssetWork === releaseNearby) {
+                this.supersedeNearbyAssetWork = undefined;
+            }
             recordPerf('focustree.assetRequest', Date.now() - startedAt, {
                 status,
                 treeId: request.treeId,
@@ -1451,17 +1462,27 @@ export class FocusTreePreviewSession {
     }
 
     /**
-     * Icon resolution covering `treeId` for the cache's document. Refreshes keep it current; when
-     * a cancelled refresh left none, it is rebuilt from the loader for every loaded scene.
+     * Icon resolution for the requested chunk. Earlier materialized assets are retained, while
+     * unrelated focuses are not looked up or statted before this chunk can be published.
      */
     private async ensureAssetContext(
         document: vscode.TextDocument,
         cache: FocusTreeRenderCache,
         treeId: string,
+        focusIds: readonly string[],
         isCancelled: () => boolean,
     ): Promise<FocusTreeAssetContext | undefined> {
         const current = this.assetContext;
-        if (current && current.documentVersion === cache.focusPositionDocumentVersion && current.treeIds.has(treeId)) {
+        if (current && current.documentVersion === cache.focusPositionDocumentVersion && current.treeIds.has(treeId)
+            && focusIds.every(focusId => {
+                const focus = current.focusById[focusId];
+                return focus && [
+                    ...focus.icon.map(option => option.icon),
+                    focus.overlay,
+                    ...(focus.searchFilters ?? []).map(filter => `GFX_${filter}`),
+                ].every(name => !name || name.trim().toUpperCase() === 'GFX'
+                    || !!current.gfxFileByIconName[name] || current.unresolvedIconNames.has(name));
+            })) {
             return current;
         }
 
@@ -1469,6 +1490,7 @@ export class FocusTreePreviewSession {
             const baseState = await this.snapshotBuilder.buildBaseState(document, 'full', isCancelled, {
                 treeId,
                 treeIds: cache.assetTreeIds,
+                focusIds,
             });
             if (isCancelled()
                 || baseState.deferredAssetLoad

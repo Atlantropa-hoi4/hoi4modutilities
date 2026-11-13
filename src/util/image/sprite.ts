@@ -1,6 +1,7 @@
 import type { Uri } from 'vscode';
 import { PNG } from "pngjs";
 import type { NumberPosition } from "../common";
+import type { SpriteAnimation } from "../../hoiformat/spritetype";
 
 export class Image {
     private cachedUri: string | undefined = undefined;
@@ -26,7 +27,8 @@ export class Sprite {
     constructor(
         readonly id: string,
         readonly image: Image,
-        readonly noOfFrames: number) {
+        readonly noOfFrames: number,
+        readonly animation?: SpriteAnimation) {
     }
 
     /** Materialize only the requested frame; keep decoded scratch for this synchronous batch. */

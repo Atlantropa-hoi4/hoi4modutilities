@@ -36,10 +36,20 @@ const mocks = {
     debug: { debug: () => undefined, error: () => undefined },
     imagecache: { getSpriteByGfxName: async name => {
         const sprite = sprites[name];
-        return sprite && { id: name, width: sprite.width, height: sprite.height, frames: [{ uri: sprite.uri }] };
+        return sprite && { id: name, width: sprite.width, height: sprite.height,
+            getFrame: frame => frame === 0 ? { uri: sprite.uri } : undefined };
     } },
 };
-let template;
+// A window wider than its slot, with margins and a nested body, whose symbol is right of its middle.
+const customGui = `guiTypes = { containerWindowType = {
+    name = national_focus_item size = { width = 233 height = 171 } margin = { left = 11 top = 6 right = 3 bottom = 2 }
+    containerWindowType = { name = focus_body position = { x = 17 y = 4 } size = { width = 190 height = 150 }
+        iconType = { name = symbol position = { x = 9 y = 58 } orientation = center_up centerposition = yes }
+        iconType = { name = bg position = { x = 104 y = 128 } centerposition = yes spriteType = GFX_focus_unavailable }
+        instantTextBoxType = { name = name position = { x = 24 y = 112 } maxWidth = 160 maxHeight = 30 format = center }
+    }
+} }`;
+let layouts;
 let hostCss;
 Module._load = function (request, parent, main) {
     const name = request.split(/[\\/]/).pop();
@@ -52,18 +62,26 @@ try {
     const { StyleTable } = require(path.join(root, 'out/src/util/styletable.js'));
     const { findFocusWindow, FocusGuiRenderer } = require(path.join(root, 'out/src/previewdef/focustree/presentation.js'));
     const { renderFocusCardTemplate } = require(path.join(root, 'out/src/previewdef/focustree/focusrender.js'));
-    const gui = convertNodeToJson(parseHoi4File(fs.readFileSync(path.join(root, 'test/fixtures/focus/routing.gui'), 'utf8')), guiFileSchema);
-    const item = findFocusWindow(gui.guitypes.flatMap(value => value.containerwindowtype), 'national_focus_item');
     const styles = new StyleTable();
-    const renderer = new FocusGuiRenderer({ item, styles: [] }, styles, [], 96, 130);
-    template = renderFocusCardTemplate(styles, 96, await renderer.renderTemplate({}));
+    const renderLayout = async (name, guiText, slot) => {
+        const gui = convertNodeToJson(parseHoi4File(guiText), guiFileSchema);
+        const item = findFocusWindow(gui.guitypes.flatMap(value => value.containerwindowtype), 'national_focus_item');
+        const renderer = new FocusGuiRenderer({ item, styles: [] }, styles, [], slot.width, slot.height);
+        return { name, slot, template: renderFocusCardTemplate(styles, slot.width, await renderer.renderTemplate({})) };
+    };
+    // The first layout also drives the routing checks.
+    layouts = [
+        await renderLayout('routing.gui', fs.readFileSync(path.join(root, 'test/fixtures/focus/routing.gui'), 'utf8'), { width: 96, height: 130 }),
+        await renderLayout('custom-gui', customGui, { width: 97, height: 141 }),
+        { name: 'default-card', slot: { width: 96, height: 130 } },
+    ];
     hostCss = styles.toStyleContent();
 } finally {
     Module._load = originalLoad;
 }
 
 const bundle = buildSync({
-    stdin: { contents: "import { FocusScene } from './webviewsrc/focustree/scene'; import { setState } from './webviewsrc/util/common'; window.routingApi = { FocusScene, setState };",
+    stdin: { contents: "import { FocusScene } from './webviewsrc/focustree/scene'; import { currentScale, setState } from './webviewsrc/util/common'; window.routingApi = { FocusScene, currentScale, setState };",
         resolveDir: root, loader: 'ts' },
     bundle: true, platform: 'browser', format: 'iife', write: false,
     define: { VERSION: '"test"', EXTENSION_ID: '"test"' },
@@ -91,11 +109,22 @@ function browserCheck(data) {
         { target: 'orbital', targetType: 'parent', style: '1px solid #8af' }];
     originalItems[5].connections = [{ target: 'past', targetType: 'parent', style: '1px dashed #8af' },
         { target: 'future', targetType: 'parent', style: '1px dashed #8af' }];
-    const inputs = new Map(definitions.map(([id, x, y, displayName]) => [id, {
+    const createInputs = template => new Map(definitions.map(([id, x, y, displayName]) => [id, {
         focus: { id, x, y, displayName, icon: [{ icon: id, condition: { type: 'and', items: [] } }],
             file: 'routing.txt', sourceFile: 'routing.txt', editable: true },
-        template: data.template, exprs: [], activeFile: 'routing.txt', completable: false, labelMode: 'name',
+        template, exprs: [], activeFile: 'routing.txt', completable: false, labelMode: 'name',
     }]));
+    const inputs = createInputs(data.layouts[0].template);
+    const hooks = { onNodeRendered() {}, onEdgeRendered() {}, onNodesRemoved() {}, onMaterialized() {} };
+    const close = (left, right) => Math.abs(left - right) < 0.05;
+    // Preview zoom is clamped by normalizePreviewScale, so only supported (including fractional)
+    // scales are rendered; an unsupported one would desync the CSS scale from scene measurement.
+    const zoomScales = [0.2, 0.25, 0.33, 0.5, 0.75, 1];
+    const applyZoom = scale => {
+        window.routingApi.setState({ scale });
+        check(window.routingApi.currentScale() === scale, `${scale} is not a supported preview zoom`);
+        host.style.transform = `scale(${scale})`;
+    };
     const placeholderCss = definitions.map(([id]) => `.st-focus-icon-${id}{width:56px;height:56px;background:#587}`).join('');
     const hydratedCss = definitions.map(([id]) => {
         const width = id === 'past' || id === 'future' ? 176 : 96;
@@ -108,14 +137,11 @@ function browserCheck(data) {
         && point[axis === 'x' ? 'y' : 'x'] !== edge.points[index - 1][axis === 'x' ? 'y' : 'x'])?.[axis];
     let checks = 0;
     const run = async () => {
-        for (const scale of [0.5, 1, 2]) {
+        for (const scale of zoomScales) {
             for (const format of ['up', 'down', 'left', 'right']) {
-                window.routingApi.setState({ scale });
-                host.style.transform = `scale(${scale})`;
+                applyZoom(scale);
                 let items = originalItems.map(item => ({ ...item }));
-                const scene = new window.routingApi.FocusScene(0, {
-                    onNodeRendered() {}, onEdgeRendered() {}, onNodesRemoved() {}, onMaterialized() {},
-                });
+                const scene = new window.routingApi.FocusScene(0, hooks);
                 const request = () => ({ treeId: 'routing', items,
                     positions: Object.fromEntries(items.map(item => [item.id, { x: item.gridX, y: item.gridY }])),
                     geometryOptions: { items, format, slotSize: { width: 96, height: 130 },
@@ -186,6 +212,60 @@ function browserCheck(data) {
                 scene.clear();
             }
         }
+
+        // Card boxes are the slots used for hit testing, selection, snapping, and the edit-mode
+        // outline. Every GUI size and zoom must keep the symbol on their center column.
+        const verifyAlignment = (scene, scale, stage) => {
+            const sceneRect = scene.root.getBoundingClientRect();
+            for (const node of Object.values(scene.currentGeometry.nodes)) {
+                const card = scene.getCard(node.id);
+                const box = card.getBoundingClientRect();
+                check(close(box.left, sceneRect.left + node.slot.x * scale) && close(box.top, sceneRect.top + node.slot.y * scale)
+                    && close(box.width, node.slot.width * scale) && close(box.height, node.slot.height * scale),
+                    `${stage}: ${node.id} card box is not its grid slot`);
+                const symbol = card.querySelector('.focus-gui-symbol, .st-focus-icon-image').getBoundingClientRect();
+                const symbolX = symbol.left + symbol.width / 2;
+                check(close(symbolX, box.left + box.width / 2),
+                    `${stage}: ${node.id} symbol is ${((symbolX - box.left - box.width / 2) / scale).toFixed(2)}px off its slot center`);
+                check(close(node.exclusiveVisual.x + node.exclusiveVisual.width / 2, node.slot.x + node.slot.width / 2),
+                    `${stage}: ${node.id} measured symbol anchor left its slot center`);
+                check(document.elementFromPoint(symbolX, symbol.top + symbol.height / 2)?.closest('[data-focus-id]') === card,
+                    `${stage}: ${node.id} symbol does not hit its own focus`);
+            }
+            checks++;
+        };
+        for (const layout of data.layouts) {
+            const layoutInputs = createInputs(layout.template);
+            for (const scale of zoomScales) {
+                applyZoom(scale);
+                // Positions keep every symbol inside an 800x600 headless viewport for hit testing.
+                let items = [{ id: 'swords', gridX: 0, gridY: 0, connections: [] },
+                    { id: 'past', gridX: 3, gridY: 0, connections: [{ target: 'swords', targetType: 'parent', style: '1px solid #8af' }] }];
+                const scene = new window.routingApi.FocusScene(0, hooks);
+                const request = () => ({ treeId: 'alignment', items,
+                    positions: Object.fromEntries(items.map(item => [item.id, { x: item.gridX, y: item.gridY }])),
+                    geometryOptions: { items, format: 'up', slotSize: layout.slot,
+                        padding: { left: 30, top: 60, right: 30, bottom: 60 } },
+                    getCardInput: id => layoutInputs.get(id), isChecked: () => false, priorityFocusIds: new Set(),
+                });
+                const stage = `${layout.name}/${scale}`;
+                document.body.dataset.focusFrames = 'true';
+                document.body.dataset.focusDecorations = 'true';
+                glyphs.textContent = placeholderCss;
+                scene.render(host, request());
+                await settle();
+                verifyAlignment(scene, scale, `${stage}/placeholder`);
+                glyphs.textContent = hydratedCss;
+                scene.measureAllMounted();
+                await settle();
+                verifyAlignment(scene, scale, `${stage}/hydrated`);
+                items = [items[0], { ...items[1], gridX: 2, gridY: 1 }];
+                check(scene.render(host, request()).reset === false, `${stage}: position edit reset the scene`);
+                await settle();
+                verifyAlignment(scene, scale, `${stage}/moved`);
+                scene.clear();
+            }
+        }
         result.textContent = `PASS ${checks} retained-scene browser checks`;
     };
     run().catch(error => { result.textContent = 'FAIL ' + error.stack; });
@@ -193,9 +273,11 @@ function browserCheck(data) {
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hoi4mu-routing-browser-'));
 const htmlPath = path.join(tempDir, 'routing.html');
-const setup = `window.acquireVsCodeApi=()=>({getState:()=>({}),setState(){},postMessage(){}});window.requestAnimationFrame=callback=>setTimeout(()=>callback(performance.now()),0);window.cancelAnimationFrame=clearTimeout;`;
-const css = `body{margin:0;background:#1b1b26}#scene{position:relative;transform-origin:0 0}.preview-label-id-text{display:none}body[data-preview-label-mode="id"] .preview-label-id-text{display:inline}body[data-preview-label-mode="id"] .preview-label-name-text{display:none}body[data-focus-frames="false"] .focus-frame-gfx{display:none}body[data-focus-decorations="false"] .focus-decoration-gfx{display:none}`;
-const call = `(${browserCheck.toString()})(${JSON.stringify({ template })});`;
+// Like VS Code, the stub keeps webview state, so measurements read the current zoom.
+const setup = `window.acquireVsCodeApi=()=>{let state;return{getState:()=>state,setState(value){state=value;},postMessage(){}};};window.requestAnimationFrame=callback=>setTimeout(()=>callback(performance.now()),0);window.cancelAnimationFrame=clearTimeout;`;
+// The slot rule mirrors the preview shell in contentbuilder.ts; cards fill their grid slot.
+const css = `body{margin:0;background:#1b1b26}#scene{position:relative;transform-origin:0 0}#focus-gridbox>.focus-node-layer>.focus{position:absolute;left:0;top:0;width:var(--focus-slot-width);height:var(--focus-slot-height)}.preview-label-id-text{display:none}body[data-preview-label-mode="id"] .preview-label-id-text{display:inline}body[data-preview-label-mode="id"] .preview-label-name-text{display:none}body[data-focus-frames="false"] .focus-frame-gfx{display:none}body[data-focus-decorations="false"] .focus-decoration-gfx{display:none}`;
+const call = `(${browserCheck.toString()})(${JSON.stringify({ layouts })});`;
 fs.writeFileSync(htmlPath, `<!doctype html><style>${hostCss}${css}</style><style id="glyphs"></style><div id="scene"></div><pre id="result">PENDING</pre><script>${setup}${bundle}${call}</script>`);
 const browser = spawnSync(browserPath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--user-data-dir=' + path.join(tempDir, 'profile'), '--virtual-time-budget=10000', '--dump-dom', pathToFileURL(htmlPath).href],

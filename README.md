@@ -6,6 +6,8 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 
 - Focus tree preview and editing helpers, including GUI-defined focus items, `text_icon` titlebar styles, and continuous-focus windows
   - Use the **Focus frame GFX** and **Focus decoration GFX** toolbar buttons to toggle frames and decorations independently. Focus icons and labels stay visible, and the choices are saved with the preview.
+  - GUI-defined focus symbols align with their grid-column centre, including nested GUI windows and fractional zoom; source positions and snap spacing remain unchanged.
+  - Frame-animated focus icons play one frame at a time using their GFX playback settings, rather than displaying the whole sprite strip. Ordinary state sprites remain static; reduced-motion preferences keep animated icons on their first frame.
 - World map preview with country/localised views, bookmark-aware history, scaled export, warnings, and state/strategic-region editing
 - Event tree preview with automatic cross-file event references and details for conditional descriptions, AI choice weights, and original-recipient restrictions
 - Technology tree preview with country-specific icons and ID, technology-name, short-equipment-name, and full-equipment-name labels
@@ -36,7 +38,7 @@ Desktop VS Code utilities for Hearts of Iron IV modding, maintained as the indep
 - Activation is contextual now: the extension waits for HOI4-relevant files, custom editors, or preview panels instead of activating broadly at startup.
 - Focus tree previews keep their webview context while hidden, so re-opening the same preview should avoid a full bootstrap.
 - Focus Tree preview posts a lightweight structural snapshot first, then hydrates localisation, icons, and inlay data after first paint.
-- Focus Tree asset hydration prepares on-screen focuses first, then nearby focuses and other trees on demand. Scrolling, zooming, and revealing conditions or branches request only newly needed assets. The full catalog and source ranges remain available; already-loaded scenes are refreshed together after source or asset edits.
+- Focus Tree asset hydration resolves GFX and texture metadata only for on-screen focuses first, then nearby focuses and other trees on demand. Hidden-focus lookups cannot hold up visible icons; a new viewport request supersedes obsolete nearby work. Scrolling, zooming, and revealing conditions or branches request only newly needed assets. The full catalog and source ranges remain available; already-loaded scenes are refreshed together after source or asset edits. First-open icons can still wait for the required workspace/dependency/game GFX indexes.
 - Focus Tree root and dependency refreshes share a serialized latest-pending queue. Ordinary document changes wait 35ms, Undo/Redo runs without an added debounce, and stale or disposed work cannot overwrite the current preview.
 - Focus Tree search traverses the full visible catalog, mounting a matching card before scrolling to it. Enter and Shift+Enter move between matches; Alt+Enter opens the focus source. Styles use versioned deltas with full resynchronisation when needed, retaining loaded icons across tree switches.
 - Preview dependencies refresh again after the workspace localisation index commits the changed file. The existing 1000ms localisation typing debounce remains; a stale parse cannot replace the latest edit.

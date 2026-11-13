@@ -187,7 +187,7 @@ async function getSpriteByGfxNameImpl(name: string, gfxFilePath: string): Promis
         return new CorneredTileSprite(name, image, sprite.noofframes, sprite.size, sprite.bordersize);
     }
 
-    return new Sprite(name, image, sprite.noofframes);
+    return new Sprite(name, image, sprite.noofframes, sprite.animation);
 }
 
 function getImage(relativePath: string): Promise<Image | undefined> {
